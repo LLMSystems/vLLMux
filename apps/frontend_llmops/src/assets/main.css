@@ -1,5 +1,5 @@
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap');
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -10,6 +10,14 @@
   /* Inter for Latin/UI + numbers; Noto Sans TC covers CJK glyphs Inter lacks. */
   --font-sans: 'Inter', 'Noto Sans TC', ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-sans);
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+
+  /* Lifecycle status palette — single source of truth for state colors. */
+  --color-status-ready: var(--status-ready);
+  --color-status-starting: var(--status-starting);
+  --color-status-stopping: var(--status-stopping);
+  --color-status-failed: var(--status-failed);
+  --color-status-stopped: var(--status-stopped);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -80,6 +88,13 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+
+  /* Status colors — light theme (slightly deeper for contrast on white). */
+  --status-ready: oklch(0.62 0.17 152);
+  --status-starting: oklch(0.72 0.16 75);
+  --status-stopping: oklch(0.72 0.16 75);
+  --status-failed: oklch(0.58 0.22 27);
+  --status-stopped: oklch(0.6 0.01 286);
 }
 
 .dark {
@@ -114,6 +129,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+
+  /* Status colors — dark theme (brighter so dots/glows read on near-black). */
+  --status-ready: oklch(0.75 0.18 152);
+  --status-starting: oklch(0.8 0.16 80);
+  --status-stopping: oklch(0.8 0.16 80);
+  --status-failed: oklch(0.7 0.2 22);
+  --status-stopped: oklch(0.6 0.012 286);
 }
 
 @layer base {
@@ -121,6 +143,88 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply bg-background text-foreground font-sans antialiased;
   }
+}
+
+@layer utilities {
+  /* Aligned, non-jittery numerics for metrics, latencies, byte counts. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Frosted control-room card surface. */
+  .glass {
+    background-color: color-mix(in oklch, var(--card) 70%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+/* Breathing status indicator — used by transient states (starting/stopping). */
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px color-mix(in oklch, currentColor 0%, transparent);
+  }
+}
+.animate-status-pulse {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+/* Flowing-pipeline edges: marching dashes travel router -> instance. Duration
+   is bound inline (faster = busier). Paired with a static base line. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+.flow-edge {
+  animation-name: flow-dash;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* Soft pulse for the "next pick" node so the live routing target stands out. */
+@keyframes node-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 color-mix(in oklch, var(--chart-1) 0%, transparent));
+  }
+  50% {
+    filter: drop-shadow(0 0 6px color-mix(in oklch, var(--chart-1) 55%, transparent));
+  }
+}
+.animate-node-glow {
+  animation: node-glow 2s ease-in-out infinite;
+}
+
+/* Subtle radial glow behind hero panels. */
+.glow-ring {
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--border) 60%, transparent),
+    0 8px 40px -12px color-mix(in oklch, var(--primary) 22%, transparent);
+}
+
+/* Slim, theme-aware scrollbars for dense data panes. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
 }

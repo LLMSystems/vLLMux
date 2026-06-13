@@ -30,6 +30,10 @@ class ModelAlreadyRunning(RuntimeError):
     """Start requested for an instance already STARTING or READY."""
 
 
+class ModelConflict(RuntimeError):
+    """A create/delete request clashes with existing state (key, port, ownership)."""
+
+
 def build_registry(config, config_path: str, launchers: list[Launcher]) -> ModelRegistry:
     """Enumerate every instance every launcher defines, all STOPPED initially."""
     registry = ModelRegistry()
@@ -60,6 +64,7 @@ class ModelManager:
         config_path: str,
         settings: BackendSettings,
         store=None,
+        overlay_path=None,
     ) -> None:
         self.registry = registry
         self._launchers: dict[ModelKind, Launcher] = {l.kind: l for l in launchers}
@@ -68,6 +73,7 @@ class ModelManager:
         self.config_path = config_path
         self.settings = settings
         self.store = store
+        self.overlay_path = overlay_path
 
     def _require(self, key: str) -> ModelInstance:
         inst = self.registry.get(key)
@@ -172,6 +178,80 @@ class ModelManager:
         await self._record(inst, ModelState.STOPPING, ModelState.STOPPED)
         logger.info("Stopped %s", key)
         return inst
+
+    # -- Dynamic models (overlay) ---------------------------------------------
+
+    def _used_ports(self) -> set[int]:
+        return {i.port for i in self.registry.values()}
+
+    async def create_overlay_model(self, group: str, instance: dict, model_config: dict):
+        """Add a user-defined LLM instance: persist to the overlay, merge it into
+        the live config, and register it (STOPPED) so it shows up immediately."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+        from app.llmops.instance import ModelInstance
+
+        instance_id = instance.get("id")
+        if not instance_id:
+            raise ModelConflict("instance id is required")
+        key = f"{group}::{instance_id}"
+        if self.registry.get(key) is not None:
+            raise ModelConflict(f"model already exists: {key}")
+        if instance.get("port") in self._used_ports():
+            raise ModelConflict(f"port {instance.get('port')} is already in use")
+
+        overlay = load_overlay(self.overlay_path)
+        engines = overlay.setdefault("LLM_engines", {})
+        if group in self.config.LLM_engines or group in engines:
+            entry = engines.setdefault(group, {"instances": []})
+            entry.setdefault("instances", []).append(instance)
+        else:
+            engines[group] = {"instances": [instance], "model_config": model_config}
+
+        # Validate the merged result before persisting anything.
+        new_config = build_merged_config(self.config_path, overlay)
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+
+        launcher = self._launchers[ModelKind.LLM]
+        spec = launcher.build_spec(self.config, self.config_path, key)
+        async with self.registry.lock:
+            self.registry.add(
+                ModelInstance(
+                    key=key,
+                    kind=ModelKind.LLM,
+                    host=spec.host,
+                    port=spec.port,
+                    spec=spec,
+                    model_tag=spec.model_tag,
+                    log_path=spec.log_path,
+                )
+            )
+        inst = self._require(key)
+        await self._record(inst, None, ModelState.STOPPED, "added via dashboard")
+        logger.info("Created dynamic model %s", key)
+        return inst
+
+    async def delete_overlay_model(self, key: str) -> None:
+        """Remove a dynamically-added model. Only overlay-owned, stopped models."""
+        from app.services.overlay import build_merged_config, load_overlay, overlay_owns, save_overlay
+
+        inst = self._require(key)
+        group, _, instance_id = key.partition("::")
+        overlay = load_overlay(self.overlay_path)
+        if not overlay_owns(overlay, group, instance_id):
+            raise ModelConflict(f"{key} is defined in config.yaml; remove it there")
+        if inst.state not in (ModelState.STOPPED, ModelState.FAILED):
+            raise ModelConflict(f"stop {key} before removing it")
+
+        entry = overlay["LLM_engines"].get(group, {})
+        entry["instances"] = [i for i in entry.get("instances", []) if i.get("id") != instance_id]
+        if not entry.get("instances"):
+            overlay["LLM_engines"].pop(group, None)
+        save_overlay(overlay, self.overlay_path)
+        self.config = build_merged_config(self.config_path, overlay)
+        async with self.registry.lock:
+            self.registry.remove(key)
+        logger.info("Deleted dynamic model %s", key)
 
     async def stop_all(self) -> None:
         """Best-effort shutdown of every managed process (used at app shutdown)."""

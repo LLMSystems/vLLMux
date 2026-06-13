@@ -4,22 +4,122 @@ server:
   uvicorn_log_level: "info"
 
 LLM_engines:
+  # --- Multi-instance group (load-balanced by the router) ---
   Qwen3-0.6B:
     instances:
       - id: "qwen3"
         host: "localhost"
         port: 8002
         cuda_device: 0
-      # - id: "qwen3-2"
-      #   host: "localhost"
-      #   port: 8004
-      #   cuda_device: 0
-
+      - id: "qwen3-2"
+        host: "localhost"
+        port: 8004
+        cuda_device: 0
+      - id: "qwen3-3"
+        host: "localhost"
+        port: 8014
+        cuda_device: 0
+      - id: "qwen3-4"
+        host: "localhost"
+        port: 8015
+        cuda_device: 0
     model_config:
       model_tag: "Qwen/Qwen3-0.6B"
       dtype: "float16"
       max_model_len: 500
       gpu_memory_utilization: 0.35
+      tensor_parallel_size: 1
+
+  # --- Single-instance group ---
+  Qwen2.5-0.5B-Instruct:
+    instances:
+      - id: "q25-05b"
+        host: "localhost"
+        port: 8006
+        cuda_device: 0
+    model_config:
+      model_tag: "Qwen/Qwen2.5-0.5B-Instruct"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.30
+      tensor_parallel_size: 1
+
+  # --- Multi-instance group ---
+  Qwen2.5-1.5B-Instruct:
+    instances:
+      - id: "q25-15b-a"
+        host: "localhost"
+        port: 8007
+        cuda_device: 0
+      - id: "q25-15b-b"
+        host: "localhost"
+        port: 8008
+        cuda_device: 0
+    model_config:
+      model_tag: "Qwen/Qwen2.5-1.5B-Instruct"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.45
+      tensor_parallel_size: 1
+
+  # --- Single-instance group ---
+  Qwen2.5-3B-Instruct:
+    instances:
+      - id: "q25-3b"
+        host: "localhost"
+        port: 8009
+        cuda_device: 0
+    model_config:
+      model_tag: "Qwen/Qwen2.5-3B-Instruct"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.85
+      tensor_parallel_size: 1
+
+  # --- Single-instance group ---
+  SmolLM2-1.7B-Instruct:
+    instances:
+      - id: "smollm2"
+        host: "localhost"
+        port: 8010
+        cuda_device: 0
+    model_config:
+      model_tag: "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.50
+      tensor_parallel_size: 1
+
+  # --- Multi-instance group ---
+  TinyLlama-1.1B-Chat:
+    instances:
+      - id: "tinyllama-a"
+        host: "localhost"
+        port: 8011
+        cuda_device: 0
+      - id: "tinyllama-b"
+        host: "localhost"
+        port: 8012
+        cuda_device: 0
+    model_config:
+      model_tag: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.35
+      tensor_parallel_size: 1
+
+  # --- Single-instance group ---
+  Phi-3.5-mini-instruct:
+    instances:
+      - id: "phi35-mini"
+        host: "localhost"
+        port: 8013
+        cuda_device: 0
+    model_config:
+      model_tag: "microsoft/Phi-3.5-mini-instruct"
+      dtype: "float16"
+      max_model_len: 2048
+      gpu_memory_utilization: 0.90
       tensor_parallel_size: 1
 
 embedding_server:

@@ -30,6 +30,10 @@ class ModelRegistry:
         """Register an instance. Not locked — call only during boot setup."""
         self._instances[instance.key] = instance
 
+    def remove(self, key: str) -> None:
+        """Drop an instance (used when deleting a dynamically-added model)."""
+        self._instances.pop(key, None)
+
     def get(self, key: str) -> Optional[ModelInstance]:
         return self._instances.get(key)
 

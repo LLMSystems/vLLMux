@@ -138,7 +138,7 @@ For installation and startup details, refer to [LLM-Router-Server Startup Guide]
 ```bash
 cd /app/apps/router-server
 pip install -r requirements.txt
-sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunicorn.conf.py
+sh scripts/start_all.sh ../../packages/config-schema/config.yaml ./configs/gunicorn.conf.py
 ```
 
 **Note**: Use `packages/config-schema/config.yaml` as the single source of truth so the frontend, backend, and router all read the same configuration.

@@ -8,7 +8,7 @@ import uvloop
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.llm_router.config_loader import load_config
+from src.llm_router.overlay import load_config_with_overlay
 from src.llm_router.metrics_poller import poll_metrics_forever
 from src.llm_router.router import router
 from src.llm_router.store import LLMOpsStore
@@ -77,9 +77,11 @@ def create_app(config: dict) -> FastAPI:
 
     app.state.config = config
     app.include_router(router)
-    
+
     return app
 
 config_path = os.environ.get("CONFIG_PATH", "../../packages/config-schema/config.yaml")
-config = load_config(config_path)
+# Base config.yaml + dynamic-model overlay (POST /reload re-reads both).
+config = load_config_with_overlay(config_path)
 app = create_app(config)
+app.state.config_path = config_path

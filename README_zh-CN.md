@@ -136,7 +136,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 5000
 ```bash
 cd /app/apps/router-server
 pip install -r requirements.txt
-sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunicorn.conf.py
+sh scripts/start_all.sh ../../packages/config-schema/config.yaml ./configs/gunicorn.conf.py
 ```
 
 **注意**：配置文件統一使用 `packages/config-schema/config.yaml`（單一來源），確保前端、後端與 router 讀到同一份設定。

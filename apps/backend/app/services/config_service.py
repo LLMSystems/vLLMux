@@ -5,9 +5,14 @@ in app.core.config), so it stays trivially unit-testable.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from schema import RootConfig
+if TYPE_CHECKING:
+    # `schema` lives in packages/config-schema and is only put on sys.path by
+    # app.core.config at runtime. It's used here purely as a type hint (and this
+    # module has `from __future__ import annotations`), so keep the import
+    # type-only to avoid depending on import order.
+    from schema import RootConfig
 
 
 def _extra(model) -> dict:
@@ -21,6 +26,11 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
     for name, engine in config.LLM_engines.items():
         settings = engine.settings
         settings_extra = _extra(settings)
+        # Full vLLM model_config (declared fields + any extra='allow' flags) so
+        # the frontend can render every parameter generically. Per-instance extras
+        # override the shared group settings.
+        settings_full = settings.model_dump()
+
         for inst in engine.instances:
             inst_extra = _extra(inst)
             key = f"{name}::{inst.id}"
@@ -35,6 +45,8 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
                     or settings_extra.get("reasoning_parser")
                     or "unknown"
                 ),
+                # Complete model_config for this instance (shared settings + overrides).
+                "settings": {**settings_full, **inst_extra},
             }
 
     emb = config.embedding_server

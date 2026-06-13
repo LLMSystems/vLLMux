@@ -19,7 +19,7 @@ from app.api import config as config_routes
 from app.api import models as model_routes
 from app.api import observability as observability_routes
 from app.api import system as system_routes
-from app.core.config import get_config_path, load_config
+from app.core.config import get_config_path
 from app.core.logging import setup_logging
 from app.core.settings import BackendSettings
 from app.core.store import LLMOpsStore
@@ -28,6 +28,7 @@ from app.llmops.manager import ModelManager, build_registry
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
 from app.services.gpu_service import get_gpu_processes_with_info
+from app.services.overlay import build_merged_config, overlay_path
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -50,7 +51,9 @@ async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = get_config_path()
-    config = load_config(config_path)
+    ov_path = overlay_path()
+    # Base config.yaml + dynamically-added models (overlay), merged into one view.
+    config = build_merged_config(config_path)
     settings = BackendSettings.from_env()
 
     http_client = httpx.AsyncClient(
@@ -63,7 +66,8 @@ async def lifespan(app: FastAPI):
     launchers = [VllmLauncher(), EmbeddingLauncher()]
     registry = build_registry(config, config_path, launchers)
     manager = ModelManager(
-        registry, launchers, http_client, config, config_path, settings, store=store
+        registry, launchers, http_client, config, config_path, settings, store=store,
+        overlay_path=ov_path,
     )
 
     app.state.config = config

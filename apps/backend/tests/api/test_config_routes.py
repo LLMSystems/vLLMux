@@ -7,8 +7,9 @@ pytestmark = pytest.mark.api
 
 
 def test_get_config_returns_flattened_summary(client, monkeypatch):
-    # Route reads from disk via core.config.load_config; pin it to the fake.
-    monkeypatch.setattr(config_route, "load_config", lambda *a, **k: FAKE_CONFIG)
+    # Route reads base config.yaml + overlay via build_merged_config; pin it to
+    # the fake so the test doesn't depend on disk contents.
+    monkeypatch.setattr(config_route, "build_merged_config", lambda *a, **k: FAKE_CONFIG)
 
     resp = client.get("/api/config")
     assert resp.status_code == 200

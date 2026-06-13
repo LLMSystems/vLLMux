@@ -10,10 +10,25 @@ from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
                                                   mark_backend_failure,
                                                   mark_backend_success)
 from src.llm_router.backend_selector import select_instance_least_load
+from src.llm_router.overlay import load_config_with_overlay
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post("/reload")
+async def reload_config(request: Request):
+    """Re-read config.yaml + the dynamic-model overlay so newly-added models
+    become routable without a restart. Routing/metrics read app.state.config
+    live, so swapping it is enough."""
+    path = getattr(request.app.state, "config_path", None)
+    if not path:
+        raise HTTPException(status_code=500, detail="config_path not set on app.state")
+    request.app.state.config = load_config_with_overlay(path)
+    groups = list(request.app.state.config.get("LLM_engines", {}).keys())
+    logger.info("Config reloaded via /reload: %d groups", len(groups))
+    return {"status": "reloaded", "groups": groups}
 
 
 async def _record_request(app, model_key, instance_id, path, status_code, started,

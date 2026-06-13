@@ -6,8 +6,7 @@
     // Extra safety for array and object lookups, but may have false positives.
     "noUncheckedIndexedAccess": true,
 
-    // Path mapping for cleaner imports.
-    "baseUrl": ".",
+    // Path mapping for cleaner imports (baseUrl-free; paths resolve from this file).
     "paths": {
       "@/*": ["./src/*"]
     },
