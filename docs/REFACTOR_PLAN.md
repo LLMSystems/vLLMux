@@ -1,6 +1,8 @@
 # LLM-Router-Server-Dashboard 重構方案（Monorepo）
 
-> 狀態：規劃中，尚未動工。目標是把目前三個鬆散耦合的子專案整理成正式 Monorepo。
+> 狀態：**已執行（Phase 0–4 完成）**。三個子專案已整理成 `apps/` + `packages/` + `deploy/` 的正式 Monorepo。
+> 後端已分層並收斂 config、前端已建立 services/stores/router/views、共用 config-schema 已上線，
+> backend / router / config-schema 三套 pytest 全綠。下方為原始規劃，保留作為設計紀錄與後續參考。
 
 ## 目前架構的問題診斷
 

@@ -61,15 +61,14 @@
 #### 1. 使用 Docker 建立前端容器
 
 ```bash
-cd frontend/docker
-docker build -t llm-router-server-dashboard .
-docker-compose -f docker-compose.yaml up -d
+# 所有容器集中於 deploy/（build context 為 repo 根目錄）
+docker compose -f deploy/docker-compose.yaml up -d frontend
 ```
 
 #### 2. 本地開發模式
 
 ```bash
-cd frontend
+cd apps/frontend
 npm install
 npm run dev
 ```
@@ -77,14 +76,14 @@ npm run dev
 #### 3. 生產環境建置
 
 ```bash
-cd frontend
+cd apps/frontend
 npm install
 npm run build
 ```
 
 #### 4. 配置前端 API 端點
 
-編輯 `frontend/.env.local`：
+編輯 `apps/frontend/.env.local`：
 ```env
 VITE_API_BASE_URL=http://localhost:5000
 VITE_MODEL_CONTROL_PASSWORD=123
@@ -92,7 +91,7 @@ VITE_MODEL_CONTROL_PASSWORD=123
 
 #### 5. 自訂服務器配置
 
-編輯 `frontend/vite.config.js`：
+編輯 `apps/frontend/vite.config.js`：
 ```javascript
 export default defineConfig({
   server: {
@@ -109,9 +108,8 @@ export default defineConfig({
 #### 1. 建立容器
 
 ```bash
-cd LLM-Router-Server/docker
-docker build -t cuda121-cudnn8-python311 .
-docker-compose -f docker-compose.yaml up -d
+# 後端與 router 共用同一容器（見 deploy/backend-router.Dockerfile）
+docker compose -f deploy/docker-compose.yaml up -d backend-router
 ```
 
 **確保 docker-compose.yaml 中暴露了必要的端口**：
@@ -126,22 +124,22 @@ docker-compose -f docker-compose.yaml up -d
 docker exec -it <container_id> bash
 
 # 啟動後端
-cd /app/backend
+cd /app/apps/backend
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 5000
 ```
 
 ### LLM-Router-Server 部署
-安裝&啟動細節可參考 [LLM-Router-Server 啟動指南](LLM-Router-Server/README_zh.md)
+安裝&啟動細節可參考 [LLM-Router-Server 啟動指南](apps/router-server/README_zh.md)
 #### 1. 在容器內啟動路由服務器
 
 ```bash
-cd /app/LLM-Router-Server
+cd /app/apps/router-server
 pip install -r requirements.txt
-sh scripts/start_all.sh /app/backend/config.yaml ./configs/gunicorn.conf.py
+sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunicorn.conf.py
 ```
 
-**注意**：配置文件統一使用 `/app/backend/config.yaml`，確保前後端配置一致。
+**注意**：配置文件統一使用 `packages/config-schema/config.yaml`（單一來源），確保前端、後端與 router 讀到同一份設定。
 
 #### 2. 驗證服務狀態
 
@@ -159,7 +157,7 @@ curl http://localhost:5000/api/status
 
 ### config.yaml 結構
 
-配置文件位於 `backend/config.yaml`，控制所有模型的啟動參數。
+配置文件位於 `packages/config-schema/config.yaml`（單一來源，由 `packages/config-schema/schema.py` 驗證），控制所有模型的啟動參數。
 
 ```yaml
 # 路由服務器配置

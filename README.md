@@ -63,15 +63,14 @@ This project combines a routing server (LLM-Router-Server) with an easy-to-use m
 #### 1. Build Frontend Container with Docker
 
 ```bash
-cd frontend/docker
-docker build -t llm-router-server-dashboard .
-docker-compose -f docker-compose.yaml up -d
+# All containers are centralised under deploy/ (build context = repo root)
+docker compose -f deploy/docker-compose.yaml up -d frontend
 ```
 
 #### 2. Local Development Mode
 
 ```bash
-cd frontend
+cd apps/frontend
 npm install
 npm run dev
 ```
@@ -79,14 +78,14 @@ npm run dev
 #### 3. Production Build
 
 ```bash
-cd frontend
+cd apps/frontend
 npm install
 npm run build
 ```
 
 #### 4. Configure Frontend API Endpoint
 
-Edit `frontend/.env.local`:
+Edit `apps/frontend/.env.local`:
 ```env
 VITE_API_BASE_URL=http://localhost:5000
 VITE_MODEL_CONTROL_PASSWORD=123
@@ -94,7 +93,7 @@ VITE_MODEL_CONTROL_PASSWORD=123
 
 #### 5. Customize Server Configuration
 
-Edit `frontend/vite.config.js`:
+Edit `apps/frontend/vite.config.js`:
 ```javascript
 export default defineConfig({
   server: {
@@ -111,9 +110,8 @@ export default defineConfig({
 #### 1. Build Container
 
 ```bash
-cd LLM-Router-Server/docker
-docker build -t cuda121-cudnn8-python311 .
-docker-compose -f docker-compose.yaml up -d
+# backend + router share one container (see deploy/backend-router.Dockerfile)
+docker compose -f deploy/docker-compose.yaml up -d backend-router
 ```
 
 **Ensure docker-compose.yaml exposes necessary ports**:
@@ -128,22 +126,22 @@ docker-compose -f docker-compose.yaml up -d
 docker exec -it <container_id> bash
 
 # Start backend
-cd /app/backend
+cd /app/apps/backend
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 5000
 ```
 
 ### LLM-Router-Server Deployment
-For installation and startup details, refer to [LLM-Router-Server Startup Guide](LLM-Router-Server/README.md)
+For installation and startup details, refer to [LLM-Router-Server Startup Guide](apps/router-server/README.md)
 #### 1. Start Router Server in Container
 
 ```bash
-cd /app/LLM-Router-Server
+cd /app/apps/router-server
 pip install -r requirements.txt
-sh scripts/start_all.sh /app/backend/config.yaml ./configs/gunicorn.conf.py
+sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunicorn.conf.py
 ```
 
-**Note**: Use `/app/backend/config.yaml` as the unified configuration file to ensure consistency between frontend and backend.
+**Note**: Use `packages/config-schema/config.yaml` as the single source of truth so the frontend, backend, and router all read the same configuration.
 
 #### 2. Verify Service Status
 
@@ -161,7 +159,7 @@ curl http://localhost:5000/api/status
 
 ### config.yaml Structure
 
-The configuration file is located at `backend/config.yaml` and controls all model startup parameters.
+The configuration file is located at `packages/config-schema/config.yaml` (the single source of truth, validated by `packages/config-schema/schema.py`) and controls all model startup parameters.
 
 ```yaml
 # Router server configuration
