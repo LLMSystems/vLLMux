@@ -1,10 +1,13 @@
 #!/bin/bash
+# Starts the Router Server only. Model processes (vLLM, embedding/reranker) are
+# now owned by the Dashboard backend's llmops layer and started via its
+# /api/models/{key}/start endpoint — the router no longer launches models.
 
 CONFIG_PATH=$1
 GUNICORN_CONFIG_PATH=$2
 
 if [ -z "$CONFIG_PATH" ]; then
-  echo "請提供 config.yaml 路徑，例如: ./start_all.sh ./configs/config_formal.yaml"
+  echo "請提供 config.yaml 路徑，例如: ./start_all.sh ./configs/config_formal.yaml ./configs/gunicorn.conf.py"
   exit 1
 fi
 
@@ -21,12 +24,7 @@ export GUNICORN_CONFIG_PATH="$GUNICORN_CONFIG_PATH"
 
 export TORCH_CUDA_ARCH_LIST="8.0"
 
-echo "啟動所有模型..."
-PYTHONPATH=. python scripts/start_all_models.py --config "$CONFIG_PATH" &
-sleep 5
-
-echo "啟動 Router Server（gunicorn + uvloop + 多 worker）..."
-
+echo "啟動 Router Server（gunicorn + uvloop）..."
 PYTHONPATH=. gunicorn src.llm_router.main:app \
   -c "$GUNICORN_CONFIG_PATH" \
   --env CONFIG_PATH="$CONFIG_PATH"

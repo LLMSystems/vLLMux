@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.llm_router.config_loader import load_config
 from src.llm_router.metrics_poller import poll_metrics_forever
 from src.llm_router.router import router
+from src.llm_router.store import LLMOpsStore
 from src.llm_router.vllm_metrics_client import VLLMMetricsClient
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -43,7 +44,11 @@ async def lifespan(app: FastAPI):
     app.state.metrics_cache = {}
     app.state.backend_inflight = {}
     app.state.backend_health = {}
-    
+
+    # Shared telemetry DB (same file the dashboard backend reads). LLMOPS_DB_PATH
+    # must match the backend; default resolves to <repo>/data/llmops.db.
+    app.state.store = await LLMOpsStore(os.environ.get("LLMOPS_DB_PATH")).init()
+
     metrics_task = asyncio.create_task(poll_metrics_forever(app, interval=1.0))
     app.state.metrics_task = metrics_task
     try:
@@ -57,6 +62,7 @@ async def lifespan(app: FastAPI):
             pass
 
         await app.state.http_client.aclose()
+        await app.state.store.close()
 
 def create_app(config: dict) -> FastAPI:
     app = FastAPI(title="LLM Router API", version="0.1.0", lifespan=lifespan)

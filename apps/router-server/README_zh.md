@@ -91,8 +91,7 @@ LLM-Router-Server/
 │   └── docker-compose.yaml    # Docker Compose 配置
 ├── logs/                       # 日誌目錄
 ├── scripts/                    # 啟動腳本目錄
-│   ├── start_all_models.py    # 啟動所有模型的 Python 腳本
-│   └── start_all.sh           # 一鍵啟動腳本（模型 + Router）
+│   └── start_all.sh           # 啟動 Router Server（模型由 dashboard 後端管理）
 ├── src/                        # 主要源碼目錄
 │   ├── embedding_reranker/    # Embedding 與 Reranker 模組
 │   │   ├── __init__.py
@@ -105,11 +104,13 @@ LLM-Router-Server/
 │   │       └── optimize.py        # 優化工具
 │   ├── llm_router/            # LLM 路由模組
 │   │   ├── __init__.py
-│   │   ├── config_loader.py   # 配置載入器
-│   │   ├── env.py             # 環境變數管理
+│   │   ├── config_loader.py   # 配置載入器（用 config-schema 驗證）
 │   │   ├── main.py            # FastAPI 應用入口
-│   │   ├── router.py          # 路由處理邏輯
-│   │   └── vllm_launcher.py   # vLLM 啟動器
+│   │   ├── router.py          # 路由處理邏輯（chat/completions/embeddings 代理）
+│   │   ├── backend_selector.py    # 最低負載實例選擇
+│   │   ├── backend_runtime_state.py  # inflight 與健康度追蹤
+│   │   ├── metrics_poller.py  # 背景輪詢 vLLM /metrics
+│   │   └── vllm_metrics_client.py    # vLLM metrics 擷取與解析
 │   └── metrics/               # 監控與指標
 │       └── basic_metrics.py   # 基礎指標收集
 ├── test/                       # 測試檔案目錄
@@ -260,18 +261,19 @@ preload_app = False
 
 ## 使用指南
 
-### 1. 啟動所有服務
-
-使用一鍵啟動腳本：
+### 1. 啟動 Router Server
 
 ```bash
 sh scripts/start_all.sh ./configs/config.yaml ./configs/gunicorn.conf.py
 ```
 
-這個腳本會依序執行：
-1. 啟動所有配置的 vLLM 模型服務
-2. 啟動 Embedding 與 Reranker 服務（如果已配置）
-3. 啟動 Router Server（使用 Gunicorn + 多 Worker）
+這會啟動 Router Server（Gunicorn + uvloop）。Router 只負責路由與負載平衡，不再啟動模型。
+
+**模型進程**（vLLM 實例、Embedding/Reranker 服務）由 Dashboard 後端管理，透過其 API 按需啟動：
+
+```bash
+curl -X POST http://localhost:5000/api/models/Qwen3-0.6B::qwen3/start
+```
 
 ### 3. 驗證服務狀態
 

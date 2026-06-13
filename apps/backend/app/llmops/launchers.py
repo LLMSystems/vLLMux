@@ -1,0 +1,149 @@
+"""Per-kind launch recipes: turn validated config into a LaunchSpec.
+
+A Launcher knows how to (a) enumerate the instance keys a config defines for its
+kind, and (b) build the LaunchSpec for one key. Spawning/killing is delegated to
+process.py, so launchers stay pure (no subprocess side effects) and unit-testable.
+
+Two implementations:
+  - VllmLauncher: `vllm serve <tag> --flags...`, one process per instance.
+  - EmbeddingLauncher: the router-server's embedding_reranker_launcher.py, one
+    process for the whole embedding/reranking server.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Protocol
+
+from app.llmops.instance import LaunchSpec
+from app.llmops.state import ModelKind
+
+# apps/backend/app/llmops/launchers.py -> apps/router-server is 3 dirs up + sibling.
+_ROUTER_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "router-server")
+)
+_EMBEDDING_SCRIPT = os.path.join(
+    _ROUTER_ROOT, "src", "embedding_reranker", "embedding_reranker_launcher.py"
+)
+
+EMBEDDING_KEY = "embedding::default"
+LOG_DIR = "./logs"
+
+
+def build_vllm_cli_args(model_cfg: dict) -> list[str]:
+    """dict -> ``vllm serve`` CLI args. Ported verbatim from the old launcher.
+
+    bool flags are presence-only; lists are JSON-encoded; None is skipped;
+    keys are kebab-cased. `model_tag` is the positional model argument.
+    """
+    model_tag = model_cfg.get("model_tag")
+    if not model_tag:
+        raise ValueError("model_config must provide 'model_tag'")
+
+    cli_args = ["serve", model_tag]
+    for key, value in model_cfg.items():
+        if key == "model_tag" or value is None:
+            continue
+        key_flag = "--" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                cli_args.append(key_flag)
+        elif isinstance(value, list):
+            cli_args.append(key_flag)
+            cli_args.append(json.dumps(value))
+        else:
+            cli_args.append(key_flag)
+            cli_args.append(str(value))
+    return cli_args
+
+
+class Launcher(Protocol):
+    kind: ModelKind
+
+    def keys(self, config) -> list[str]:
+        """All instance keys this launcher's kind defines in the config."""
+        ...
+
+    def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
+        """Resolve the LaunchSpec for one key."""
+        ...
+
+
+class VllmLauncher:
+    kind = ModelKind.LLM
+
+    def keys(self, config) -> list[str]:
+        out: list[str] = []
+        for model_tag, engine in config.LLM_engines.items():
+            for inst in engine.instances:
+                out.append(f"{model_tag}::{inst.id}")
+        return out
+
+    def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
+        model_tag, _, instance_id = key.partition("::")
+        engine = config.LLM_engines.get(model_tag)
+        if engine is None:
+            raise KeyError(f"model group '{model_tag}' not in config")
+        inst = next((i for i in engine.instances if i.id == instance_id), None)
+        if inst is None:
+            raise KeyError(f"instance '{instance_id}' not in group '{model_tag}'")
+
+        # Merge shared model_config with the instance overrides, mirroring the
+        # historical behaviour: cuda_device only becomes CUDA_VISIBLE_DEVICES
+        # for single-GPU (tp==1); the `id` field is dropped.
+        merged: dict = engine.settings.model_dump(by_alias=False)
+        merged.update(inst.model_dump())
+
+        env: dict[str, str] = {}
+        if merged.get("tensor_parallel_size", 1) == 1:
+            cuda_device = merged.pop("cuda_device", None)
+            if cuda_device is not None:
+                env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+        merged.pop("id", None)
+
+        command = ["vllm"] + build_vllm_cli_args(merged)
+        log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
+        return LaunchSpec(
+            key=key,
+            kind=self.kind,
+            command=command,
+            env=env,
+            log_path=log_path,
+            host=inst.host,
+            port=inst.port,
+            probe_url=f"http://{inst.host}:{inst.port}/health",
+            model_tag=engine.settings.model_tag,
+        )
+
+
+class EmbeddingLauncher:
+    kind = ModelKind.EMBEDDING
+
+    def keys(self, config) -> list[str]:
+        emb = config.embedding_server
+        if emb and (emb.embedding_models or emb.reranking_models):
+            return [EMBEDDING_KEY]
+        return []
+
+    def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
+        emb = config.embedding_server
+        if emb is None or not (emb.embedding_models or emb.reranking_models):
+            raise KeyError("no embedding/reranking models configured")
+
+        env = {"PYTHONPATH": _ROUTER_ROOT}
+        if emb.cuda_device is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(emb.cuda_device)
+
+        command = [sys.executable, _EMBEDDING_SCRIPT, "--config", config_path]
+        log_path = os.path.join(LOG_DIR, "embedding_server.log")
+        return LaunchSpec(
+            key=key,
+            kind=self.kind,
+            command=command,
+            env=env,
+            log_path=log_path,
+            host=emb.host,
+            port=emb.port,
+            probe_url=f"http://{emb.host}:{emb.port}/health",
+        )

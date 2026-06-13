@@ -143,14 +143,16 @@ sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunico
 
 **Note**: Use `packages/config-schema/config.yaml` as the single source of truth so the frontend, backend, and router all read the same configuration.
 
+**Model lifecycle**: the router only routes and load-balances — it no longer launches models. Model processes (vLLM instances, Embedding/Reranker server) are owned by the Dashboard backend and started on demand via `POST /api/models/{key}/start`.
+
 #### 2. Verify Service Status
 
 ```bash
-# Check router server
-curl http://localhost:8887/health
+# Check router server (lists configured model groups)
+curl http://localhost:8887/v1/models
 
-# Check backend API
-curl http://localhost:5000/api/status
+# Check backend API (lifecycle state of every model instance)
+curl http://localhost:5000/api/models
 ```
 
 ---

@@ -1,6 +1,6 @@
 import pytest
 
-from app.routes import config as config_route
+from app.api import config as config_route
 from tests.conftest import FAKE_CONFIG
 
 pytestmark = pytest.mark.api

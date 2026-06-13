@@ -25,6 +25,19 @@ app.add_middleware(
 
 builder = None
 
+
+@app.get("/health")
+async def health():
+    """Readiness probe: 200 only once the model builder has finished loading.
+
+    The dashboard backend's reconciler polls this to mark the embedding server
+    READY, the same way it polls vLLM's /health for LLM instances.
+    """
+    if builder is None:
+        raise HTTPException(status_code=503, detail="models still loading")
+    return {"status": "ok"}
+
+
 @app.post("/v1/embeddings")
 async def create_embeddings(request: EmbeddingRequest):
     model_name = request.model

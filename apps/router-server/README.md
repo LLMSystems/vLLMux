@@ -93,8 +93,7 @@ LLM-Router-Server/
 │   └── docker-compose.yaml    # Docker Compose configuration
 ├── logs/                       # Log directory
 ├── scripts/                    # Startup scripts directory
-│   ├── start_all_models.py    # Python script to start all models
-│   └── start_all.sh           # One-click startup script (models + router)
+│   └── start_all.sh           # Start the Router Server (models are managed by the dashboard backend)
 ├── src/                        # Main source code directory
 │   ├── embedding_reranker/    # Embedding and Reranker module
 │   │   ├── __init__.py
@@ -107,11 +106,13 @@ LLM-Router-Server/
 │   │       └── optimize.py        # Optimization tools
 │   ├── llm_router/            # LLM routing module
 │   │   ├── __init__.py
-│   │   ├── config_loader.py   # Configuration loader
-│   │   ├── env.py             # Environment variable management
+│   │   ├── config_loader.py   # Configuration loader (validates via config-schema)
 │   │   ├── main.py            # FastAPI application entry point
-│   │   ├── router.py          # Routing logic
-│   │   └── vllm_launcher.py   # vLLM launcher
+│   │   ├── router.py          # Routing logic (chat/completions/embeddings proxy)
+│   │   ├── backend_selector.py    # Least-load instance selection
+│   │   ├── backend_runtime_state.py  # Inflight + health tracking
+│   │   ├── metrics_poller.py  # Background vLLM /metrics poller
+│   │   └── vllm_metrics_client.py    # vLLM metrics fetch + parse
 │   └── metrics/               # Monitoring and metrics
 │       └── basic_metrics.py   # Basic metrics collection
 ├── test/                       # Test files directory
@@ -262,18 +263,21 @@ preload_app = False
 
 ## Usage Guide
 
-### 1. Start All Services
-
-Use the one-click startup script:
+### 1. Start the Router Server
 
 ```bash
 sh scripts/start_all.sh ./configs/config.yaml ./configs/gunicorn.conf.py
 ```
 
-This script will execute in sequence:
-1. Start all configured vLLM model services
-2. Start Embedding and Reranker services (if configured)
-3. Start Router Server (using Gunicorn + multiple workers)
+This starts the Router Server (Gunicorn + uvloop). The router only routes and
+load-balances; it no longer launches models.
+
+**Model processes** (vLLM instances, Embedding/Reranker server) are owned by the
+Dashboard backend and started on demand via its API:
+
+```bash
+curl -X POST http://localhost:5000/api/models/Qwen3-0.6B::qwen3/start
+```
 
 ### 3. Verify Service Status
 

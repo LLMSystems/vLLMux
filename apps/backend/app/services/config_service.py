@@ -1,56 +1,52 @@
-"""Turn the raw config.yaml into the flattened summary the dashboard renders.
+"""Flatten a validated RootConfig into the summary the dashboard renders.
 
-Pure function over an already-loaded config dict — no file IO here, so it is
-trivially unit-testable. The *loading* lives in app.core.config.
+Pure function over an already-loaded RootConfig — no file IO here (loading lives
+in app.core.config), so it stays trivially unit-testable.
 """
+from __future__ import annotations
+
 from typing import Any
 
+from schema import RootConfig
 
-def summarize_config(raw_config: dict[str, Any]) -> dict[str, Any]:
+
+def _extra(model) -> dict:
+    """pydantic v2 stores unknown (extra='allow') keys on .model_extra."""
+    return getattr(model, "model_extra", None) or {}
+
+
+def summarize_config(config: RootConfig) -> dict[str, Any]:
     llm_engines: dict[str, Any] = {}
 
-    for name, cfg in raw_config.get("LLM_engines", {}).items():
-        instances = cfg.get("instances", [])
-        shared_model_cfg = cfg.get("model_config", {})
-        if not instances:
-            continue
-        for instance in instances:
-            instance_id = instance.get("id")
-            if not instance_id:
-                continue
-            key = f"{name}::{instance_id}"
+    for name, engine in config.LLM_engines.items():
+        settings = engine.settings
+        settings_extra = _extra(settings)
+        for inst in engine.instances:
+            inst_extra = _extra(inst)
+            key = f"{name}::{inst.id}"
             llm_engines[key] = {
-                "port": instance.get("port", cfg.get("port")),
-                "cuda_device": instance.get("cuda_device", cfg.get("cuda_device")),
-                "max_model_len": shared_model_cfg.get(
-                    "max_model_len", cfg.get("max_model_len")
-                ),
-                "gpu_memory_utilization": shared_model_cfg.get(
-                    "gpu_memory_utilization", cfg.get("gpu_memory_utilization")
-                ),
+                "port": inst.port,
+                "cuda_device": inst.cuda_device,
+                "max_model_len": settings.max_model_len,
+                "gpu_memory_utilization": settings.gpu_memory_utilization,
                 "tool_parser": (
-                    shared_model_cfg.get("tool-call-parser")
-                    or instance.get("reasoning_parser")
-                    or cfg.get("tool-call-parser")
-                    or cfg.get("reasoning_parser")
+                    settings_extra.get("tool-call-parser")
+                    or inst_extra.get("reasoning_parser")
+                    or settings_extra.get("reasoning_parser")
                     or "unknown"
                 ),
             }
 
-    embedding_server = raw_config.get("embedding_server", {})
+    emb = config.embedding_server
     embedding_summary = {
-        "port": embedding_server.get("port"),
-        "cuda_device": embedding_server.get("cuda_device"),
-        "embedding_models": list(embedding_server.get("embedding_models").keys())
-        if embedding_server.get("embedding_models")
-        else [],
-        "reranking_models": list(embedding_server.get("reranking_models").keys())
-        if embedding_server.get("reranking_models")
-        else [],
+        "port": emb.port if emb else None,
+        "cuda_device": emb.cuda_device if emb else None,
+        "embedding_models": list(emb.embedding_models.keys()) if emb else [],
+        "reranking_models": list(emb.reranking_models.keys()) if emb else [],
     }
 
     return {
-        "server": raw_config.get("server", {}),
+        "server": config.server.model_dump(),
         "LLM_engines": llm_engines,
         "embedding_server": embedding_summary,
     }

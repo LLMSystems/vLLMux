@@ -141,14 +141,16 @@ sh scripts/start_all.sh /app/packages/config-schema/config.yaml ./configs/gunico
 
 **注意**：配置文件統一使用 `packages/config-schema/config.yaml`（單一來源），確保前端、後端與 router 讀到同一份設定。
 
+**模型生命週期**：router 只負責路由與負載平衡，不再啟動模型。模型進程（vLLM 實例、Embedding/Reranker 服務）由 Dashboard 後端管理，透過 `POST /api/models/{key}/start` 按需啟動。
+
 #### 2. 驗證服務狀態
 
 ```bash
-# 檢查路由服務器
-curl http://localhost:8887/health
+# 檢查路由服務器（列出設定的模型群組）
+curl http://localhost:8887/v1/models
 
-# 檢查後端 API
-curl http://localhost:5000/api/status
+# 檢查後端 API（每個模型實例的生命週期狀態）
+curl http://localhost:5000/api/models
 ```
 
 ---
