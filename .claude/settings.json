@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rl \"axios\\\\|fetch\\(\" ../frontend/src)",
+      "Read(//home/max/frontend/**)"
+    ]
+  }
+}
