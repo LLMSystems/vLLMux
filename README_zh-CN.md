@@ -124,7 +124,7 @@ docker compose -f deploy/docker-compose.yaml up -d backend-router
 docker exec -it <container_id> bash
 
 # 啟動後端
-cd /app/apps/backend
+cd apps/backend
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 5000
 ```

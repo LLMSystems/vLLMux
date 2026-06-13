@@ -216,3 +216,4 @@ apps/router-server/
 - **Phase 0 的兩組 drift 檔案**是最該先釐清的 —— 在搞清楚哪份是線上實際在跑之前，不要刪任何一份。
 - README 寫死了不少路徑（`/app/backend/config.yaml`、`cd frontend/docker` 等），頂層搬移後 README 與 compose 內的路徑都要同步改，否則部署會壞。
 - 後端與 router「同容器」的約束在 monorepo 下不變，Dockerfile 要確保兩者都被 COPY 進去。
+- **WSL / CUDA 13 啟動 workaround**：vLLM 在 WSL 下需 `VLLM_USE_V2_MODEL_RUNNER=0`（V2 runner 需要 UVA，WSL 不支援），且 flashinfer 0.6.12 與 CUDA 13 的 CUB 不相容，需 `VLLM_USE_FLASHINFER_SAMPLER=0` + `VLLM_ATTENTION_BACKEND=FLASH_ATTN`。這三個變數已收進兩個 launcher 共用的 `env_setup()`（`apps/backend/app/launcher/env.py`、`apps/router-server/src/llm_router/env.py`），預設**只在偵測到 WSL 時自動套用**，正常 GPU 機不受影響；以 `LLM_ROUTER_VLLM_COMPAT=on|off` 可手動覆寫，且皆用 `setdefault`（外層 export 永遠優先）。`start_llm.sh` 保留作手動測試用。

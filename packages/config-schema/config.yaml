@@ -10,10 +10,10 @@ LLM_engines:
         host: "localhost"
         port: 8002
         cuda_device: 0
-      - id: "qwen3-2"
-        host: "localhost"
-        port: 8004
-        cuda_device: 0
+      # - id: "qwen3-2"
+      #   host: "localhost"
+      #   port: 8004
+      #   cuda_device: 0
 
     model_config:
       model_tag: "Qwen/Qwen3-0.6B"

@@ -8,6 +8,8 @@ import time
 
 import yaml
 
+from app.launcher.env import env_setup
+
 logger = logging.getLogger(__name__)
 
 def wait_for_model_ready(log_path: str, timeout: int = 300, model_name: str = "") -> bool:
@@ -61,6 +63,10 @@ def launch_single_llm_model(app, model_name: str, config_path: str):
     seperate model group name and instance id by "::", if no instance id, just use model group name as key in running_llm_procs. This allows us to support both single-instance models and multi-instance models with the same code.
     """
     
+    # Apply vLLM env (spawn method + WSL/CUDA13 compat) before any subprocess is
+    # spawned; the child vLLM inherits this process's os.environ.
+    env_setup()
+
     running_llm_procs = app.state.running_llm_procs
     if model_name in running_llm_procs and running_llm_procs[model_name].poll() is None:
         logger.info(f"模型 {model_name} 已經在執行中，跳過啟動。")
