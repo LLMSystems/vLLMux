@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from app.launcher import env as env_mod
+from app.llmops import process as env_mod
 
 pytestmark = pytest.mark.unit
 

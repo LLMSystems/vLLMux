@@ -1,4 +1,5 @@
 import pytest
+from schema import RootConfig
 
 from app.services.config_service import summarize_config
 from tests.conftest import FAKE_CONFIG
@@ -29,14 +30,20 @@ def test_embedding_summary_lists_model_names():
     assert emb["reranking_models"] == ["bge-reranker-large"]
 
 
-def test_instances_without_id_are_skipped():
-    cfg = {"LLM_engines": {"M": {"instances": [{"port": 9}], "model_config": {}}}}
-    assert summarize_config(cfg)["LLM_engines"] == {}
-
-
-def test_missing_sections_yield_empty_summary():
-    summary = summarize_config({})
-    assert summary["LLM_engines"] == {}
+def test_no_embedding_server_yields_empty_lists():
+    cfg = RootConfig.model_validate(
+        {
+            "server": {"port": 8887},
+            "LLM_engines": {
+                "M": {
+                    "instances": [{"id": "a", "port": 9}],
+                    "model_config": {"model_tag": "x"},
+                }
+            },
+        }
+    )
+    summary = summarize_config(cfg)
     assert summary["embedding_server"]["embedding_models"] == []
     assert summary["embedding_server"]["reranking_models"] == []
-    assert summary["server"] == {}
+    assert summary["embedding_server"]["port"] is None
+    assert set(summary["LLM_engines"]) == {"M::a"}
