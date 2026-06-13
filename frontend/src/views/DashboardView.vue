@@ -86,12 +86,12 @@
         </el-table-column>
         <el-table-column label="指令行">
           <template #default="scope">
-          <el-tooltip 
-            v-if="Array.isArray(scope.row.cmdline)" 
-            :content="scope.row.cmdline.join(' ')" 
+          <el-tooltip
+            v-if="Array.isArray(scope.row.cmdline)"
+            :content="scope.row.cmdline.join(' ')"
             placement="top-start"
           >
-            <span 
+            <span
               style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 300px;"
             >
               {{ scope.row.cmdline.join(' ').slice(0, 60) }}...
@@ -110,188 +110,42 @@
       v-if="llmModels.length > 0"
       title="LLM 模型"
       :models="llmModels"
-      @start="startLLM"
-      @stop="stopLLM"
+      @start="store.startLLM"
+      @stop="store.stopLLM"
     />
 
     <ModelGroup
       v-if="embeddingServer.name"
       title="Embedding & reranking 模型"
       :models="[embeddingServer]"
-      @start="startEmbedding"
-      @stop="stopEmbedding"
+      @start="store.startEmbedding"
+      @stop="store.stopEmbedding"
     />
 
   </div>
 </template>
 
 <script setup>
-import ModelGroup from '../components/ModelGroup.vue'
-import { ref, onMounted } from 'vue'
-// 頁面切換或隱藏時暫停輪詢（省資源）
+import { onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 
-const server = ref({})
-const llmModels = ref([])
-const embeddingServer = ref({})
-const resources = ref(null)
-const gpuProcesses = ref([])
+import ModelGroup from '@/components/ModelGroup.vue'
+import { useModelsStore } from '@/stores/models'
 
-async function pollGpuProcesses () {
-  const fetchProcesses = async () => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/gpu/processes`)
-      const data = await res.json()
-      gpuProcesses.value = Array.isArray(data) ? data : []
-    } catch (err) {
-      console.error('無法取得 GPU 占用程序資訊', err)
-    }
-  }
-  await fetchProcesses()
-  setInterval(fetchProcesses, 5000)
-}
-
+const store = useModelsStore()
+const { server, llmModels, embeddingServer, resources, gpuProcesses } = storeToRefs(store)
 
 function formatGB(bytes) {
   return (bytes / (1024 ** 3)).toFixed(1)
 }
 
-onMounted(async () => {
-  const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/config`)
-  const config = await res.json()
-
-  server.value = config.server
-
-  llmModels.value = Object.entries(config.LLM_engines).map(([name, cfg]) => ({
-    name,
-    port: cfg.port,
-    cuda_device: cfg.cuda_device,
-    max_model_len: cfg.max_model_len,
-    gpu_memory_utilization: cfg.gpu_memory_utilization,
-    tool_parser: cfg['tool_parser'] || cfg['reasoning_parser'] || 'unknown',
-    status: '未啟動'
-  }))
-
-  embeddingServer.value = {
-    name: 'Embedding & reranking Server',
-    port: config.embedding_server.port,
-    cuda_device: config.embedding_server.cuda_device,
-    embedding_models: config.embedding_server.embedding_models,
-    reranking_models: config.embedding_server.reranking_models,
-    status: '未啟動'
-  }
-
-
-  pollModelStatus()
-  pollResources()
-  pollGpuProcesses()
+onMounted(() => {
+  store.startPolling()
 })
 
-function pollResources() {
-  const fetchResources = async () => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/resources`)
-      resources.value = await res.json()
-    } catch (err) {
-      console.warn('無法取得系統資源資訊', err)
-    }
-  }
-  fetchResources()
-  setInterval(fetchResources, 1000)
-}
-
-async function pollModelStatus() {
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/status/all`)
-      const data = await res.json()
-      const statusMap = Object.fromEntries(data.models.map(m => [m.name, m.status]))
-
-      llmModels.value.forEach(model => {
-        if (statusMap[model.name]) {
-          model.status = statusMap[model.name]
-        }
-      })
-      if (statusMap["Embedding & reranking Server"]) {
-        embeddingServer.value.status = statusMap["Embedding & reranking Server"]
-      }
-    } catch (error) {
-      console.error('Error fetching model status:', error)
-    }
-  }
-  await fetchStatus()
-  setInterval(fetchStatus, 5000)
-}
-
-const startLLM = async (name) => {
-  const model = llmModels.value.find(m => m.name === name)
-  if (!model) return
-  model.status = '啟動中'
-
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/llm/start/${name}`, {
-      method: 'POST',
-    })
-    const data = await res.json()
-    model.status = data.status || '啟動中'
-  } catch (err) {
-    model.status = '啟動失敗'
-    console.error('啟動失敗', err)
-  }
-}
-
-
-
-const stopLLM = async (name) => {
-  const model = llmModels.value.find(m => m.name === name)
-  if (!model) return
-  model.status = '關閉中'
-
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/llm/stop/${name}`, {
-      method: 'POST'
-    })
-    const data = await res.json()
-    model.status = data.status || '未啟動'
-  } catch (err) {
-    model.status = '未知錯誤'
-    console.error('關閉失敗', err)
-  }
-}
-
-const startEmbedding = async () => {
-  embeddingServer.value.status = '啟動中'
-
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/embedding/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: embeddingServer.value.name })
-    })
-    const data = await res.json()
-    embeddingServer.value.status = data.status || '啟動中'
-  } catch (err) {
-    embeddingServer.value.status = '啟動失敗'
-    console.error('啟動失敗', err)
-  }
-}
-
-const stopEmbedding = async () => {
-  embeddingServer.value.status = '關閉中'
-
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/embedding/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: "embeddingServer.value.name" })
-    })
-    const data = await res.json()
-    embeddingServer.value.status = data.status || '未啟動'
-  } catch (err) {
-    embeddingServer.value.status = '未知錯誤'
-    console.error('關閉失敗', err)
-  }
-}
-
+onUnmounted(() => {
+  store.stopPolling()
+})
 </script>
 
 <style scoped>
