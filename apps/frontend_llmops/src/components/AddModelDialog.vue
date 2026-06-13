@@ -80,7 +80,7 @@ async function parse() {
     warnings.value = p.warnings
     parsed.value = true
   } catch (e) {
-    toast.error('Could not parse command', { description: e instanceof ApiError ? e.message : String(e) })
+    toast.error('無法解析指令', { description: e instanceof ApiError ? e.message : String(e) })
   } finally {
     parsing.value = false
   }
@@ -114,17 +114,17 @@ async function submit() {
       instance: { id: instanceId.value, host: host.value, port: port.value, cuda_device: cudaDevice.value },
       settings,
     })
-    toast.success(`Added ${view.key}`, { description: 'Now stopped — press Start to launch it.' })
-    // Make it routable end-to-end by refreshing the router's view of the config.
+    toast.success(`已新增 ${view.key}`, { description: ‘目前已停止 — 請按「啟動」以啟用。’ })
+    // Make it routable end-to-end by refreshing the router’s view of the config.
     if (!(await api.routerReload())) {
-      toast.warning('Router not refreshed', {
-        description: 'Model added, but the router is unreachable — it won’t route there until reloaded.',
+      toast.warning(‘路由器未重新整理’, {
+        description: ‘模型已新增，但路由器無法連線 — 重新載入前將無法路由至此模型。’,
       })
     }
     emit('created', view.key)
     open.value = false
   } catch (e) {
-    toast.error('Failed to add model', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error('新增模型失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
   } finally {
     creating.value = false
   }
@@ -132,11 +132,11 @@ async function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" title="Add model" width-class="max-w-2xl">
+  <Dialog v-model:open="open" title="新增模型" width-class="max-w-2xl">
     <div class="space-y-4">
       <!-- Paste + parse -->
       <div>
-        <label class="text-xs font-medium text-muted-foreground">Paste a vLLM launch command</label>
+        <label class="text-xs font-medium text-muted-foreground">貼上 vLLM 啟動指令</label>
         <Textarea
           v-model="command"
           placeholder="CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85"
@@ -144,7 +144,7 @@ async function submit() {
         />
         <Button class="mt-2" size="sm" :disabled="!command.trim() || parsing" @click="parse">
           <Loader2 v-if="parsing" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />
-          Parse command
+          解析指令
         </Button>
       </div>
 
@@ -162,42 +162,42 @@ async function submit() {
 
         <div class="grid grid-cols-2 gap-3">
           <label class="block">
-            <span class="text-xs text-muted-foreground">Group</span>
+            <span class="text-xs text-muted-foreground">群組</span>
             <Input v-model="group" class="mt-1" />
             <span v-if="groupExists && !keyExists" class="mt-1 block text-[11px] text-muted-foreground">
-              Existing group — adds as a new replica.
+              已存在群組 — 將新增為新副本。
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">Instance id</span>
+            <span class="text-xs text-muted-foreground">實例 ID</span>
             <Input v-model="instanceId" class="mt-1" :class="keyExists ? 'border-status-failed' : ''" />
             <span v-if="keyExists" class="mt-1 block text-[11px] text-status-failed">
-              {{ key }} already exists.
+              {{ key }} 已存在。
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">Host</span>
+            <span class="text-xs text-muted-foreground">主機</span>
             <Input v-model="host" class="mt-1" />
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">Port</span>
+            <span class="text-xs text-muted-foreground">連接埠</span>
             <Input v-model.number="port" type="number" class="mt-1" :class="portInUse ? 'border-status-failed' : ''" />
             <span v-if="portInUse" class="mt-1 block text-[11px] text-status-failed">
-              Port {{ port }} is already used by another instance.
+              連接埠 {{ port }} 已被其他實例使用。
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">GPU (cuda_device)</span>
+            <span class="text-xs text-muted-foreground">GPU（cuda_device）</span>
             <select
               v-model="cudaDevice"
               class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
             >
-              <option :value="null">none / auto</option>
+              <option :value="null">無 / 自動</option>
               <option v-for="i in gpuOptions" :key="i" :value="i">cuda:{{ i }}</option>
             </select>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">Model tag <span class="text-status-failed">*</span></span>
+            <span class="text-xs text-muted-foreground">模型標籤 <span class="text-status-failed">*</span></span>
             <Input v-model="modelTag" class="mt-1 font-mono" placeholder="org/model" />
           </label>
         </div>
@@ -205,25 +205,25 @@ async function submit() {
         <!-- vLLM params -->
         <div>
           <div class="mb-1.5 flex items-center justify-between">
-            <span class="text-xs font-medium text-muted-foreground">vLLM parameters (model_config)</span>
-            <Button size="sm" variant="ghost" @click="addParam"><Plus class="size-3.5" />Add</Button>
+            <span class="text-xs font-medium text-muted-foreground">vLLM 參數（model_config）</span>
+            <Button size="sm" variant="ghost" @click="addParam"><Plus class="size-3.5" />新增</Button>
           </div>
           <div class="space-y-1.5">
             <div v-for="(p, i) in params" :key="i" class="flex items-center gap-2">
-              <Input v-model="p.key" placeholder="flag (snake_case)" class="flex-1 font-mono text-xs" />
-              <Input v-model="p.value" placeholder="value" class="flex-1 font-mono text-xs" />
+              <Input v-model="p.key" placeholder="旗標（snake_case）" class="flex-1 font-mono text-xs" />
+              <Input v-model="p.value" placeholder="值" class="flex-1 font-mono text-xs" />
               <Button size="icon-sm" variant="ghost" @click="removeParam(i)"><Trash2 class="size-3.5" /></Button>
             </div>
-            <p v-if="!params.length" class="text-xs text-muted-foreground">No extra parameters.</p>
+            <p v-if="!params.length" class="text-xs text-muted-foreground">無額外參數。</p>
           </div>
         </div>
 
         <div class="flex items-center justify-end gap-2 pt-2">
-          <Badge v-if="!groupExists" variant="muted">new group</Badge>
-          <Button variant="ghost" @click="open = false">Cancel</Button>
+          <Badge v-if="!groupExists" variant="muted">新群組</Badge>
+          <Button variant="ghost" @click="open = false">取消</Button>
           <Button :disabled="!canSubmit || creating" @click="submit">
             <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />
-            Add model
+            新增模型
           </Button>
         </div>
       </template>

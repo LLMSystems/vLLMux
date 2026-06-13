@@ -27,7 +27,7 @@ function shortCmd(cmdline?: string[]) {
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <Cpu class="size-4 text-[var(--chart-1)]" />
-            <span class="text-sm font-medium">CPU</span>
+            <span class="text-sm font-medium">處理器</span>
           </div>
           <span class="text-2xl font-semibold tabular">{{ formatPercent(resources.resources?.cpu) }}</span>
         </div>
@@ -40,7 +40,7 @@ function shortCmd(cmdline?: string[]) {
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <MemoryStick class="size-4 text-[var(--chart-2)]" />
-            <span class="text-sm font-medium">Memory</span>
+            <span class="text-sm font-medium">記憶體</span>
           </div>
           <span class="text-2xl font-semibold tabular">{{ formatPercent(mem?.percent) }}</span>
         </div>
@@ -62,8 +62,8 @@ function shortCmd(cmdline?: string[]) {
     <!-- GPU processes -->
     <Card>
       <CardHeader>
-        <CardTitle>GPU Processes</CardTitle>
-        <p class="text-xs text-muted-foreground">Processes holding GPU memory (refreshed ~5s)</p>
+        <CardTitle>GPU 程序</CardTitle>
+        <p class="text-xs text-muted-foreground">佔用 GPU 記憶體的程序（約每 5 秒更新）</p>
       </CardHeader>
       <CardContent>
         <div class="overflow-x-auto">
@@ -71,10 +71,10 @@ function shortCmd(cmdline?: string[]) {
             <thead class="text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr class="border-b border-border/60">
                 <th class="pb-2 pr-4 font-medium">PID</th>
-                <th class="pb-2 pr-4 font-medium">User</th>
-                <th class="pb-2 pr-4 font-medium">Name</th>
-                <th class="pb-2 pr-4 font-medium">Command</th>
-                <th class="pb-2 text-right font-medium">GPU Mem</th>
+                <th class="pb-2 pr-4 font-medium">使用者</th>
+                <th class="pb-2 pr-4 font-medium">名稱</th>
+                <th class="pb-2 pr-4 font-medium">指令</th>
+                <th class="pb-2 text-right font-medium">GPU 記憶體</th>
               </tr>
             </thead>
             <tbody>
@@ -93,7 +93,7 @@ function shortCmd(cmdline?: string[]) {
                 <td class="py-2 text-right font-medium tabular">{{ formatBytes(p.used_memory_mib, true) }}</td>
               </tr>
               <tr v-if="!resources.processes.length">
-                <td colspan="5" class="py-6 text-center text-muted-foreground">No GPU processes.</td>
+                <td colspan="5" class="py-6 text-center text-muted-foreground">無 GPU 程序。</td>
               </tr>
             </tbody>
           </table>

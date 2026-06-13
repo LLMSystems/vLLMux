@@ -97,7 +97,7 @@ function isRunning(state: ModelState) {
       </div>
       <div class="flex shrink-0 items-center gap-1.5">
         <StatusDot :state="headerState" />
-        <span class="text-xs text-muted-foreground tabular">{{ readyCount }}/{{ total }} ready</span>
+        <span class="text-xs text-muted-foreground tabular">{{ readyCount }}/{{ total }} 就緒</span>
       </div>
     </div>
 
@@ -119,7 +119,7 @@ function isRunning(state: ModelState) {
           GPU {{ models.gpuForKey(m.key, m.kind) }}
         </Badge>
         <span class="font-mono text-[11px] text-muted-foreground">:{{ m.port }}</span>
-        <Tooltip v-if="m.restart_count" :text="`Auto-restarted ${m.restart_count}× after a crash`">
+        <Tooltip v-if="m.restart_count" :text="`崩潰後自動重啟 ${m.restart_count} 次`">
           <span class="flex items-center gap-0.5 text-[10px] text-status-starting">
             <RotateCw class="size-3" />{{ m.restart_count }}
           </span>
@@ -140,12 +140,12 @@ function isRunning(state: ModelState) {
               </span>
             </div>
             <template #content>
-              <p class="font-medium">Live load (router /metrics)</p>
+              <p class="font-medium">即時負載（路由器 /metrics）</p>
               <ul class="mt-1 space-y-0.5 text-muted-foreground">
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.running }}</span> running — requests being generated now</li>
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.waiting }}</span> waiting — requests queued for this instance</li>
+                <li><span class="tabular text-foreground">{{ metricsFor(m)!.running }}</span> 執行中 — 目前正在生成的請求</li>
+                <li><span class="tabular text-foreground">{{ metricsFor(m)!.waiting }}</span> 等待中 — 此實例的排隊請求</li>
                 <li>
-                  KV cache <span class="tabular text-foreground">{{ (metricsFor(m)!.kv_cache_usage_perc * 100).toFixed(0) }}%</span> used
+                  KV 快取 <span class="tabular text-foreground">{{ (metricsFor(m)!.kv_cache_usage_perc * 100).toFixed(0) }}%</span> 已使用
                 </li>
               </ul>
             </template>
@@ -156,7 +156,7 @@ function isRunning(state: ModelState) {
             size="icon-sm"
             variant="success"
             :disabled="isBusy(m.key)"
-            title="Start"
+            title="啟動"
             @click.stop="control.request(m.key, 'start')"
           >
             <Loader2 v-if="isBusy(m.key)" class="size-3.5 animate-spin" /><Play v-else class="size-3.5" />
@@ -166,7 +166,7 @@ function isRunning(state: ModelState) {
             size="icon-sm"
             variant="outline"
             :disabled="isBusy(m.key) || !m.managed"
-            :title="!m.managed ? 'External — not managed by this backend' : 'Stop'"
+            :title="!m.managed ? '外部模型 — 非本後端管理' : '停止'"
             @click.stop="control.request(m.key, 'stop')"
           >
             <Loader2 v-if="isBusy(m.key)" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" />
@@ -181,7 +181,7 @@ function isRunning(state: ModelState) {
         @click="expanded = !expanded"
       >
         <ChevronDown class="size-3.5 transition-transform" :class="expanded && 'rotate-180'" />
-        {{ expanded ? 'Show less' : `Show ${hiddenCount} more` }}
+        {{ expanded ? '收起' : `顯示更多 ${hiddenCount} 個` }}
       </button>
     </div>
 
@@ -195,7 +195,7 @@ function isRunning(state: ModelState) {
         :disabled="!startableKeys.length"
         @click="control.requestMany(startableKeys, 'start')"
       >
-        <Play class="size-3.5" />Start all
+        <Play class="size-3.5" />全部啟動
       </Button>
       <Button
         size="sm"
@@ -204,7 +204,7 @@ function isRunning(state: ModelState) {
         :disabled="!stoppableKeys.length"
         @click="control.requestMany(stoppableKeys, 'stop')"
       >
-        <Square class="size-3.5" />Stop all
+        <Square class="size-3.5" />全部停止
       </Button>
     </div>
   </Card>

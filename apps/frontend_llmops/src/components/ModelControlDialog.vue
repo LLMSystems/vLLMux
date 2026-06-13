@@ -30,29 +30,29 @@ function confirm() {
 </script>
 
 <template>
-  <Dialog v-model:open="dialogOpen" title="Confirm model control">
+  <Dialog v-model:open="dialogOpen" title="確認模型控制">
     <div class="space-y-4">
       <p class="flex items-center gap-2 text-sm text-muted-foreground">
         <Lock class="size-4" />
         <span>
-          Enter the control password to
+          請輸入控制密碼以
           <span class="font-medium text-foreground">{{ pending?.action }}</span>
-          <span class="font-mono text-foreground"> {{ target }}</span>.
+          <span class="font-mono text-foreground"> {{ target }}</span>。
         </span>
       </p>
       <div>
         <Input
           v-model="password"
           type="password"
-          placeholder="Control password"
+          placeholder="控制密碼"
           :class="error ? 'border-status-failed focus-visible:ring-status-failed' : ''"
           @keydown.enter="confirm"
         />
-        <p v-if="error" class="mt-1.5 text-xs text-status-failed">Incorrect password.</p>
+        <p v-if="error" class="mt-1.5 text-xs text-status-failed">密碼錯誤。</p>
       </div>
       <div class="flex justify-end gap-2">
-        <Button variant="ghost" @click="dialogOpen = false">Cancel</Button>
-        <Button @click="confirm">Confirm</Button>
+        <Button variant="ghost" @click="dialogOpen = false">取消</Button>
+        <Button @click="confirm">確認</Button>
       </div>
     </div>
   </Dialog>

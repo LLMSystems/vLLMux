@@ -50,30 +50,30 @@ function codeVariant(code: number) {
     <!-- KPI row -->
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard
-        label="Models Ready"
+        label="就緒模型"
         :value="`${models.readyCount} / ${models.total}`"
-        :hint="models.counts.failed ? `${models.counts.failed} failed` : 'all healthy'"
+        :hint="models.counts.failed ? `${models.counts.failed} 個失敗` : '全部正常'"
         :icon="Server"
         color="var(--chart-1)"
       />
       <StatCard
-        label="Requests"
+        label="請求次數"
         :value="formatNumber(traffic.totalRequests)"
-        :hint="`${formatPercent(traffic.errorRate)} error rate`"
+        :hint="`${formatPercent(traffic.errorRate)} 錯誤率`"
         :icon="Zap"
         color="var(--chart-2)"
       />
       <StatCard
-        label="Latency p95"
+        label="延遲 p95"
         :value="formatLatency(traffic.weightedP95)"
-        :hint="`${formatNumber(traffic.totalTokens)} tokens served`"
+        :hint="`已處理 ${formatNumber(traffic.totalTokens)} tokens`"
         :icon="Timer"
         color="var(--chart-4)"
       />
       <StatCard
-        label="GPU Utilization"
+        label="GPU 使用率"
         :value="formatPercent(resources.avgGpuUtil)"
-        :hint="`${resources.resources?.gpus.length ?? 0} device(s)`"
+        :hint="`${resources.resources?.gpus.length ?? 0} 個裝置`"
         :icon="Gauge"
         :spark="resources.gpuHistory"
         color="var(--chart-1)"
@@ -94,9 +94,9 @@ function codeVariant(code: number) {
       <!-- Model roster -->
       <Card class="lg:col-span-2">
         <CardHeader class="flex-row items-center justify-between">
-          <CardTitle>Models</CardTitle>
+          <CardTitle>模型</CardTitle>
           <RouterLink to="/models" class="text-xs text-muted-foreground hover:text-foreground">
-            Manage →
+            管理 →
           </RouterLink>
         </CardHeader>
         <CardContent class="space-y-1">
@@ -115,7 +115,7 @@ function codeVariant(code: number) {
             <Badge :variant="m.state" class="shrink-0 capitalize">{{ m.state }}</Badge>
           </RouterLink>
           <p v-if="!models.total" class="py-6 text-center text-sm text-muted-foreground">
-            No models configured.
+            尚未設定模型。
           </p>
         </CardContent>
       </Card>
@@ -123,9 +123,9 @@ function codeVariant(code: number) {
       <!-- Recent activity -->
       <Card>
         <CardHeader class="flex-row items-center justify-between">
-          <CardTitle class="flex items-center gap-1.5"><Activity class="size-4" />Activity</CardTitle>
+          <CardTitle class="flex items-center gap-1.5"><Activity class="size-4" />活動</CardTitle>
           <RouterLink to="/activity" class="text-xs text-muted-foreground hover:text-foreground">
-            All →
+            全部 →
           </RouterLink>
         </CardHeader>
         <CardContent class="space-y-3">
@@ -140,7 +140,7 @@ function codeVariant(code: number) {
             </div>
           </div>
           <p v-if="!events.length" class="py-6 text-center text-sm text-muted-foreground">
-            No recent events.
+            無最近事件。
           </p>
         </CardContent>
       </Card>
@@ -149,9 +149,9 @@ function codeVariant(code: number) {
     <!-- Recent requests -->
     <Card>
       <CardHeader class="flex-row items-center justify-between">
-        <CardTitle class="flex items-center gap-1.5"><Cpu class="size-4" />Recent Requests</CardTitle>
+        <CardTitle class="flex items-center gap-1.5"><Cpu class="size-4" />最近請求</CardTitle>
         <RouterLink to="/traffic" class="text-xs text-muted-foreground hover:text-foreground">
-          Traffic →
+          流量 →
         </RouterLink>
       </CardHeader>
       <CardContent>
@@ -159,11 +159,11 @@ function codeVariant(code: number) {
           <table class="w-full text-sm">
             <thead class="text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr class="border-b border-border/60">
-                <th class="pb-2 pr-4 font-medium">Time</th>
-                <th class="pb-2 pr-4 font-medium">Model</th>
-                <th class="pb-2 pr-4 font-medium">Path</th>
-                <th class="pb-2 pr-4 font-medium">Status</th>
-                <th class="pb-2 pr-4 text-right font-medium">Latency</th>
+                <th class="pb-2 pr-4 font-medium">時間</th>
+                <th class="pb-2 pr-4 font-medium">模型</th>
+                <th class="pb-2 pr-4 font-medium">路徑</th>
+                <th class="pb-2 pr-4 font-medium">狀態</th>
+                <th class="pb-2 pr-4 text-right font-medium">延遲</th>
                 <th class="pb-2 text-right font-medium">Tokens</th>
               </tr>
             </thead>
@@ -183,7 +183,7 @@ function codeVariant(code: number) {
                 <td class="py-2 text-right tabular text-muted-foreground">{{ r.total_tokens ?? '—' }}</td>
               </tr>
               <tr v-if="!traffic.requests.length">
-                <td colspan="6" class="py-6 text-center text-muted-foreground">No requests logged yet.</td>
+                <td colspan="6" class="py-6 text-center text-muted-foreground">尚無請求記錄。</td>
               </tr>
             </tbody>
           </table>

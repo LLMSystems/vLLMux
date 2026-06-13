@@ -3,9 +3,12 @@
 # LLM-Router-Server-Dashboard
 **一站式 LLM 模型管理與監控平台**
 
-![主控台](assets/image0.png)
+![Main Console](assets/image0.png)
 
-![模型管理](assets/image1.png)
+![Model Management](assets/image1.png)
+
+
+![Model Management](assets/image2.png)
 
 </div>
 

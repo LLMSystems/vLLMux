@@ -53,11 +53,11 @@ const dash = computed(() => `${(memPct.value / 100) * C} ${C}`)
         </div>
         <dl class="space-y-1 text-xs">
           <div class="flex justify-between">
-            <dt class="text-muted-foreground">Memory</dt>
+            <dt class="text-muted-foreground">記憶體</dt>
             <dd class="tabular">{{ mibToGb(gpu.memory_used) }} / {{ mibToGb(gpu.memory_total) }}</dd>
           </div>
           <div class="flex justify-between">
-            <dt class="text-muted-foreground">Utilization</dt>
+            <dt class="text-muted-foreground">使用率</dt>
             <dd class="tabular font-medium">{{ formatPercent(gpu.gpu_util) }}</dd>
           </div>
         </dl>

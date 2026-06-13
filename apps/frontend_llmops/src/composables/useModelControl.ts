@@ -25,23 +25,23 @@ export function useModelControl() {
     try {
       if (action === 'start') {
         await models.start(key, force)
-        toast.success(`Starting ${name}`, { description: 'Waiting for /health to pass…' })
+        toast.success(`正在啟動 ${name}`, { description: '等待 /health 通過…' })
       } else {
         await models.stop(key)
-        toast.info(`Stopping ${name}`, { description: 'Releasing GPU resources…' })
+        toast.info(`正在停止 ${name}`, { description: '釋放 GPU 資源…' })
       }
     } catch (e) {
       // A VRAM pre-flight block (409 mentioning force) gets a one-click override.
       if (action === 'start' && e instanceof ApiError && e.status === 409 && /force=true/i.test(e.message)) {
-        toast.warning(`${name}: not enough VRAM`, {
+        toast.warning(`${name}：VRAM 不足`, {
           description: e.message,
           duration: 10000,
-          action: { label: 'Force start', onClick: () => void runOne(key, 'start', true) },
+          action: { label: '強制啟動', onClick: () => void runOne(key, 'start', true) },
         })
         return
       }
       const msg = e instanceof ApiError ? `${e.status}: ${e.message}` : String(e)
-      toast.error(`Failed to ${action} ${name}`, { description: msg })
+      toast.error(`${action === 'start' ? '啟動' : '停止'} ${name} 失敗`, { description: msg })
     }
   }
 

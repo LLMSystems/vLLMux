@@ -47,18 +47,18 @@ function onFilter(e: Event) {
     <!-- Usage rollup -->
     <Card>
       <CardHeader class="flex-row items-center justify-between">
-        <CardTitle>Per-Model Usage</CardTitle>
-        <Button variant="outline" size="sm" @click="traffic.refresh()"><RefreshCw class="size-3.5" />Refresh</Button>
+        <CardTitle>各模型用量</CardTitle>
+        <Button variant="outline" size="sm" @click="traffic.refresh()"><RefreshCw class="size-3.5" />重新整理</Button>
       </CardHeader>
       <CardContent>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr class="border-b border-border/60">
-                <th class="pb-2 pr-4 font-medium">Model</th>
-                <th class="pb-2 pr-4 text-right font-medium">Requests</th>
-                <th class="pb-2 pr-4 text-right font-medium">Errors</th>
-                <th class="pb-2 pr-4 text-right font-medium">Avg</th>
+                <th class="pb-2 pr-4 font-medium">模型</th>
+                <th class="pb-2 pr-4 text-right font-medium">請求次數</th>
+                <th class="pb-2 pr-4 text-right font-medium">錯誤數</th>
+                <th class="pb-2 pr-4 text-right font-medium">平均</th>
                 <th class="pb-2 pr-4 text-right font-medium">p50</th>
                 <th class="pb-2 pr-4 font-medium">p95</th>
                 <th class="pb-2 text-right font-medium">Tokens</th>
@@ -97,7 +97,7 @@ function onFilter(e: Event) {
                 </td>
               </tr>
               <tr v-if="!traffic.usage.length">
-                <td colspan="7" class="py-6 text-center text-muted-foreground">No usage recorded.</td>
+                <td colspan="7" class="py-6 text-center text-muted-foreground">尚無用量記錄。</td>
               </tr>
             </tbody>
           </table>
@@ -108,16 +108,15 @@ function onFilter(e: Event) {
     <!-- Router load: load-balancing fan per group -->
     <Card>
       <CardHeader>
-        <CardTitle>Router Load Balancing</CardTitle>
+        <CardTitle>路由器負載均衡</CardTitle>
         <p class="text-xs text-muted-foreground">
-          Line thickness = actual traffic share (from request log) · ★ = lowest-score instance the
-          router picks next
+          線條粗細 = 實際流量佔比（來自請求記錄）· ★ = 路由器下次選擇的最低分實例
         </p>
       </CardHeader>
       <CardContent class="space-y-3">
         <RouterFanDiagram v-for="g in llmGroups" :key="g" :group="g" />
         <p v-if="!llmGroups.length" class="py-6 text-center text-sm text-muted-foreground">
-          No LLM groups configured.
+          尚未設定 LLM 群組。
         </p>
       </CardContent>
     </Card>
@@ -125,13 +124,13 @@ function onFilter(e: Event) {
     <!-- Request log -->
     <Card>
       <CardHeader class="flex-row items-center justify-between">
-        <CardTitle>Request Log</CardTitle>
+        <CardTitle>請求記錄</CardTitle>
         <select
           class="h-8 rounded-md border border-input bg-background/40 px-2 text-xs"
           :value="traffic.filterModel ?? ''"
           @change="onFilter"
         >
-          <option value="">All models</option>
+          <option value="">全部模型</option>
           <option v-for="m in models.llms" :key="m.key" :value="m.key.split('::')[0]">
             {{ m.key.split('::')[0] }}
           </option>
@@ -142,10 +141,10 @@ function onFilter(e: Event) {
           <table class="w-full text-sm">
             <thead class="sticky top-0 bg-card text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr class="border-b border-border/60">
-                <th class="pb-2 pr-3 font-medium">Model</th>
-                <th class="pb-2 pr-3 font-medium">Path</th>
-                <th class="pb-2 pr-3 font-medium">Status</th>
-                <th class="pb-2 pr-3 text-right font-medium">Latency</th>
+                <th class="pb-2 pr-3 font-medium">模型</th>
+                <th class="pb-2 pr-3 font-medium">路徑</th>
+                <th class="pb-2 pr-3 font-medium">狀態</th>
+                <th class="pb-2 pr-3 text-right font-medium">延遲</th>
                 <th class="pb-2 text-right font-medium">Tok</th>
               </tr>
             </thead>
@@ -162,7 +161,7 @@ function onFilter(e: Event) {
                 <td class="py-2 text-right tabular text-muted-foreground">{{ r.total_tokens ?? '—' }}</td>
               </tr>
               <tr v-if="!traffic.requests.length">
-                <td colspan="5" class="py-6 text-center text-muted-foreground">No requests.</td>
+                <td colspan="5" class="py-6 text-center text-muted-foreground">尚無請求。</td>
               </tr>
             </tbody>
           </table>

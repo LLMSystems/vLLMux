@@ -58,11 +58,11 @@ async function remove() {
   try {
     await api.deleteModel(k)
     void api.routerReload() // keep the router's routing table in sync
-    toast.success(`Removed ${k}`)
+    toast.success(`已移除 ${k}`)
     open.value = false
     emit('deleted', k)
   } catch (e) {
-    toast.error('Cannot remove model', {
+    toast.error('無法移除模型', {
       description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
     })
   }
@@ -141,7 +141,7 @@ const eventColor: Record<string, string> = {
             v-if="removable"
             size="icon-sm"
             variant="ghost"
-            title="Remove model (dynamically-added only)"
+            title="移除模型（僅限動態新增的模型）"
             @click="remove"
           >
             <Trash2 class="size-4" />
@@ -153,7 +153,7 @@ const eventColor: Record<string, string> = {
             :disabled="busy"
             @click="control.request(model.key, 'start')"
           >
-            <Loader2 v-if="busy" class="size-4 animate-spin" /><Play v-else class="size-4" />Start
+            <Loader2 v-if="busy" class="size-4 animate-spin" /><Play v-else class="size-4" />啟動
           </Button>
           <Button
             v-else
@@ -162,45 +162,45 @@ const eventColor: Record<string, string> = {
             :disabled="busy || !model.managed"
             @click="control.request(model.key, 'stop')"
           >
-            <Loader2 v-if="busy" class="size-4 animate-spin" /><Square v-else class="size-4" />Stop
+            <Loader2 v-if="busy" class="size-4 animate-spin" /><Square v-else class="size-4" />停止
           </Button>
         </div>
       </div>
 
       <Tabs v-model="tab">
         <TabsList class="w-full">
-          <TabsTrigger value="overview" class="flex-1">Overview</TabsTrigger>
-          <TabsTrigger value="events" class="flex-1">Events</TabsTrigger>
-          <TabsTrigger value="logs" class="flex-1">Logs</TabsTrigger>
+          <TabsTrigger value="overview" class="flex-1">概覽</TabsTrigger>
+          <TabsTrigger value="events" class="flex-1">事件</TabsTrigger>
+          <TabsTrigger value="logs" class="flex-1">日誌</TabsTrigger>
         </TabsList>
 
         <!-- Overview -->
         <TabsContent value="overview" class="mt-4 space-y-4">
           <div class="grid grid-cols-2 gap-3">
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">Endpoint</p>
+              <p class="text-xs text-muted-foreground">端點</p>
               <p class="mt-0.5 font-mono text-sm">{{ model.host }}:{{ model.port }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">GPU</p>
+              <p class="text-xs text-muted-foreground">顯示卡</p>
               <p class="mt-0.5 font-mono text-sm tabular">{{ gpu !== null ? `cuda:${gpu}` : '—' }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">PID</p>
+              <p class="text-xs text-muted-foreground">程序 ID</p>
               <p class="mt-0.5 font-mono text-sm tabular">{{ model.pid ?? '—' }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">Managed</p>
-              <p class="mt-0.5 text-sm">{{ model.managed ? 'Yes (controllable)' : 'External' }}</p>
+              <p class="text-xs text-muted-foreground">管理方式</p>
+              <p class="mt-0.5 text-sm">{{ model.managed ? '是（可控制）' : '外部' }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">Uptime</p>
+              <p class="text-xs text-muted-foreground">運行時間</p>
               <p class="mt-0.5 text-sm tabular">
                 {{ model.ready_at ? formatDuration(model.ready_at) : '—' }}
               </p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">Auto-restarts</p>
+              <p class="text-xs text-muted-foreground">自動重啟次數</p>
               <p class="mt-0.5 text-sm tabular" :class="model.restart_count ? 'text-status-starting' : ''">
                 {{ model.restart_count ?? 0 }}
               </p>
@@ -210,7 +210,7 @@ const eventColor: Record<string, string> = {
           <!-- Full vLLM model_config -->
           <div v-if="vllmParams.length">
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              vLLM parameters (model_config)
+              vLLM 參數（model_config）
             </p>
             <div class="overflow-hidden rounded-lg border border-border/60">
               <div
@@ -228,40 +228,40 @@ const eventColor: Record<string, string> = {
           <!-- Live router metrics -->
           <div>
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Live load (router /metrics)
+              即時負載（路由器 /metrics）
             </p>
             <div v-if="metrics" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ metrics.running }}</p>
-                <p class="text-xs text-muted-foreground">running</p>
+                <p class="text-xs text-muted-foreground">執行中</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ metrics.waiting }}</p>
-                <p class="text-xs text-muted-foreground">waiting</p>
+                <p class="text-xs text-muted-foreground">等待中</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">
                   {{ formatPercent(metrics.kv_cache_usage_perc * 100) }}
                 </p>
-                <p class="text-xs text-muted-foreground">KV cache</p>
+                <p class="text-xs text-muted-foreground">KV 快取</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">
                   {{ formatNumber(metrics.generation_tokens, true) }}
                 </p>
-                <p class="text-xs text-muted-foreground">gen tokens</p>
+                <p class="text-xs text-muted-foreground">生成 tokens</p>
               </div>
             </div>
-            <p v-else class="text-sm text-muted-foreground">No live metrics (router unreachable or model idle).</p>
+            <p v-else class="text-sm text-muted-foreground">無即時指標（路由器無法連線或模型閒置）。</p>
           </div>
 
           <!-- Usage rollup -->
           <div v-if="usageRow">
-            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Usage</p>
+            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">用量</p>
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ formatNumber(usageRow.count) }}</p>
-                <p class="text-xs text-muted-foreground">requests</p>
+                <p class="text-xs text-muted-foreground">請求次數</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ formatLatency(usageRow.p50_latency_ms) }}</p>
@@ -282,7 +282,7 @@ const eventColor: Record<string, string> = {
             v-if="model.last_error"
             class="rounded-lg border border-status-failed/30 bg-status-failed/10 p-3"
           >
-            <p class="text-xs font-medium text-status-failed">Last error</p>
+            <p class="text-xs font-medium text-status-failed">最後錯誤</p>
             <pre class="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-status-failed/90">{{ model.last_error }}</pre>
           </div>
         </TabsContent>
@@ -290,7 +290,7 @@ const eventColor: Record<string, string> = {
         <!-- Events timeline -->
         <TabsContent value="events" class="mt-4">
           <div class="flex justify-end">
-            <Button variant="ghost" size="sm" @click="loadEvents"><RefreshCw class="size-3.5" />Refresh</Button>
+            <Button variant="ghost" size="sm" @click="loadEvents"><RefreshCw class="size-3.5" />重新整理</Button>
           </div>
           <ol class="relative mt-2 space-y-4 border-l border-border/70 pl-5">
             <li v-for="ev in events" :key="ev.id" class="relative">
@@ -305,7 +305,7 @@ const eventColor: Record<string, string> = {
                 {{ ev.detail }}
               </p>
             </li>
-            <li v-if="!events.length" class="text-sm text-muted-foreground">No events recorded.</li>
+            <li v-if="!events.length" class="text-sm text-muted-foreground">尚無事件記錄。</li>
           </ol>
         </TabsContent>
 
@@ -314,7 +314,7 @@ const eventColor: Record<string, string> = {
           <div class="flex items-center justify-between">
             <Badge variant="outline" class="font-mono text-[11px]">tail 400</Badge>
             <Button variant="ghost" size="sm" :disabled="loadingLogs" @click="loadLogs">
-              <RefreshCw class="size-3.5" :class="loadingLogs && 'animate-spin'" />Refresh
+              <RefreshCw class="size-3.5" :class="loadingLogs && 'animate-spin'" />重新整理
             </Button>
           </div>
           <pre
@@ -322,7 +322,7 @@ const eventColor: Record<string, string> = {
             class="max-h-[60vh] overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-xs leading-relaxed text-foreground/90"
           >{{ logs }}</pre>
           <p v-else class="rounded-lg border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
-            {{ logsError ?? 'No log content.' }}
+            {{ logsError ?? '無日誌內容。' }}
           </p>
         </TabsContent>
       </Tabs>

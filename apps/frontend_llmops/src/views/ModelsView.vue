@@ -51,9 +51,9 @@ function openDetail(key: string) {
 }
 
 const kinds: { value: 'all' | ModelKind; label: string }[] = [
-  { value: 'all', label: 'All' },
+  { value: 'all', label: '全部' },
   { value: 'llm', label: 'LLM' },
-  { value: 'embedding', label: 'Embedding' },
+  { value: 'embedding', label: '嵌入' },
 ]
 </script>
 
@@ -63,7 +63,7 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative">
         <Search class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="query" placeholder="Search models…" class="w-56 pl-8" />
+        <Input v-model="query" placeholder="搜尋模型…" class="w-56 pl-8" />
       </div>
       <div class="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5">
         <button
@@ -82,12 +82,12 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
       </div>
       <div class="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
         <span class="tabular"
-          >{{ groups.length }} groups · {{ models.counts.ready }} ready · {{ models.counts.failed }} failed</span
+          >{{ groups.length }} 個群組 · {{ models.counts.ready }} 就緒 · {{ models.counts.failed }} 失敗</span
         >
         <Button variant="outline" size="sm" @click="models.refresh()">
-          <RefreshCw class="size-3.5" />Refresh
+          <RefreshCw class="size-3.5" />重新整理
         </Button>
-        <Button size="sm" @click="addOpen = true"><Plus class="size-4" />Add model</Button>
+        <Button size="sm" @click="addOpen = true"><Plus class="size-4" />新增模型</Button>
       </div>
     </div>
 
@@ -108,9 +108,9 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
       v-else
       class="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/70 py-20 text-center"
     >
-      <p class="text-sm font-medium">No models match.</p>
+      <p class="text-sm font-medium">找不到符合的模型。</p>
       <p class="mt-1 text-sm text-muted-foreground">
-        {{ models.total ? 'Try clearing the filter.' : 'No models configured in config.yaml.' }}
+        {{ models.total ? '試著清除篩選條件。' : 'config.yaml 中尚未設定模型。' }}
       </p>
     </div>
 

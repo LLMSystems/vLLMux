@@ -88,19 +88,19 @@ const totalTokens = computed(() => points.value.reduce((s, p) => s + p.total_tok
         v-model="modelFilter"
         class="h-8 rounded-md border border-input bg-background/40 px-2 text-sm"
       >
-        <option value="">All models</option>
+        <option value="">全部模型</option>
         <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
       </select>
       <Button variant="outline" size="sm" class="ml-auto" :disabled="loading" @click="load">
-        <RefreshCw class="size-3.5" :class="loading && 'animate-spin'" />Refresh
+        <RefreshCw class="size-3.5" :class="loading && 'animate-spin'" />重新整理
       </Button>
     </div>
 
     <div class="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader class="flex-row items-baseline justify-between">
-          <CardTitle>Requests</CardTitle>
-          <span class="text-sm font-semibold tabular">{{ formatNumber(totalReq) }} total</span>
+          <CardTitle>請求次數</CardTitle>
+          <span class="text-sm font-semibold tabular">共 {{ formatNumber(totalReq) }}</span>
         </CardHeader>
         <CardContent>
           <div class="text-[var(--chart-1)]">
@@ -111,7 +111,7 @@ const totalTokens = computed(() => points.value.reduce((s, p) => s + p.total_tok
 
       <Card>
         <CardHeader class="flex-row items-baseline justify-between">
-          <CardTitle>Error Rate</CardTitle>
+          <CardTitle>錯誤率</CardTitle>
           <span class="text-sm font-semibold tabular" :class="errRate > 0 ? 'text-status-failed' : ''">
             {{ formatPercent(errRate) }}
           </span>
@@ -125,8 +125,8 @@ const totalTokens = computed(() => points.value.reduce((s, p) => s + p.total_tok
 
       <Card>
         <CardHeader class="flex-row items-baseline justify-between">
-          <CardTitle>p95 Latency</CardTitle>
-          <span class="text-sm font-semibold tabular">peak {{ formatLatency(peakP95) }}</span>
+          <CardTitle>p95 延遲</CardTitle>
+          <span class="text-sm font-semibold tabular">峰值 {{ formatLatency(peakP95) }}</span>
         </CardHeader>
         <CardContent>
           <div class="text-[var(--chart-4)]">
@@ -138,7 +138,7 @@ const totalTokens = computed(() => points.value.reduce((s, p) => s + p.total_tok
       <Card>
         <CardHeader class="flex-row items-baseline justify-between">
           <CardTitle>Tokens</CardTitle>
-          <span class="text-sm font-semibold tabular">{{ formatNumber(totalTokens) }} total</span>
+          <span class="text-sm font-semibold tabular">共 {{ formatNumber(totalTokens) }}</span>
         </CardHeader>
         <CardContent>
           <div class="text-[var(--chart-2)]">

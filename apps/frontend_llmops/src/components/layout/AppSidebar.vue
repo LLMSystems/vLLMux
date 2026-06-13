@@ -42,13 +42,13 @@ const roster = computed(() => {
 })
 
 const nav = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard },
-  { to: '/models', label: 'Models', icon: Server },
-  { to: '/traffic', label: 'Traffic', icon: ArrowLeftRight },
-  { to: '/trends', label: 'Trends', icon: TrendingUp },
-  { to: '/playground', label: 'Playground', icon: TerminalSquare },
-  { to: '/resources', label: 'Resources', icon: Cpu },
-  { to: '/activity', label: 'Activity', icon: Activity },
+  { to: '/', label: '總覽', icon: LayoutDashboard },
+  { to: '/models', label: '模型', icon: Server },
+  { to: '/traffic', label: '流量', icon: ArrowLeftRight },
+  { to: '/trends', label: '趨勢', icon: TrendingUp },
+  { to: '/playground', label: '測試台', icon: TerminalSquare },
+  { to: '/resources', label: '資源', icon: Cpu },
+  { to: '/activity', label: '活動', icon: Activity },
 ]
 </script>
 
@@ -65,7 +65,7 @@ const nav = [
       </div>
       <div class="leading-tight">
         <p class="text-sm font-semibold">LLMOps</p>
-        <p class="text-[10px] uppercase tracking-widest text-muted-foreground">Control</p>
+        <p class="text-[10px] uppercase tracking-widest text-muted-foreground">控制台</p>
       </div>
     </div>
 
@@ -97,7 +97,7 @@ const nav = [
     <!-- Footer: live model roster -->
     <div class="border-t border-border/70 px-4 py-3">
       <p class="mb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-        Models · {{ models.readyCount }}/{{ models.total }} ready
+        模型 · {{ models.readyCount }}/{{ models.total }} 就緒
       </p>
       <ul class="max-h-40 space-y-1 overflow-y-auto pr-1">
         <li
@@ -111,7 +111,7 @@ const nav = [
             {{ g.ready }}/{{ g.total }}
           </span>
         </li>
-        <li v-if="!models.total" class="text-xs text-muted-foreground/60">No models configured</li>
+        <li v-if="!models.total" class="text-xs text-muted-foreground/60">尚未設定模型</li>
       </ul>
     </div>
   </aside>
