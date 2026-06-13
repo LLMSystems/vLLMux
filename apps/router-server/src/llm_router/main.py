@@ -74,6 +74,6 @@ def create_app(config: dict) -> FastAPI:
     
     return app
 
-config_path = os.environ.get("CONFIG_PATH", "configs/config.yaml")
+config_path = os.environ.get("CONFIG_PATH", "../../packages/config-schema/config.yaml")
 config = load_config(config_path)
 app = create_app(config)

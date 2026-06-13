@@ -10,12 +10,18 @@ from typing import Any, Optional
 
 import yaml
 
-DEFAULT_CONFIG_PATH = "config.yaml"
 CONFIG_PATH_ENV = "LLM_ROUTER_SERVER_CONFIG_PATH"
+
+# Single source of truth lives in packages/config-schema/config.yaml.
+# This file is apps/backend/app/core/config.py -> repo root is 4 levels up.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..")
+)
+DEFAULT_CONFIG_PATH = os.path.join(_REPO_ROOT, "packages", "config-schema", "config.yaml")
 
 
 def get_config_path() -> str:
-    """Resolve the active config path from the environment (single rule)."""
+    """Resolve the active config path: env override, else the shared package."""
     return os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH)
 
 

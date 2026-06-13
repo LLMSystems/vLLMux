@@ -86,7 +86,7 @@ async def create_embeddings(request: EmbeddingRequest):
         
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="./configs/config.yaml", help="Path to the config file")
+    parser.add_argument("--config", type=str, default="../../packages/config-schema/config.yaml", help="Path to the config file")
     args = parser.parse_args()
 
     config = load_config(args.config)
