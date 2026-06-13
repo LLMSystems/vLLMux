@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-llm_server_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../LLM-Router-Server"))
+llm_server_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../router-server"))
 
 running_proc: Optional[subprocess.Popen] = None
 
@@ -70,7 +70,7 @@ def launch_embedding_server(config_path: str):
             ## TODO: 檢查是否已經有正在運行的實例
             running_proc = subprocess.Popen([
                 sys.executable,
-                os.path.join(llm_server_root, "embedding_reranker_server", "embedding_reranker_launcher.py"),
+                os.path.join(llm_server_root, "src", "embedding_reranker", "embedding_reranker_launcher.py"),
                 "--config",
                 config_path
             ], env=cuda_env, stderr=subprocess.STDOUT, start_new_session=True, stdout=log_file)

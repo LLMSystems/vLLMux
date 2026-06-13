@@ -1,0 +1,51 @@
+version: "3.9"
+
+# Centralised deployment for the whole monorepo.
+# - backend-router: the Dashboard backend (5000) AND the LLM-Router-Server (8887)
+#   run in the SAME container (the backend manages router/model processes).
+# - frontend: the Vue dashboard dev/preview server (8884).
+#
+# Build contexts are the repo root (..) so the Dockerfiles in this folder can
+# COPY from apps/ and packages/ as needed.
+
+services:
+    backend-router:
+        build:
+            context: ..
+            dockerfile: deploy/backend-router.Dockerfile
+        image: llm-router:latest
+        container_name: llm-router-container
+        command: tail -f /dev/null
+        environment:
+            - NVIDIA_VISIBLE_DEVICES=all
+            # single source of truth for both backend and router config
+            - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+        volumes:
+            - /etc/localtime:/etc/localtime:ro
+            - ..:/app
+        working_dir: /app
+        ports:
+            - "8887:8887"   # LLM-Router-Server API
+            - "5000:5000"   # Dashboard backend API
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          capabilities: [gpu]
+        restart: unless-stopped
+
+    frontend:
+        build:
+            context: ..
+            dockerfile: deploy/frontend.Dockerfile
+        image: llm-router-server-dashboard:latest
+        container_name: LLM-Router-Server-Dashboard
+        command: tail -f /dev/null
+        volumes:
+            - /etc/localtime:/etc/localtime:ro
+            - ..:/app
+        working_dir: /app/apps/frontend
+        ports:
+            - "8884:8884"
+        restart: unless-stopped
