@@ -74,7 +74,10 @@ watch(
     for (const m of insts) {
       const im = metricsFor(m)
       if (m.state === 'ready' && im) {
-        scores.set(m.key, im.waiting * 10 + im.running * 3 + im.kv_cache_usage_perc * 100)
+        scores.set(
+          m.key,
+          (im.waiting ?? 0) * 10 + (im.running ?? 0) * 3 + (im.kv_cache_usage_perc ?? 0) * 100,
+        )
       }
     }
     const minScore = scores.size ? Math.min(...scores.values()) : Infinity
@@ -98,7 +101,7 @@ watch(
       const im = metricsFor(m)
       const share = shareByInst.value[id] ?? 0
       const serving = m.state === 'ready' || m.state === 'starting'
-      const active = serving && (share > 0 || (im ? im.running + im.waiting > 0 : false))
+      const active = serving && (share > 0 || (im ? (im.running ?? 0) + (im.waiting ?? 0) > 0 : false))
       const data: NodeData = {
         id,
         state: m.state,

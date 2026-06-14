@@ -60,4 +60,14 @@ async def test_safe_fetch_returns_infinite_load_on_error():
     name, m = await client._safe_fetch("a", "http://localhost:8002")
     assert name == "a"
     assert m.running == float("inf")  # fail-open: looks maximally loaded
-    assert m.kv_cache_usage_perc == 1.0
+    assert m.kv_cache_usage_perc == float("inf")
+    # The unreachable sentinel must not leak into the dashboard as a real value:
+    # to_dict nulls it like running/waiting (a misleading 100% otherwise).
+    d = m.to_dict()
+    assert d["kv_cache_usage_perc"] is None
+    assert d["running"] is None and d["waiting"] is None
+
+
+async def test_to_dict_keeps_real_kv_cache_value():
+    m = VLLMInstanceMetrics("x", running=1, waiting=0, kv_cache_usage_perc=0.42)
+    assert m.to_dict()["kv_cache_usage_perc"] == 0.42

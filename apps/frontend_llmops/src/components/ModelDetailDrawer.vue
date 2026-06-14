@@ -247,7 +247,7 @@ const eventColor: Record<string, string> = {
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">
-                  {{ formatPercent(metrics.kv_cache_usage_perc * 100) }}
+                  {{ metrics.kv_cache_usage_perc == null ? '—' : formatPercent(metrics.kv_cache_usage_perc * 100) }}
                 </p>
                 <p class="text-xs text-muted-foreground">KV 快取</p>
               </div>

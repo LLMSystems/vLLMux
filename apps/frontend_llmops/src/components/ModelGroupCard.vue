@@ -63,8 +63,14 @@ function loadPct(m: ModelView): number {
   const im = metricsFor(m)
   if (!im) return 0
   // Soft saturation: a handful of running/waiting reqs fills the meter.
-  const score = im.waiting * 10 + im.running * 3 + im.kv_cache_usage_perc * 100
+  // Fields are null when the scrape failed — treat as 0 for the meter.
+  const score = (im.waiting ?? 0) * 10 + (im.running ?? 0) * 3 + (im.kv_cache_usage_perc ?? 0) * 100
   return Math.min(100, score)
+}
+/** KV cache as a percent string, or "—" when the metric is unavailable. */
+function kvText(m: ModelView): string {
+  const kv = metricsFor(m)?.kv_cache_usage_perc
+  return kv == null ? '—' : `${(kv * 100).toFixed(0)}%`
 }
 
 const Icon = computed(() => (kind.value === 'llm' ? Sparkles : Box))
@@ -143,16 +149,16 @@ const startLockTitle = computed(() =>
                 />
               </div>
               <span class="w-16 text-[11px] text-muted-foreground tabular">
-                {{ metricsFor(m)!.running }}r · {{ metricsFor(m)!.waiting }}w
+                {{ metricsFor(m)!.running ?? 0 }}r · {{ metricsFor(m)!.waiting ?? 0 }}w
               </span>
             </div>
             <template #content>
               <p class="font-medium">即時負載（路由器 /metrics）</p>
               <ul class="mt-1 space-y-0.5 text-muted-foreground">
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.running }}</span> 執行中 — 目前正在生成的請求</li>
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.waiting }}</span> 等待中 — 此實例的排隊請求</li>
+                <li><span class="tabular text-foreground">{{ metricsFor(m)!.running ?? '—' }}</span> 執行中 — 目前正在生成的請求</li>
+                <li><span class="tabular text-foreground">{{ metricsFor(m)!.waiting ?? '—' }}</span> 等待中 — 此實例的排隊請求</li>
                 <li>
-                  KV 快取 <span class="tabular text-foreground">{{ (metricsFor(m)!.kv_cache_usage_perc * 100).toFixed(0) }}%</span> 已使用
+                  KV 快取 <span class="tabular text-foreground">{{ kvText(m) }}</span> 已使用
                 </li>
               </ul>
             </template>

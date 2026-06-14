@@ -134,11 +134,13 @@ export interface ConfigSummary {
 /** Per-instance vLLM metrics from Router `/metrics`, grouped by model group. */
 export interface InstanceMetrics {
   base_url: string
-  running: number
-  waiting: number
-  kv_cache_usage_perc: number
-  prompt_tokens: number
-  generation_tokens: number
+  // null when the router's scrape of this instance failed (unreachable); the
+  // router nulls these rather than reporting a misleading sentinel value.
+  running: number | null
+  waiting: number | null
+  kv_cache_usage_perc: number | null
+  prompt_tokens: number | null
+  generation_tokens: number | null
 }
 export type RouterMetrics = Record<string, Record<string, InstanceMetrics>>
 

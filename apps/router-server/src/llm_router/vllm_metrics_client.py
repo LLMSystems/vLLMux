@@ -39,7 +39,9 @@ class VLLMInstanceMetrics:
             "base_url": self.base_url,
             "running": None if math.isinf(self.running) else self.running,
             "waiting": None if math.isinf(self.waiting) else self.waiting,
-            "kv_cache_usage_perc": self.kv_cache_usage_perc,
+            # Null the unreachable sentinel like the other fields, so a failed
+            # scrape shows "unknown" rather than a misleading 100% cache.
+            "kv_cache_usage_perc": None if math.isinf(self.kv_cache_usage_perc) else self.kv_cache_usage_perc,
             "prompt_tokens": None if math.isinf(self.prompt_tokens) else self.prompt_tokens,
             "generation_tokens": None if math.isinf(self.generation_tokens) else self.generation_tokens,
             "raw_metrics": self.raw_metrics,
@@ -94,7 +96,9 @@ class VLLMMetricsClient:
                 base_url=base_url,
                 running=float("inf"),
                 waiting=float("inf"),
-                kv_cache_usage_perc=1.0,
+                # inf (not 1.0) so it routes away AND to_dict nulls it for display.
+                # compute_load_score still yields inf via running/waiting anyway.
+                kv_cache_usage_perc=float("inf"),
                 prompt_tokens=float("inf"),
                 generation_tokens=float("inf"),
                 raw_metrics=None,

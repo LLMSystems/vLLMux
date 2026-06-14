@@ -93,8 +93,8 @@ const groups = computed<GroupAgg[]>(() => {
     if (gpu !== null && !agg.gpus.includes(gpu)) agg.gpus.push(gpu)
     const im = (m.state === 'ready' || m.state === 'starting') ? traffic.metrics[g]?.[inst] : null
     if (im) {
-      agg.running += im.running
-      agg.waiting += im.waiting
+      agg.running += im.running ?? 0
+      agg.waiting += im.waiting ?? 0
     }
     byGroup.set(g, agg)
   }
