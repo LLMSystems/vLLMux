@@ -13,6 +13,7 @@ import main  # noqa: E402  (importing app.core.config puts config-schema on sys.
 from app.core.settings import BackendSettings  # noqa: E402
 from app.llmops.launchers import EmbeddingLauncher, VllmLauncher  # noqa: E402
 from app.llmops.manager import ModelManager, build_registry  # noqa: E402
+from app.services.downloads import DownloadManager  # noqa: E402
 from schema import RootConfig  # noqa: E402
 
 FAKE_CONFIG_DICT = {
@@ -175,6 +176,7 @@ def app(monkeypatch):
         registry, launchers, http_client, FAKE_CONFIG, "config.yaml", settings, store=store
     )
     application.state.gpu_processes = []
+    application.state.download_manager = DownloadManager()
     return application
 
 

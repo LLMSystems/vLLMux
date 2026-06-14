@@ -5,3 +5,4 @@ pyyaml
 httpx
 psutil
 aiosqlite
+huggingface_hub

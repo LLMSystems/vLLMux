@@ -133,10 +133,12 @@ subprocesses), and the router must see them on `localhost` — so a single
 `vllm/vllm-openai`) runs as two services joined by `network_mode: service:backend`.
 
 The frontend reaches the backend and router through nginx on a single origin, so
-no host/port is baked into the build. Persistent state lives in named volumes:
-`hf-cache` (downloaded model weights) and `llmops-data` (shared SQLite +
-dynamic-model overlay). The canonical `packages/config-schema/config.yaml` is
-bind-mounted, so you can edit models without rebuilding.
+no host/port is baked into the build. SQLite + the dynamic-model overlay persist
+in the `llmops-data` named volume; downloaded model **weights** are bind-mounted
+from the host HF cache (`HF_CACHE_DIR`, default `~/.cache/huggingface`) so they're
+browsable locally and shared with host-side tools. The canonical
+`packages/config-schema/config.yaml` is bind-mounted too, so you can edit models
+without rebuilding.
 
 > **Model lifecycle**: the router only routes and load-balances — it never
 > launches models. vLLM instances (and the Embedding/Reranker server) are owned

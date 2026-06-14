@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { AlertTriangle, Loader2, Plus, Trash2, Wand2 } from '@lucide/vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { AlertTriangle, Check, Download, Loader2, Plus, Trash2, Wand2 } from '@lucide/vue'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
 import Textarea from '@/components/ui/Textarea.vue'
@@ -11,7 +11,8 @@ import { toast } from '@/lib/toast'
 import { ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
-import type { SettingValue } from '@/types/api'
+import { formatBytes } from '@/lib/utils'
+import type { CachedModel, DownloadJob, SettingValue } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ mode?: 'create' | 'edit'; editKey?: string | null }>()
@@ -38,6 +39,54 @@ const modelTag = ref('')
 const params = ref<{ key: string; value: string }[]>([])
 
 const gpuOptions = computed(() => resources.resources?.gpus.map((g) => g.index) ?? [])
+
+// ---- Weight cache status for the entered model_tag ----
+const cacheModels = ref<CachedModel[]>([])
+const downloadJobs = ref<DownloadJob[]>([])
+let downloadPoll: ReturnType<typeof setInterval> | null = null
+
+const cachedEntry = computed(() =>
+  modelTag.value ? cacheModels.value.find((m) => m.repo_id === modelTag.value) ?? null : null,
+)
+const downloadJob = computed(() =>
+  modelTag.value ? downloadJobs.value.find((d) => d.repo_id === modelTag.value) ?? null : null,
+)
+const downloadPct = computed(() => {
+  const j = downloadJob.value
+  if (!j || !j.total_bytes) return null
+  return Math.min(100, (j.downloaded_bytes / j.total_bytes) * 100)
+})
+
+async function loadCache() {
+  try {
+    cacheModels.value = (await api.getCache()).models
+  } catch {
+    /* best-effort: weights status just won't show */
+  }
+}
+async function loadDownloads() {
+  try {
+    downloadJobs.value = await api.listDownloads()
+    if (downloadJob.value?.state === 'completed') await loadCache()
+  } catch {
+    /* transient */
+  }
+}
+async function downloadWeights() {
+  const repo = modelTag.value.trim()
+  if (!repo) return
+  try {
+    await api.startDownload(repo)
+    toast.success(`開始下載 ${repo}`, { description: '可關閉此視窗，下載會在背景繼續。' })
+    await loadDownloads()
+  } catch (e) {
+    toast.error('無法開始下載', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+  }
+}
+
+onBeforeUnmount(() => {
+  if (downloadPoll) clearInterval(downloadPoll)
+})
 
 const key = computed(() => `${group.value}::${instanceId.value}`)
 const keyExists = computed(() => !!group.value && !!instanceId.value && models.byKey.has(key.value))
@@ -91,8 +140,18 @@ function prefillForEdit() {
 }
 
 watch(open, (v) => {
-  if (!v) reset()
-  else if (isEdit.value) prefillForEdit()
+  if (!v) {
+    reset()
+    if (downloadPoll) {
+      clearInterval(downloadPoll)
+      downloadPoll = null
+    }
+    return
+  }
+  if (isEdit.value) prefillForEdit()
+  void loadCache()
+  void loadDownloads()
+  downloadPoll = setInterval(loadDownloads, 1500) // reflect background progress
 })
 
 async function parse() {
@@ -258,6 +317,49 @@ async function submit() {
             <span class="text-xs text-muted-foreground">模型標籤 <span class="text-status-failed">*</span></span>
             <Input v-model="modelTag" class="mt-1 font-mono" placeholder="org/model" />
           </label>
+        </div>
+
+        <!-- Weight cache status for the entered model_tag -->
+        <div
+          v-if="modelTag.trim()"
+          class="flex items-center gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-xs"
+        >
+          <!-- Downloading -->
+          <template v-if="downloadJob && (downloadJob.state === 'downloading' || downloadJob.state === 'pending')">
+            <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+            <span class="text-muted-foreground">下載權重中…</span>
+            <div class="mx-1 h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+              <div
+                class="h-full rounded-full bg-[var(--chart-2)] transition-[width] duration-700"
+                :class="downloadPct == null ? 'w-1/3 animate-pulse' : ''"
+                :style="downloadPct != null ? { width: `${downloadPct}%` } : {}"
+              />
+            </div>
+            <span class="shrink-0 tabular text-muted-foreground">
+              {{ downloadPct != null ? `${downloadPct.toFixed(0)}%` : formatBytes(downloadJob.downloaded_bytes) }}
+            </span>
+          </template>
+          <!-- Cached -->
+          <template v-else-if="cachedEntry">
+            <Check class="size-3.5 shrink-0 text-status-ready" />
+            <span class="text-status-ready">權重已快取</span>
+            <span class="ml-auto tabular text-muted-foreground">{{ formatBytes(cachedEntry.size_on_disk) }}</span>
+          </template>
+          <!-- Failed -->
+          <template v-else-if="downloadJob && downloadJob.state === 'failed'">
+            <AlertTriangle class="size-3.5 shrink-0 text-status-failed" />
+            <span class="truncate text-status-failed">下載失敗：{{ downloadJob.error }}</span>
+            <Button size="sm" variant="ghost" class="ml-auto shrink-0" @click="downloadWeights">
+              <Download class="size-3.5" />重試
+            </Button>
+          </template>
+          <!-- Not cached -->
+          <template v-else>
+            <span class="text-muted-foreground">權重尚未快取 — 首次啟動會即時下載（較慢）。</span>
+            <Button size="sm" variant="ghost" class="ml-auto shrink-0" @click="downloadWeights">
+              <Download class="size-3.5" />先下載
+            </Button>
+          </template>
         </div>
 
         <!-- vLLM params -->

@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth as auth_routes
 from app.api import config as config_routes
+from app.api import downloads as download_routes
 from app.api import models as model_routes
 from app.api import observability as observability_routes
 from app.api import system as system_routes
@@ -28,6 +29,7 @@ from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
+from app.services.downloads import DownloadManager
 from app.services.gpu_service import get_gpu_processes_with_info
 from app.services.overlay import build_merged_config, overlay_path
 
@@ -79,6 +81,7 @@ async def lifespan(app: FastAPI):
     app.state.registry = registry
     app.state.manager = manager
     app.state.gpu_processes = []
+    app.state.download_manager = DownloadManager()
 
     logger.info("Config loaded from %s (%d instances)", config_path, len(registry.keys()))
     logger.info("Telemetry store at %s", store.db_path)
@@ -128,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(config_routes.router, prefix="/api")
     app.include_router(observability_routes.router, prefix="/api")
     app.include_router(auth_routes.router, prefix="/api")
+    app.include_router(download_routes.router, prefix="/api")
 
     @app.get("/healthz", tags=["health"])
     async def healthz():

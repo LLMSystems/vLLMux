@@ -126,8 +126,9 @@ make up                              # docker compose -f deploy/docker-compose.y
 （基於官方 `vllm/vllm-openai`）以 `network_mode: service:backend` 跑成兩個服務。
 
 前端透過 nginx 以單一來源（same-origin）連到後端與 router，因此 build 不會硬編任何
-host/port。持久化狀態放在 named volume：`hf-cache`（下載的模型權重）與 `llmops-data`
-（共享 SQLite + 動態模型 overlay）。`packages/config-schema/config.yaml` 以 bind-mount
+host/port。SQLite 與動態模型 overlay 放在 `llmops-data` named volume；下載的模型**權重**
+則以 bind-mount 掛在主機 HF 快取（`HF_CACHE_DIR`，預設 `~/.cache/huggingface`），所以
+本機就能直接瀏覽、也和主機端工具共用。`packages/config-schema/config.yaml` 同樣 bind-mount
 掛入，因此改模型不必重新 build。
 
 > **模型生命週期**：router 只負責路由與負載平衡，不會啟動模型。vLLM 實例（與

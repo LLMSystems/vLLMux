@@ -167,6 +167,37 @@ export interface CreatedKey {
   key: string
 }
 
+export interface DiskUsage {
+  total: number
+  used: number
+  free: number
+}
+
+export interface CachedModel {
+  repo_id: string
+  size_on_disk: number
+  nb_files: number
+  last_modified: number | null
+  revisions: string[]
+}
+
+export interface CacheInfo {
+  disk: DiskUsage
+  models: CachedModel[]
+}
+
+export type DownloadState = 'pending' | 'downloading' | 'completed' | 'failed'
+
+export interface DownloadJob {
+  repo_id: string
+  state: DownloadState
+  total_bytes: number | null
+  downloaded_bytes: number
+  error: string | null
+  started_at: number
+  updated_at: number
+}
+
 export type SettingValue = string | number | boolean | null
 
 export interface ParsedModel {

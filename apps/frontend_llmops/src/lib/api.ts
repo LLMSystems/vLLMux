@@ -1,8 +1,10 @@
 import type {
   ApiKey,
+  CacheInfo,
   ConfigSummary,
   CreatedKey,
   CreateModelPayload,
+  DownloadJob,
   GpuProcess,
   HealthZ,
   LogResponse,
@@ -179,6 +181,17 @@ export const api = {
       return false
     }
   },
+  // ---- Model weights --------------------------------------------------------
+  getCache: () => request<CacheInfo>(API_BASE, '/api/cache'),
+  deleteCache: (repoId: string) =>
+    request<null>(API_BASE, `/api/cache/${repoId}`, { method: 'DELETE' }),
+  listDownloads: () => request<DownloadJob[]>(API_BASE, '/api/downloads'),
+  startDownload: (repoId: string) =>
+    request<DownloadJob>(API_BASE, '/api/downloads', {
+      method: 'POST',
+      body: JSON.stringify({ repo_id: repoId }),
+    }),
+
   listKeys: () => request<ApiKey[]>(API_BASE, '/api/keys'),
   createKey: (name: string) =>
     request<CreatedKey>(API_BASE, '/api/keys', { method: 'POST', body: JSON.stringify({ name }) }),
