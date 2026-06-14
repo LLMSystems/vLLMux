@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import StatusDot from '@/components/StatusDot.vue'
+import EmbeddingModelDialog from '@/components/EmbeddingModelDialog.vue'
 import { useModelsStore } from '@/stores/models'
 import { useTrafficStore } from '@/stores/traffic'
 import { useModelControl } from '@/composables/useModelControl'
@@ -17,7 +18,7 @@ import { useAuth } from '@/composables/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { toast } from '@/lib/toast'
 import { formatDuration, formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
-import type { StateEvent } from '@/types/api'
+import type { EmbeddingModelParams, StateEvent } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ modelKey: string | null }>()
@@ -46,6 +47,30 @@ const busy = computed(() => (props.modelKey ? models.pending.has(props.modelKey)
 const vllmParams = computed(() =>
   Object.entries(engine.value?.settings ?? {}).filter(([k]) => k !== 'model_tag'),
 )
+// Embedding server hosts several models; list them since it has no model_config.
+const servedModels = computed(() => {
+  const e = models.config?.embedding_server
+  if (model.value?.kind !== 'embedding' || !e) return []
+  return [
+    ...Object.entries(e.embedding_models).map(([name, params]) => ({ name, type: 'embedding' as const, params })),
+    ...Object.entries(e.reranking_models).map(([name, params]) => ({ name, type: 'reranking' as const, params })),
+  ]
+})
+// Embedding params are editable only while the server is stopped.
+const editEmbeddingOpen = ref(false)
+type ServedModel = { type: 'embedding' | 'reranking'; name: string; params: EmbeddingModelParams }
+const editTarget = ref<ServedModel | null>(null)
+function editEmbeddingModel(sm: ServedModel) {
+  editTarget.value = sm
+  editEmbeddingOpen.value = true
+}
+function paramSummary(params: EmbeddingModelParams): string {
+  const bits: string[] = []
+  if (params.max_length != null) bits.push(`len ${params.max_length}`)
+  if (params.use_gpu != null) bits.push(params.use_gpu ? 'GPU' : 'CPU')
+  if (params.use_float16) bits.push('fp16')
+  return bits.join(' · ')
+}
 function fmtParam(v: string | number | boolean | null): string {
   if (v === null) return '—'
   if (typeof v === 'boolean') return v ? 'true' : 'false'
@@ -231,6 +256,38 @@ const eventColor: Record<string, string> = {
             </div>
           </div>
 
+          <!-- Embedding server: the models it serves (editable while stopped) -->
+          <div v-if="servedModels.length">
+            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              服務的模型
+            </p>
+            <div class="overflow-hidden rounded-lg border border-border/60">
+              <div
+                v-for="(sm, i) in servedModels"
+                :key="sm.name"
+                class="flex items-center gap-3 px-3 py-2 text-sm"
+                :class="i % 2 ? 'bg-background/20' : 'bg-background/40'"
+              >
+                <Badge variant="muted" :class="sm.type === 'embedding' ? 'text-[var(--chart-4)]' : 'text-[var(--chart-2)]'">
+                  {{ sm.type === 'embedding' ? '嵌入' : '重排序' }}
+                </Badge>
+                <div class="min-w-0 flex-1">
+                  <p class="truncate font-mono text-sm">{{ sm.name }}</p>
+                  <p v-if="paramSummary(sm.params)" class="truncate text-xs text-muted-foreground tabular">{{ paramSummary(sm.params) }}</p>
+                </div>
+                <Button
+                  v-if="removable"
+                  size="icon-sm"
+                  variant="ghost"
+                  title="編輯參數（需先停止 embedding server）"
+                  @click="editEmbeddingModel(sm)"
+                >
+                  <Pencil class="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          </div>
+
           <!-- Full vLLM model_config -->
           <div v-if="vllmParams.length">
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -352,4 +409,12 @@ const eventColor: Record<string, string> = {
       </Tabs>
     </div>
   </Sheet>
+
+  <EmbeddingModelDialog
+    v-if="editTarget"
+    v-model:open="editEmbeddingOpen"
+    :model-type="editTarget.type"
+    :name="editTarget.name"
+    :params="editTarget.params"
+  />
 </template>

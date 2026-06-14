@@ -38,6 +38,10 @@ class VRAMInsufficient(RuntimeError):
     """The target GPU likely lacks free memory for this model (pre-flight guard)."""
 
 
+class GpuUnavailable(RuntimeError):
+    """The pinned cuda_device doesn't exist on this host (pre-flight guard)."""
+
+
 def build_registry(config, config_path: str, launchers: list[Launcher]) -> ModelRegistry:
     """Enumerate every instance every launcher defines, all STOPPED initially."""
     registry = ModelRegistry()
@@ -149,6 +153,30 @@ class ModelManager:
                 f"Start with force=true to override."
             )
 
+    async def _gpu_exists_preflight(self, key: str, spec) -> None:
+        """Block a start pinned to a cuda_device that doesn't exist on this host.
+
+        Without this an embedding/LLM pinned to a missing GPU only fails *after*
+        spawning (often after it briefly reports READY), triggering a confusing
+        crash → auto-restart loop. Applies to any pinned device; unpinned LLMs
+        are auto-placed later by _vram_preflight."""
+        from app.services.gpu_service import get_gpu_info
+
+        cuda = spec.env.get("CUDA_VISIBLE_DEVICES")
+        if not cuda or not cuda.isdigit():
+            return  # unpinned — nothing to validate here
+        cuda_idx = int(cuda)
+        loop = asyncio.get_event_loop()
+        gpus = await loop.run_in_executor(None, get_gpu_info)
+        if not gpus:
+            return  # no nvidia-smi / no GPUs visible — can't assess
+        indices = {g["index"] for g in gpus}
+        if cuda_idx not in indices:
+            raise GpuUnavailable(
+                f"GPU {cuda_idx} not found for {key}; visible GPUs: {sorted(indices)}. "
+                f"Fix cuda_device in config.yaml (or the model's settings)."
+            )
+
     async def start(self, key: str, force: bool = False, reset_restart: bool = True) -> ModelInstance:
         inst = self._require(key)
         launcher = self._launchers[inst.kind]
@@ -156,6 +184,7 @@ class ModelManager:
         # Re-resolve the spec (config may have changed) outside the lock so the
         # GPU pre-flight's nvidia-smi call never extends the critical section.
         spec = launcher.build_spec(self.config, self.config_path, key)
+        await self._gpu_exists_preflight(key, spec)
         if inst.kind == ModelKind.LLM:
             await self._vram_preflight(key, spec, guard=(self.settings.vram_guard and not force))
 
@@ -341,6 +370,38 @@ class ModelManager:
         await self._record(inst, None, inst.state, "edited via dashboard")
         logger.info("Updated model %s", key)
         return inst
+
+    async def update_embedding_model(self, model_type: str, name: str, settings: dict) -> str:
+        """Edit an embedding/reranking model's params, persisted as an overlay
+        override (config.yaml untouched). Applies on the embedding server's next
+        launch, so it must be stopped. `model_type` is 'embedding' | 'reranking'."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+        from app.llmops.launchers import EMBEDDING_KEY
+
+        if model_type not in ("embedding", "reranking"):
+            raise ModelConflict("model_type must be 'embedding' or 'reranking'")
+        field = "embedding_models" if model_type == "embedding" else "reranking_models"
+
+        emb = self.config.embedding_server
+        base_models = getattr(emb, field) if emb else {}
+        if name not in base_models:
+            raise ModelNotFound(f"unknown {model_type} model: {name}")
+
+        inst = self.registry.get(EMBEDDING_KEY)
+        if inst is not None and inst.state not in (ModelState.STOPPED, ModelState.FAILED):
+            raise ModelConflict("stop the embedding server before editing its models")
+
+        overlay = load_overlay(self.overlay_path)
+        models_ov = overlay.setdefault("embedding_server", {}).setdefault(field, {})
+        merged = {**models_ov.get(name, {}), **settings}
+        models_ov[name] = merged
+
+        # Validate the merged result before persisting anything.
+        new_config = build_merged_config(self.config_path, overlay)
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+        logger.info("Updated %s model %s", model_type, name)
+        return name
 
     async def delete_overlay_model(self, key: str) -> None:
         """Remove a dynamically-added model. Only overlay-owned, stopped models."""

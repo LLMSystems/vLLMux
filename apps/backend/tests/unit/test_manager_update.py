@@ -4,7 +4,7 @@ import pytest
 
 from app.core.settings import BackendSettings
 from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
-from app.llmops.manager import ModelConflict, ModelManager, build_registry
+from app.llmops.manager import ModelConflict, ModelManager, ModelNotFound, build_registry
 from app.llmops.state import ModelState
 from app.services.overlay import load_overlay
 from schema import load_config
@@ -25,6 +25,20 @@ LLM_engines:
       model_tag: Qwen/Qwen3-0.6B
       max_model_len: 500
       gpu_memory_utilization: 0.35
+embedding_server:
+  host: localhost
+  port: 8005
+  cuda_device: 0
+  embedding_models:
+    m3e:
+      model_name: moka-ai/m3e-base
+      max_length: 512
+      use_gpu: true
+      use_float16: true
+  reranking_models:
+    bge:
+      model_name: BAAI/bge-reranker-large
+      max_length: 512
 """
 
 
@@ -96,3 +110,29 @@ async def test_edit_rejects_port_collision(tmp_path):
         await mgr.update_overlay_model(
             "Qwen3-0.6B::a", {"id": "a", "port": 8004}, {"model_tag": "Qwen/Qwen3-0.6B"}
         )
+
+
+async def test_edit_embedding_model_persists_override(tmp_path):
+    mgr, overlay_path = _manager(tmp_path)
+    await mgr.update_embedding_model("embedding", "m3e", {"max_length": 256, "use_gpu": False})
+    # overlay holds the param override
+    overlay = load_overlay(str(overlay_path))
+    m3e_ov = overlay["embedding_server"]["embedding_models"]["m3e"]
+    assert m3e_ov == {"max_length": 256, "use_gpu": False}
+    # live merged config reflects it, base keys preserved
+    m3e = mgr.config.embedding_server.embedding_models["m3e"]
+    assert m3e.max_length == 256 and m3e.use_gpu is False
+    assert m3e.model_name == "moka-ai/m3e-base"
+
+
+async def test_edit_embedding_unknown_model_raises(tmp_path):
+    mgr, _ = _manager(tmp_path)
+    with pytest.raises(ModelNotFound):
+        await mgr.update_embedding_model("reranking", "nope", {"max_length": 128})
+
+
+async def test_edit_embedding_rejected_while_running(tmp_path):
+    mgr, _ = _manager(tmp_path)
+    mgr.registry.get("embedding::default").state = ModelState.READY
+    with pytest.raises(ModelConflict):
+        await mgr.update_embedding_model("embedding", "m3e", {"max_length": 128})

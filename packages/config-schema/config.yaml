@@ -125,7 +125,7 @@ LLM_engines:
 embedding_server:
   host: "localhost"
   port: 8005
-  cuda_device: 1
+  cuda_device: 0
 
   embedding_models:
     m3e-base:

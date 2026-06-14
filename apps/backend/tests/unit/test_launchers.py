@@ -1,11 +1,30 @@
 import pytest
 
 from app.llmops.launchers import (EMBEDDING_KEY, EmbeddingLauncher,
-                                  VllmLauncher, build_vllm_cli_args)
+                                  VllmLauncher, _write_effective_config,
+                                  build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from tests.conftest import FAKE_CONFIG
 
 pytestmark = pytest.mark.unit
+
+
+def test_effective_config_round_trips_through_schema():
+    """The dumped effective config must reload through the same schema the
+    embedding server uses (by_alias keeps the `model_config` key)."""
+    from schema import load_config
+
+    path = _write_effective_config(FAKE_CONFIG)
+    reloaded = load_config(path)  # raises if the dump isn't valid RootConfig
+    assert "Qwen3-0.6B" in reloaded.LLM_engines
+    assert reloaded.embedding_server.port == 8005
+
+
+def test_embedding_spec_uses_effective_config(tmp_path):
+    spec = EmbeddingLauncher().build_spec(FAKE_CONFIG, "config.yaml", EMBEDDING_KEY)
+    # --config points at the generated effective file, not the on-disk path.
+    cfg_arg = spec.command[spec.command.index("--config") + 1]
+    assert cfg_arg.endswith("llmops_effective_config.yaml")
 
 
 def test_build_vllm_cli_args_flag_formatting():

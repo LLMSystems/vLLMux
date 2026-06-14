@@ -247,6 +247,22 @@ async function runEmbedding() {
 }
 
 const isRerankMode = computed(() => !!rerankQuery.value.trim())
+
+// Embedding/reranking model picker — only the models a READY embedding server
+// actually serves, switching list by mode (rerank when a query is set).
+const embeddingReady = computed(() => models.byKey.get('embedding::default')?.state === 'ready')
+const embModelOptions = computed(() => {
+  const e = models.config?.embedding_server
+  if (!e) return []
+  return isRerankMode.value ? Object.keys(e.reranking_models) : Object.keys(e.embedding_models)
+})
+watch(
+  embModelOptions,
+  (opts) => {
+    if (!opts.includes(embModel.value)) embModel.value = opts[0] ?? ''
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -475,8 +491,19 @@ const isRerankMode = computed(() => !!rerankQuery.value.trim())
             <p class="mb-4 text-sm font-semibold">請求</p>
             <div class="space-y-4 text-sm">
               <label class="block">
-                <span class="text-xs text-muted-foreground">模型</span>
-                <Input v-model="embModel" placeholder="m3e-base / bge-reranker-large" class="mt-1" />
+                <span class="text-xs text-muted-foreground">
+                  模型（{{ isRerankMode ? '重排序' : '嵌入' }}，僅顯示已就緒）
+                </span>
+                <select
+                  v-if="embModelOptions.length"
+                  v-model="embModel"
+                  class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
+                >
+                  <option v-for="o in embModelOptions" :key="o" :value="o">{{ o }}</option>
+                </select>
+                <p v-else class="mt-1 text-xs text-muted-foreground">
+                  {{ embeddingReady ? '此模式無可用模型。' : 'embedding server 未啟動，請先至「模型」頁啟動。' }}
+                </p>
               </label>
               <label class="block">
                 <span class="text-xs text-muted-foreground">查詢（設定後進入重排序模式）</span>
@@ -486,7 +513,7 @@ const isRerankMode = computed(() => !!rerankQuery.value.trim())
                 <span class="text-xs text-muted-foreground">輸入（每行一筆）</span>
                 <Textarea v-model="embInput" class="mt-1 min-h-[140px] font-mono text-xs" />
               </label>
-              <Button :disabled="embBusy" @click="runEmbedding">
+              <Button :disabled="embBusy || !embModel" @click="runEmbedding">
                 <Loader2 v-if="embBusy" class="size-4 animate-spin" />
                 {{ isRerankMode ? '重排序' : '嵌入' }}
               </Button>

@@ -34,6 +34,28 @@ const modelTag = computed<string | null>(() => {
   return tag != null ? String(tag) : null
 })
 
+// Embedding server hosts several models at once — surface them like an LLM's tag.
+const embeddingServer = computed(() => models.config?.embedding_server ?? null)
+const servedModels = computed(() => {
+  const e = embeddingServer.value
+  if (kind.value !== 'embedding' || !e) return []
+  return [
+    ...Object.entries(e.embedding_models).map(([name, params]) => ({ name, type: 'embed' as const, params })),
+    ...Object.entries(e.reranking_models).map(([name, params]) => ({ name, type: 'rerank' as const, params })),
+  ]
+})
+const subtitle = computed(() => {
+  if (kind.value === 'llm') return modelTag.value ?? 'embedding / reranker'
+  const e = embeddingServer.value
+  if (!e) return 'embedding / reranker'
+  const parts: string[] = []
+  const ne = Object.keys(e.embedding_models).length
+  const nr = Object.keys(e.reranking_models).length
+  if (ne) parts.push(`${ne} 嵌入`)
+  if (nr) parts.push(`${nr} 重排序`)
+  return parts.join(' · ') || 'embedding / reranker'
+})
+
 const readyCount = computed(() => props.instances.filter((m) => m.state === 'ready').length)
 const total = computed(() => props.instances.length)
 
@@ -103,8 +125,8 @@ const startLockTitle = computed(() =>
         </div>
         <div class="min-w-0">
           <p class="truncate text-sm font-semibold leading-tight" :title="group">{{ group }}</p>
-          <p class="truncate font-mono text-[11px] text-muted-foreground" :title="modelTag ?? ''">
-            {{ modelTag ?? 'embedding / reranker' }}
+          <p class="truncate font-mono text-[11px] text-muted-foreground" :title="modelTag ?? subtitle">
+            {{ subtitle }}
           </p>
         </div>
       </div>
@@ -196,6 +218,28 @@ const startLockTitle = computed(() =>
         <ChevronDown class="size-3.5 transition-transform" :class="expanded && 'rotate-180'" />
         {{ expanded ? '收起' : `顯示更多 ${hiddenCount} 個` }}
       </button>
+    </div>
+
+    <!-- Embedding server: the models it serves (parity with an LLM's model_tag) -->
+    <div v-if="servedModels.length" class="border-t border-border/40 px-4 py-2.5">
+      <p class="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">服務的模型</p>
+      <div class="flex flex-wrap gap-1.5">
+        <span
+          v-for="sm in servedModels"
+          :key="sm.name"
+          class="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5"
+        >
+          <Badge
+            variant="muted"
+            class="px-1 py-0 text-[9px]"
+            :class="sm.type === 'embed' ? 'text-[var(--chart-4)]' : 'text-[var(--chart-2)]'"
+          >
+            {{ sm.type === 'embed' ? '嵌入' : '重排序' }}
+          </Badge>
+          <span class="font-mono text-[11px]">{{ sm.name }}</span>
+          <span v-if="sm.params.max_length != null" class="text-[10px] text-muted-foreground">· len {{ sm.params.max_length }}</span>
+        </span>
+      </div>
     </div>
 
     <!-- Group actions: only meaningful for multi-instance groups (a single

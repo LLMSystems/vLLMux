@@ -35,6 +35,9 @@ def env_setup() -> None:
     throughout so an explicit export by the operator always wins.
     """
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    # Unbuffered child stdout/stderr so a hard crash's traceback reaches the log
+    # file instead of being lost in a never-flushed block buffer.
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
     # WSL + CUDA 13 / flashinfer 0.6.12 workaround:
     # - VLLM_USE_V2_MODEL_RUNNER=0 : the V2 runner needs UVA, which WSL disables.

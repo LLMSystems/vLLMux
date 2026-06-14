@@ -87,6 +87,22 @@ def merge_into(base_raw: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
                 base_instances[idx_by_id[iid]] = copy.deepcopy(inst)
             else:
                 base_instances.append(copy.deepcopy(inst))
+
+    # embedding_server overrides: per-model param merge for the embedding/
+    # reranking model maps; scalar fields (host/port/cuda_device) override.
+    ov_emb = overlay.get("embedding_server")
+    if ov_emb and merged.get("embedding_server"):
+        base_emb = merged["embedding_server"]
+        for key, val in ov_emb.items():
+            if key in ("embedding_models", "reranking_models") and isinstance(val, dict):
+                dest = base_emb.setdefault(key, {})
+                for name, params in val.items():
+                    if isinstance(dest.get(name), dict) and isinstance(params, dict):
+                        dest[name].update(copy.deepcopy(params))
+                    else:
+                        dest[name] = copy.deepcopy(params)
+            else:
+                base_emb[key] = copy.deepcopy(val)
     return merged
 
 

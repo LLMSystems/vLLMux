@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth as auth_routes
 from app.api import config as config_routes
 from app.api import downloads as download_routes
+from app.api import embedding as embedding_routes
 from app.api import models as model_routes
 from app.api import observability as observability_routes
 from app.api import system as system_routes
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(observability_routes.router, prefix="/api")
     app.include_router(auth_routes.router, prefix="/api")
     app.include_router(download_routes.router, prefix="/api")
+    app.include_router(embedding_routes.router, prefix="/api")
 
     @app.get("/healthz", tags=["health"])
     async def healthz():

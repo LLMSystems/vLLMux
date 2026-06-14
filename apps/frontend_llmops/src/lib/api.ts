@@ -14,6 +14,7 @@ import type {
   RequestRow,
   ResourcesView,
   RouterMetrics,
+  SettingValue,
   StateEvent,
   TimeseriesPoint,
   UsageRow,
@@ -125,6 +126,15 @@ export const api = {
   deleteModel: (key: string) =>
     request<null>(API_BASE, `/api/models/${enc(key)}`, { method: 'DELETE' }),
   getConfig: () => request<ConfigSummary>(API_BASE, '/api/config'),
+  updateEmbeddingModel: (
+    modelType: 'embedding' | 'reranking',
+    name: string,
+    settings: Record<string, SettingValue>,
+  ) =>
+    request<{ ok: boolean }>(API_BASE, '/api/embedding/models', {
+      method: 'PUT',
+      body: JSON.stringify({ model_type: modelType, name, settings }),
+    }),
   getResources: () => request<ResourcesView>(API_BASE, '/api/resources'),
   getGpuProcesses: () => request<GpuProcess[]>(API_BASE, '/api/gpu/processes'),
   getEvents: (limit = 100) => request<StateEvent[]>(API_BASE, `/api/events?limit=${limit}`),

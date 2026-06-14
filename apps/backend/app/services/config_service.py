@@ -50,12 +50,18 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
                 "settings": {**settings_full, **inst_extra},
             }
 
+    def _emb_models(models) -> dict[str, Any]:
+        # Full per-model params (model_name/path, max_length, use_gpu, use_float16
+        # + any extra='allow' keys) so the UI can show and edit them like an LLM.
+        return {name: {**entry.model_dump(), **_extra(entry)} for name, entry in models.items()}
+
     emb = config.embedding_server
     embedding_summary = {
+        "host": emb.host if emb else None,
         "port": emb.port if emb else None,
         "cuda_device": emb.cuda_device if emb else None,
-        "embedding_models": list(emb.embedding_models.keys()) if emb else [],
-        "reranking_models": list(emb.reranking_models.keys()) if emb else [],
+        "embedding_models": _emb_models(emb.embedding_models) if emb else {},
+        "reranking_models": _emb_models(emb.reranking_models) if emb else {},
     }
 
     return {

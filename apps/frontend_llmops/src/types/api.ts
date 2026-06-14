@@ -125,11 +125,23 @@ export interface ConfigSummary {
     }
   >
   embedding_server: {
+    host: string
     port: number
     cuda_device: number
-    embedding_models: string[]
-    reranking_models: string[]
+    embedding_models: Record<string, EmbeddingModelParams>
+    reranking_models: Record<string, EmbeddingModelParams>
   }
+}
+
+/** Per embedding/reranking model params (declared + any extra keys). */
+export interface EmbeddingModelParams {
+  model_name?: string
+  model_path?: string
+  tokenizer_path?: string
+  max_length?: number
+  use_gpu?: boolean
+  use_float16?: boolean
+  [key: string]: string | number | boolean | null | undefined
 }
 
 /** Per-instance vLLM metrics from Router `/metrics`, grouped by model group. */

@@ -12,12 +12,32 @@ Two implementations:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import tempfile
 from typing import Protocol
+
+import yaml
 
 from app.llmops.instance import LaunchSpec
 from app.llmops.state import ModelKind
+
+logger = logging.getLogger(__name__)
+
+# Where the merged (config.yaml + overlay) config is dumped for the embedding
+# server, which reads a config file directly and so wouldn't otherwise see
+# overlay edits. Overwritten per launch; the script reads it once at startup.
+_EFFECTIVE_CONFIG_PATH = os.path.join(tempfile.gettempdir(), "llmops_effective_config.yaml")
+
+
+def _write_effective_config(config) -> str:
+    """Dump the merged RootConfig to YAML so the embedding server sees overlay
+    edits. by_alias keeps the historical `model_config` key the schema expects."""
+    data = config.model_dump(by_alias=True)
+    with open(_EFFECTIVE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    return _EFFECTIVE_CONFIG_PATH
 
 # apps/backend/app/llmops/launchers.py -> apps/router-server is 3 dirs up + sibling.
 _ROUTER_ROOT = os.path.abspath(
@@ -135,7 +155,15 @@ class EmbeddingLauncher:
         if emb.cuda_device is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(emb.cuda_device)
 
-        command = [sys.executable, _EMBEDDING_SCRIPT, "--config", config_path]
+        # Pass the merged effective config so overlay edits take effect. Fall back
+        # to the on-disk config.yaml if the dump fails, so a bug here can never
+        # stop the embedding server from launching.
+        cfg_arg = config_path
+        try:
+            cfg_arg = _write_effective_config(config)
+        except Exception:
+            logger.warning("Effective-config dump failed; launching embedding with %s", config_path)
+        command = [sys.executable, _EMBEDDING_SCRIPT, "--config", cfg_arg]
         log_path = os.path.join(LOG_DIR, "embedding_server.log")
         return LaunchSpec(
             key=key,

@@ -26,8 +26,10 @@ def test_embedding_summary_lists_model_names():
     summary = summarize_config(FAKE_CONFIG)
     emb = summary["embedding_server"]
     assert emb["port"] == 8005
+    # Now a {name: params} map — keys are the model names, values carry params.
     assert sorted(emb["embedding_models"]) == ["bge-m3", "m3e-base"]
-    assert emb["reranking_models"] == ["bge-reranker-large"]
+    assert list(emb["reranking_models"]) == ["bge-reranker-large"]
+    assert emb["embedding_models"]["m3e-base"]["model_name"] == "m3e"
 
 
 def test_no_embedding_server_yields_empty_lists():
@@ -43,7 +45,7 @@ def test_no_embedding_server_yields_empty_lists():
         }
     )
     summary = summarize_config(cfg)
-    assert summary["embedding_server"]["embedding_models"] == []
-    assert summary["embedding_server"]["reranking_models"] == []
+    assert summary["embedding_server"]["embedding_models"] == {}
+    assert summary["embedding_server"]["reranking_models"] == {}
     assert summary["embedding_server"]["port"] is None
     assert set(summary["LLM_engines"]) == {"M::a"}

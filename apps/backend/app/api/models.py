@@ -14,6 +14,7 @@ from app.api.deps import get_manager
 from app.api.schemas import ModelView
 from app.core.auth import require_admin
 from app.llmops.manager import (
+    GpuUnavailable,
     ModelAlreadyRunning,
     ModelConflict,
     ModelManager,
@@ -133,7 +134,7 @@ async def start_model(key: str, force: bool = False, manager: ModelManager = Dep
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
     except ModelAlreadyRunning:
         raise HTTPException(status.HTTP_409_CONFLICT, f"model already running: {key}")
-    except VRAMInsufficient as e:
+    except (VRAMInsufficient, GpuUnavailable) as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
 
 

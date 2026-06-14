@@ -40,6 +40,22 @@ def test_start_unknown_is_404(client):
     assert client.post("/api/models/nope::nope/start").status_code == 404
 
 
+def test_start_pinned_to_missing_gpu_is_409(client, monkeypatch):
+    # Only GPU 0 exists; embedding_server is pinned to cuda_device 1 in the
+    # fake config, so its start must be blocked before spawning (no crash loop).
+    from app.services import gpu_service
+
+    monkeypatch.setattr(
+        gpu_service, "get_gpu_info",
+        lambda: [{"index": 0, "memory_total": 100_000, "memory_used": 0}],
+    )
+    resp = client.post("/api/models/embedding::default/start")
+    assert resp.status_code == 409
+    assert "GPU 1 not found" in resp.json()["detail"]
+    # A model pinned to an existing GPU still starts fine.
+    assert client.post(f"/api/models/{KEY}/start").status_code == 202
+
+
 def test_stop_after_start_returns_stopped(client):
     client.post(f"/api/models/{KEY}/start")
     resp = client.post(f"/api/models/{KEY}/stop")
@@ -52,3 +68,19 @@ def test_stop_after_start_returns_stopped(client):
 
 def test_stop_unknown_is_404(client):
     assert client.post("/api/models/nope::nope/stop").status_code == 404
+
+
+def test_update_embedding_unknown_model_is_404(client):
+    resp = client.put(
+        "/api/embedding/models",
+        json={"model_type": "embedding", "name": "nope", "settings": {"max_length": 128}},
+    )
+    assert resp.status_code == 404
+
+
+def test_update_embedding_requires_admin(auth_client):
+    resp = auth_client.put(
+        "/api/embedding/models",
+        json={"model_type": "embedding", "name": "m3e-base", "settings": {"max_length": 128}},
+    )
+    assert resp.status_code == 401

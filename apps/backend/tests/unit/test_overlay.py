@@ -63,6 +63,25 @@ def test_overlay_model_config_keys_override_base():
     assert cfg["max_model_len"] == 500            # base key preserved
 
 
+def test_overlay_merges_embedding_model_params():
+    base = {
+        "server": {"port": 8887},
+        "embedding_server": {
+            "port": 8005,
+            "embedding_models": {"m3e": {"model_name": "moka/m3e", "max_length": 512, "use_gpu": True}},
+            "reranking_models": {"bge": {"model_name": "BAAI/bge"}},
+        },
+    }
+    overlay = {"embedding_server": {"embedding_models": {"m3e": {"max_length": 256, "use_gpu": False}}}}
+    merged = merge_into(base, overlay)
+    m3e = merged["embedding_server"]["embedding_models"]["m3e"]
+    assert m3e["max_length"] == 256          # overridden
+    assert m3e["use_gpu"] is False           # overridden
+    assert m3e["model_name"] == "moka/m3e"   # base key preserved
+    # base untouched
+    assert base["embedding_server"]["embedding_models"]["m3e"]["max_length"] == 512
+
+
 def test_config_owns_reads_base_yaml(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
