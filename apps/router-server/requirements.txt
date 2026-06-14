@@ -1,4 +1,5 @@
 vllm
-transformers==4.57.3
 gunicorn
 aiosqlite
+pytest
+pytest-asyncio

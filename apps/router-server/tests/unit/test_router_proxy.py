@@ -58,12 +58,78 @@ class FakeHTTPClient:
         return FakeStreamCtx(self._response)
 
 
+class SSEResponse:
+    """A streaming (text/event-stream) response that yields raw bytes in pieces,
+    so the proxy's usage-sniffing has to reassemble events across chunks."""
+
+    def __init__(self, chunks, status_code=200):
+        self.status_code = status_code
+        self._chunks = chunks
+        self.headers = {"content-type": "text/event-stream"}
+
+    async def aiter_raw(self):
+        for c in self._chunks:
+            yield c
+
+
+class RaisingStreamCtx:
+    def __init__(self, exc):
+        self._exc = exc
+
+    async def __aenter__(self):
+        raise self._exc
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class SequencedHTTPClient:
+    """Returns queued outcomes (a response to serve, or an exception to raise on
+    connect) one per stream() call, to drive failover paths."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = []
+
+    def stream(self, method, url, json=None):
+        self.calls.append({"method": method, "url": url, "json": json})
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            return RaisingStreamCtx(outcome)
+        return FakeStreamCtx(outcome)
+
+
 class FakeStore:
     def __init__(self):
         self.reqs = []
 
     async def record_request(self, **kwargs):
         self.reqs.append(kwargs)
+
+
+CONFIG_2 = {
+    "LLM_engines": {
+        "Qwen3-0.6B": {
+            "instances": [
+                {"id": "a", "host": "localhost", "port": 8002},
+                {"id": "b", "host": "localhost", "port": 8004},
+            ],
+            "model_config": {"model_tag": "Qwen/Qwen3-0.6B"},
+        }
+    }
+}
+
+
+def build_client(config, http_client):
+    app = FastAPI()
+    app.include_router(llm_router)
+    app.state.config = config
+    app.state.http_client = http_client
+    app.state.store = FakeStore()
+    app.state.metrics_cache = {}
+    app.state.backend_inflight = {}
+    app.state.backend_health = {}
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -119,3 +185,64 @@ def test_list_models_returns_configured_groups(client):
     assert resp.status_code == 200
     ids = [m["id"] for m in resp.json()["data"]]
     assert ids == ["Qwen3-0.6B"]
+
+
+def test_failover_on_5xx_picks_another_instance():
+    # First-tried instance returns 503, the proxy should fail over to the second.
+    http = SequencedHTTPClient([FakeResponse(status_code=503), FakeResponse(status_code=200)])
+    client = build_client(CONFIG_2, http)
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 200
+    # Both backends were tried, on different ports.
+    ports = [c["url"] for c in http.calls]
+    assert len(ports) == 2 and ports[0] != ports[1]
+    assert client.app.state.backend_inflight == {}  # balanced after failover
+
+
+def test_failover_on_transport_error():
+    http = SequencedHTTPClient([ConnectionError("refused"), FakeResponse(status_code=200)])
+    client = build_client(CONFIG_2, http)
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 200
+    assert len(http.calls) == 2
+    assert client.app.state.backend_inflight == {}
+
+
+def test_all_backends_down_returns_503():
+    http = SequencedHTTPClient([ConnectionError("x"), ConnectionError("y")])
+    client = build_client(CONFIG_2, http)
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 503
+    assert client.app.state.backend_inflight == {}
+
+
+def test_final_attempt_5xx_is_surfaced():
+    # Both instances 5xx -> client gets the 5xx (no infinite retry), balanced.
+    http = SequencedHTTPClient([FakeResponse(status_code=502), FakeResponse(status_code=502)])
+    client = build_client(CONFIG_2, http)
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 502
+    assert client.app.state.backend_inflight == {}
+
+
+def test_streaming_usage_is_logged():
+    # Usage event is split across raw chunks to exercise SSE reassembly.
+    chunks = [
+        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+        b'data: {"choices":[],"usage":{"prompt_to',
+        b'kens":5,"completion_tokens":7,"total_tokens":12}}\n\n'
+        b"data: [DONE]\n\n",
+    ]
+    http = FakeHTTPClient(SSEResponse(chunks))
+    client = build_client(CONFIG, http)
+    with client.stream("POST", "/v1/chat/completions", json={"model": "Qwen3-0.6B", "stream": True}) as resp:
+        assert resp.status_code == 200
+        body = b"".join(resp.iter_bytes())
+    assert b"[DONE]" in body
+    # The backend was asked to include usage, and tokens were logged.
+    assert http.calls[-1]["json"]["stream_options"] == {"include_usage": True}
+    reqs = client.app.state.store.reqs
+    assert len(reqs) == 1
+    assert reqs[0]["prompt_tokens"] == 5
+    assert reqs[0]["completion_tokens"] == 7
+    assert reqs[0]["total_tokens"] == 12

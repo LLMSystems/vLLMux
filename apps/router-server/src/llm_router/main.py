@@ -29,8 +29,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting application lifespan...")
+    # read=None: LLM generations can take far longer than any fixed timeout, and
+    # for non-streaming requests no bytes arrive until generation completes — a
+    # read timeout here would kill long completions. Per-request callers that
+    # need a bound (metrics poller, embeddings) pass their own timeout.
     app.state.http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(10.0, connect=2.0),
+        timeout=httpx.Timeout(connect=5.0, read=None, write=30.0, pool=10.0),
         limits=httpx.Limits(
             max_connections=100,
             max_keepalive_connections=20,

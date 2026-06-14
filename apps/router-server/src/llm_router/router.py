@@ -5,6 +5,7 @@ import time
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
                                                   mark_backend_failure,
@@ -31,24 +32,59 @@ async def reload_config(request: Request):
     return {"status": "reloaded", "groups": groups}
 
 
+def _usage_from_body(body) -> dict | None:
+    """Pull an OpenAI `usage` block out of a buffered JSON response body."""
+    if body is None:
+        return None
+    try:
+        return (json.loads(body) or {}).get("usage") or None
+    except Exception:
+        return None
+
+
+def _scan_sse_for_usage(buffer: bytes, captured: dict) -> bytes:
+    """Sniff token usage out of a passing SSE stream.
+
+    vLLM emits a final `data:` chunk carrying `usage` when the request includes
+    stream_options.include_usage (which the proxy injects for streaming). We scan
+    complete events out of `buffer`, stash the latest non-null usage into
+    `captured["usage"]`, and return the unparsed remainder.
+    """
+    while b"\n\n" in buffer:
+        event, buffer = buffer.split(b"\n\n", 1)
+        for line in event.split(b"\n"):
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            # Cheap gate: `usage` only appears in the final chunk, so skip the
+            # json.loads on every per-token delta chunk (the hot case).
+            if b'"usage"' not in line:
+                continue
+            data = line[len(b"data:"):].strip()
+            if not data or data == b"[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except Exception:
+                continue
+            if isinstance(obj, dict) and obj.get("usage"):
+                captured["usage"] = obj["usage"]
+    return buffer
+
+
 async def _record_request(app, model_key, instance_id, path, status_code, started,
-                          body=None, error=None):
+                          usage=None, error=None):
     """Persist one request log row to the shared store. Best-effort, non-blocking
-    to the response. Tokens are parsed from a buffered JSON `usage` block when
-    present (absent for streaming responses)."""
+    to the response. `usage` is an OpenAI usage dict (from a buffered body or a
+    streamed final chunk) when available."""
     store = getattr(app.state, "store", None)
     if store is None or not model_key:
         return
     latency_ms = (time.perf_counter() - started) * 1000.0
-    prompt_tokens = completion_tokens = total_tokens = None
-    if body is not None:
-        try:
-            usage = (json.loads(body) or {}).get("usage") or {}
-            prompt_tokens = usage.get("prompt_tokens")
-            completion_tokens = usage.get("completion_tokens")
-            total_tokens = usage.get("total_tokens")
-        except Exception:
-            pass
+    usage = usage or {}
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
     try:
         await store.record_request(
             model_key=model_key,
@@ -70,13 +106,18 @@ async def _proxy_to_backend(request: Request, upstream_path: str) -> Response:
 
     Shared by /v1/chat/completions and /v1/completions, which differ only in the
     upstream path. Handles model lookup + tag rewrite, load-aware instance
-    selection, inflight accounting, backend health marking, and both streaming
-    (SSE) and buffered responses.
+    selection, inflight accounting, backend health marking, transparent failover
+    to another instance on a dead/5xx backend, and both streaming (SSE) and
+    buffered responses.
     """
-    instance = None
     model_key = None
     instance_id = None
     stream_ctx = None
+    # Cleanup ownership flags. While True, *this* frame is responsible for closing
+    # stream_ctx / decrementing inflight in the finally block. The streaming path
+    # hands both off to the response generator and clears them.
+    owns_stream = False
+    inflight_counted = False
     started = time.perf_counter()
     try:
         config = request.app.state.config
@@ -93,27 +134,75 @@ async def _proxy_to_backend(request: Request, upstream_path: str) -> Response:
         # served under its model_tag, so rewrite before forwarding.
         request_json["model"] = model_cfg["model_config"]["model_tag"]
 
-        instance = await select_instance_least_load(
-            app=request.app, model_key=model_key, model_cfg=model_cfg
-        )
-        instance_id = instance["id"]
-        incr_inflight(request.app, model_key, instance_id)
-
-        host = instance.get("host", "localhost")
-        port = instance["port"]
-        target_url = f"http://{host}:{port}{upstream_path}"
+        # For streaming, ask the backend to emit a final usage chunk so token
+        # counts can be logged (otherwise streamed requests log no tokens).
+        if request_json.get("stream"):
+            opts = request_json.get("stream_options")
+            opts = opts if isinstance(opts, dict) else {}
+            opts.setdefault("include_usage", True)
+            request_json["stream_options"] = opts
 
         client = request.app.state.http_client
-        stream_ctx = client.stream("POST", target_url, json=request_json)
-        response = await stream_ctx.__aenter__()
+        instances = model_cfg.get("instances", [])
+        # At most one failover hop per extra instance, capped so a bad request
+        # storming every backend stays bounded.
+        max_attempts = max(1, min(len(instances), 3))
+        tried: set[str] = set()
+        response = None
+
+        for attempt in range(max_attempts):
+            instance = await select_instance_least_load(
+                app=request.app, model_key=model_key, model_cfg=model_cfg, exclude=tried,
+            )
+            instance_id = instance["id"]
+            tried.add(instance_id)
+
+            host = instance.get("host", "localhost")
+            port = instance["port"]
+            target_url = f"http://{host}:{port}{upstream_path}"
+
+            incr_inflight(request.app, model_key, instance_id)
+            inflight_counted = True
+            try:
+                stream_ctx = client.stream("POST", target_url, json=request_json)
+                response = await stream_ctx.__aenter__()
+                owns_stream = True
+            except Exception as e:
+                # Transport error before any byte reached the client: safe to
+                # fail over to another instance.
+                mark_backend_failure(
+                    request.app, model_key, instance_id, error=str(e), cooldown_seconds=10.0,
+                )
+                decr_inflight(request.app, model_key, instance_id)
+                inflight_counted = False
+                stream_ctx = None
+                if attempt < max_attempts - 1:
+                    continue
+                raise HTTPException(status_code=503, detail="All backends unavailable")
+
+            # A 5xx means the backend failed but sent no usable body yet, so we
+            # can still fail over — unless this was our last attempt, in which
+            # case we surface the 5xx to the client.
+            if response.status_code >= 500 and attempt < max_attempts - 1:
+                mark_backend_failure(
+                    request.app, model_key, instance_id,
+                    error=f"Received status code {response.status_code}",
+                    cooldown_seconds=10.0,
+                )
+                await stream_ctx.__aexit__(None, None, None)
+                owns_stream = False
+                stream_ctx = None
+                decr_inflight(request.app, model_key, instance_id)
+                inflight_counted = False
+                continue
+
+            break  # got a response we'll serve (2xx/4xx, or final-attempt 5xx)
 
         if response.status_code < 500:
             mark_backend_success(request.app, model_key, instance_id)
         else:
             mark_backend_failure(
-                request.app,
-                model_key,
-                instance_id,
+                request.app, model_key, instance_id,
                 error=f"Received status code {response.status_code}",
                 cooldown_seconds=10.0,
             )
@@ -121,25 +210,37 @@ async def _proxy_to_backend(request: Request, upstream_path: str) -> Response:
         content_type = response.headers.get("content-type", "")
 
         if "text/event-stream" in content_type:
+            # Hand off cleanup to the generator: it closes stream_ctx and
+            # decrements inflight in its own finally, even if the client
+            # disconnects mid-stream.
+            owns_stream = False
+            inflight_counted = False
+            captured: dict = {"usage": None}
+            served_instance = instance_id
+
             async def event_stream():
+                buffer = b""
                 try:
                     async for chunk in response.aiter_raw():
                         yield chunk
+                        # Sniff token usage out of the passing stream (best effort).
+                        buffer += chunk
+                        buffer = _scan_sse_for_usage(buffer, captured)
                 except Exception as e:
                     mark_backend_failure(
                         request.app,
                         model_key,
-                        instance_id,
+                        served_instance,
                         error=str(e),
                         cooldown_seconds=10.0,
                     )
                     raise
                 finally:
-                    decr_inflight(request.app, model_key, instance_id)
+                    decr_inflight(request.app, model_key, served_instance)
                     await stream_ctx.__aexit__(None, None, None)
                     await _record_request(
-                        request.app, model_key, instance_id, upstream_path,
-                        response.status_code, started,
+                        request.app, model_key, served_instance, upstream_path,
+                        response.status_code, started, usage=captured["usage"],
                     )
 
             return StreamingResponse(
@@ -149,34 +250,42 @@ async def _proxy_to_backend(request: Request, upstream_path: str) -> Response:
             )
 
         content = await response.aread()
-        await stream_ctx.__aexit__(None, None, None)
-        decr_inflight(request.app, model_key, instance_id)
-        await _record_request(
-            request.app, model_key, instance_id, upstream_path,
-            response.status_code, started, body=content,
-        )
+        # Log via a background task so the SQLite write happens *after* the
+        # response is sent — keeping the DB off the client's critical path.
         return Response(
             content=content,
             status_code=response.status_code,
             media_type=content_type or "application/json",
+            background=BackgroundTask(
+                _record_request,
+                request.app, model_key, instance_id, upstream_path,
+                response.status_code, started, _usage_from_body(content),
+            ),
         )
     except HTTPException:
         raise
     except Exception as e:
-        if instance is not None and model_key is not None:
+        if instance_id is not None and model_key is not None:
             mark_backend_failure(
                 request.app,
                 model_key,
-                instance["id"],
+                instance_id,
                 error=str(e),
                 cooldown_seconds=10.0,
             )
-            decr_inflight(request.app, model_key, instance["id"])
         await _record_request(
             request.app, model_key, instance_id, upstream_path, None, started, error=str(e)
         )
         logger.exception("Unexpected error proxying to %s", upstream_path)
         raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        # Buffered-success and every error path land here. (The streaming path
+        # cleared both flags, so this is a no-op for it.) __aexit__ is only safe
+        # once __aenter__ returned, which is exactly what owns_stream tracks.
+        if owns_stream and stream_ctx is not None:
+            await stream_ctx.__aexit__(None, None, None)
+        if inflight_counted:
+            decr_inflight(request.app, model_key, instance_id)
 
 @router.get("/metrics")
 async def get_metrics(request: Request):
@@ -231,16 +340,21 @@ async def proxy_embeddings(request: Request):
         headers.pop("content-length", None)
         
         client = request.app.state.http_client
+        # The shared client has read=None (for long LLM generations); embeddings
+        # are fast, so give this path a real bound instead.
         resp = await client.post(
                 target_url,
                 content=body,
-                headers=headers
+                headers=headers,
+                timeout=60.0,
             )
 
+        # Don't forward upstream content-encoding/content-length: httpx may have
+        # already decoded the body, so the original headers would no longer match.
         return Response(
             content=resp.content,
             status_code=resp.status_code,
-            headers=dict(resp.headers)
+            media_type=resp.headers.get("content-type", "application/json"),
         )
 
     except httpx.RequestError as e:

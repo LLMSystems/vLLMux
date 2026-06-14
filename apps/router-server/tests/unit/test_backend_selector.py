@@ -58,16 +58,30 @@ async def test_cooldown_instance_is_avoided(make_app):
     assert res["id"] == "b"
 
 
-async def test_instance_without_cached_metric_is_skipped(make_app):
-    metrics = {MODEL: {"b": metric(running=5)}}  # "a" has no metric
+async def test_missing_metric_treated_as_idle(make_app):
+    # "a" has no cached metric yet (cold start). It must stay selectable with an
+    # idle (0) score rather than being skipped, so a freshly-scraped instance
+    # wins over a loaded one instead of 500ing the request.
+    metrics = {MODEL: {"b": metric(running=5)}}
     res = await select_instance_least_load(
         make_app(metrics_cache=metrics), MODEL, {"instances": INSTANCES}
     )
-    assert res["id"] == "b"
+    assert res["id"] == "a"
 
 
-async def test_all_metrics_missing_raises_500(make_app):
+async def test_all_metrics_missing_still_routes(make_app):
+    # Before the first scrape lands, every instance is unknown. We must still
+    # pick one (cold-start window) rather than 500.
     app = make_app(metrics_cache={MODEL: {}})
-    with pytest.raises(HTTPException) as exc:
-        await select_instance_least_load(app, MODEL, {"instances": INSTANCES})
-    assert exc.value.status_code == 500
+    res = await select_instance_least_load(app, MODEL, {"instances": INSTANCES})
+    assert res["id"] in {"a", "b"}
+
+
+async def test_missing_metric_still_respects_inflight(make_app):
+    # Both unknown (score 0), but "a" already has an in-flight request, so the
+    # inflight penalty should push the new one to "b".
+    app = make_app(
+        metrics_cache={MODEL: {}}, backend_inflight={make_backend_key(MODEL, "a"): 1}
+    )
+    res = await select_instance_least_load(app, MODEL, {"instances": INSTANCES})
+    assert res["id"] == "b"
