@@ -81,6 +81,27 @@ async def create_model(body: CreateModelRequest, manager: ModelManager = Depends
     return ModelView.from_instance(inst)
 
 
+@router.put("/{key}", response_model=ModelView)
+async def update_model(
+    key: str, body: CreateModelRequest, manager: ModelManager = Depends(get_manager)
+):
+    """Edit a stopped model's instance fields / model_config (overlay override).
+
+    `group` / instance `id` are fixed by the key and ignored if changed."""
+    settings = dict(body.settings)
+    if not settings.get("model_tag"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "settings.model_tag is required")
+    try:
+        inst = await manager.update_overlay_model(key, body.instance.model_dump(), settings)
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except Exception as e:  # pydantic ValidationError etc. -> bad request
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid model config: {e}")
+    return ModelView.from_instance(inst)
+
+
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model(key: str, manager: ModelManager = Depends(get_manager)):
     """Remove a dynamically-added model (must be overlay-owned and stopped)."""

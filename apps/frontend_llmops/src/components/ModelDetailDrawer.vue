@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Loader2, Play, RefreshCw, Square, Trash2 } from '@lucide/vue'
+import { Loader2, Pencil, Play, RefreshCw, Square, Trash2 } from '@lucide/vue'
 import Sheet from '@/components/ui/Sheet.vue'
 import Tabs from '@/components/ui/Tabs.vue'
 import TabsList from '@/components/ui/TabsList.vue'
@@ -20,7 +20,7 @@ import type { StateEvent } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ modelKey: string | null }>()
-const emit = defineEmits<{ deleted: [key: string] }>()
+const emit = defineEmits<{ deleted: [key: string]; edit: [key: string] }>()
 
 const models = useModelsStore()
 const traffic = useTrafficStore()
@@ -51,6 +51,12 @@ function fmtParam(v: string | number | boolean | null): string {
 }
 const isRunning = computed(() => !!model.value && ['ready', 'starting'].includes(model.value.state))
 const removable = computed(() => !!model.value && ['stopped', 'failed'].includes(model.value.state))
+// Params only apply on the next launch, so editing is allowed only while stopped.
+const editable = computed(() => removable.value && model.value?.kind === 'llm')
+
+function edit() {
+  if (model.value) emit('edit', model.value.key)
+}
 // One LLM may start at a time: block this model's start while another is mid-start.
 const startLocked = computed(() => model.value?.kind === 'llm' && control.isLlmStarting.value)
 const startLockTitle = computed(() =>
@@ -142,6 +148,15 @@ const eventColor: Record<string, string> = {
           </p>
         </div>
         <div class="flex items-center gap-2">
+          <Button
+            v-if="editable"
+            size="icon-sm"
+            variant="ghost"
+            title="編輯參數（需先停止；vLLM 參數為群組共用）"
+            @click="edit"
+          >
+            <Pencil class="size-4" />
+          </Button>
           <Button
             v-if="removable"
             size="icon-sm"

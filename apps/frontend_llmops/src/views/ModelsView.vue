@@ -19,11 +19,19 @@ const kindFilter = ref<'all' | ModelKind>('all')
 const drawerOpen = ref(false)
 const selectedKey = ref<string | null>(null)
 const addOpen = ref(false)
+const editOpen = ref(false)
+const editKey = ref<string | null>(null)
 
 function onCreated() {
   // Pull fresh model list + config so the new instance (and its GPU/params) show.
   void models.refresh()
   void models.loadConfig()
+}
+
+function openEdit(key: string) {
+  editKey.value = key
+  drawerOpen.value = false
+  editOpen.value = true
 }
 
 const filtered = computed(() =>
@@ -114,7 +122,13 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
       </p>
     </div>
 
-    <ModelDetailDrawer v-model:open="drawerOpen" :model-key="selectedKey" @deleted="onCreated" />
+    <ModelDetailDrawer
+      v-model:open="drawerOpen"
+      :model-key="selectedKey"
+      @deleted="onCreated"
+      @edit="openEdit"
+    />
     <AddModelDialog v-model:open="addOpen" @created="onCreated" />
+    <AddModelDialog v-model:open="editOpen" mode="edit" :edit-key="editKey" @updated="onCreated" />
   </div>
 </template>

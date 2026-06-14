@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Bot, Loader2, Send, Trash2, User } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
+import { Bot, Loader2, Send, Trash2, User, X } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import Card from '@/components/ui/Card.vue'
@@ -18,23 +18,26 @@ import { formatLatency } from '@/lib/utils'
 const models = useModelsStore()
 const tab = ref('chat')
 
-const modelOptions = ref<string[]>([])
+// Only ready models are routable — list the groups with at least one ready
+// instance, kept reactive so options appear/disappear as models start/stop.
+const modelOptions = computed(() => [
+  ...new Set(
+    models.llms.filter((m) => m.state === 'ready').map((m) => m.key.split('::')[0] ?? m.key),
+  ),
+])
 const model = ref('')
 const maxTokens = ref(256)
 const temperature = ref(0.7)
 const stream = ref(true)
 
-onMounted(async () => {
-  try {
-    const list = await api.routerModels()
-    modelOptions.value = list.data.map((m) => m.id)
-    model.value = modelOptions.value[0] ?? ''
-  } catch {
-    // Fall back to configured LLM groups if the router list is unavailable.
-    modelOptions.value = [...new Set(models.llms.map((m) => m.key.split('::')[0] ?? m.key))]
-    model.value = modelOptions.value[0] ?? ''
-  }
-})
+// Keep the single-chat selection valid as the ready set changes.
+watch(
+  modelOptions,
+  (opts) => {
+    if (!opts.includes(model.value)) model.value = opts[0] ?? ''
+  },
+  { immediate: true },
+)
 
 // ---- Chat ----
 interface ChatMsg {
@@ -46,60 +49,100 @@ const chatInput = ref('')
 const busy = ref(false)
 const lastLatency = ref<number | null>(null)
 
+// ---- Compare mode (one prompt → many models) ----
+interface CompareLane {
+  model: string
+  messages: ChatMsg[]
+  busy: boolean
+  latency: number | null
+  ttft: number | null // time-to-first-token
+}
+const compareMode = ref(false)
+const lanes = ref<CompareLane[]>([])
+
+const anyBusy = computed(() =>
+  compareMode.value ? lanes.value.some((l) => l.busy) : busy.value,
+)
+
+function toggleLane(m: string) {
+  const i = lanes.value.findIndex((l) => l.model === m)
+  if (i >= 0) lanes.value.splice(i, 1)
+  else lanes.value.push({ model: m, messages: [], busy: false, latency: null, ttft: null })
+}
+function isSelected(m: string) {
+  return lanes.value.some((l) => l.model === m)
+}
+
+/** Shared streaming core used by both single chat and each compare lane.
+ *  `history` must already include the latest user message but NOT the empty
+ *  assistant bubble that `assistant` points at. */
+async function streamChatCompletion(
+  modelId: string,
+  history: ChatMsg[],
+  assistant: ChatMsg,
+  onFirstToken?: () => void,
+) {
+  const res = await api.routerFetch('/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: modelId,
+      messages: history.map((m) => ({ role: m.role, content: m.content })),
+      max_tokens: maxTokens.value,
+      temperature: temperature.value,
+      stream: stream.value,
+    }),
+  })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+  if (stream.value && res.body) {
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const payload = trimmed.slice(5).trim()
+        if (payload === '[DONE]') continue
+        try {
+          const json = JSON.parse(payload)
+          const delta = json.choices?.[0]?.delta?.content ?? ''
+          if (delta) {
+            onFirstToken?.()
+            assistant.content += delta
+          }
+        } catch {
+          /* ignore partial frames */
+        }
+      }
+    }
+  } else {
+    const json = await res.json()
+    onFirstToken?.()
+    assistant.content = json.choices?.[0]?.message?.content ?? '（空回應）'
+  }
+}
+
 async function sendChat() {
   if (!chatInput.value.trim() || !model.value || busy.value) return
   const userMsg: ChatMsg = { role: 'user', content: chatInput.value.trim() }
   messages.value.push(userMsg)
   chatInput.value = ''
-  const assistant: ChatMsg = { role: 'assistant', content: '' }
-  messages.value.push(assistant)
+  messages.value.push({ role: 'assistant', content: '' })
+  // Read the assistant back from the array so we mutate Vue's reactive proxy
+  // (not the raw object) — otherwise streamed deltas wouldn't render live.
+  const assistant = messages.value[messages.value.length - 1]!
   busy.value = true
   const t0 = performance.now()
-
   try {
-    const res = await api.routerFetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: model.value,
-        messages: messages.value.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
-        max_tokens: maxTokens.value,
-        temperature: temperature.value,
-        stream: stream.value,
-      }),
-    })
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-
-    if (stream.value && res.body) {
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith('data:')) continue
-          const payload = trimmed.slice(5).trim()
-          if (payload === '[DONE]') continue
-          try {
-            const json = JSON.parse(payload)
-            const delta = json.choices?.[0]?.delta?.content ?? ''
-            assistant.content += delta
-          } catch {
-            /* ignore partial frames */
-          }
-        }
-      }
-    } else {
-      const json = await res.json()
-      assistant.content = json.choices?.[0]?.message?.content ?? '（空回應）'
-    }
+    await streamChatCompletion(model.value, messages.value.slice(0, -1), assistant)
   } catch (e) {
-    assistant.content = ''
     messages.value.pop() // drop empty assistant bubble
     toast.error('對話請求失敗', { description: String(e) })
   } finally {
@@ -107,9 +150,56 @@ async function sendChat() {
     busy.value = false
   }
 }
+
+/** Stream one lane independently so one model failing never blocks the rest. */
+async function runLane(lane: CompareLane) {
+  const assistant = lane.messages[lane.messages.length - 1]
+  if (!assistant) return
+  lane.busy = true
+  lane.latency = null
+  lane.ttft = null
+  const history = lane.messages.slice(0, -1)
+  const t0 = performance.now()
+  try {
+    await streamChatCompletion(lane.model, history, assistant, () => {
+      if (lane.ttft === null) lane.ttft = performance.now() - t0
+    })
+  } catch (e) {
+    lane.messages.pop() // drop empty assistant bubble
+    toast.error(`${lane.model} 請求失敗`, { description: String(e) })
+  } finally {
+    lane.latency = performance.now() - t0
+    lane.busy = false
+  }
+}
+
+async function sendCompare() {
+  if (!chatInput.value.trim() || !lanes.value.length || anyBusy.value) return
+  const prompt = chatInput.value.trim()
+  chatInput.value = ''
+  for (const lane of lanes.value) {
+    lane.messages.push({ role: 'user', content: prompt })
+    lane.messages.push({ role: 'assistant', content: '' })
+  }
+  // Fan out in parallel; allSettled so one failure doesn't abort the others.
+  await Promise.allSettled(lanes.value.map((lane) => runLane(lane)))
+}
+
+function send() {
+  if (compareMode.value) sendCompare()
+  else sendChat()
+}
+
 function clearChat() {
   messages.value = []
   lastLatency.value = null
+}
+function clearCompare() {
+  for (const lane of lanes.value) {
+    lane.messages = []
+    lane.latency = null
+    lane.ttft = null
+  }
 }
 
 // ---- Embedding / Rerank ----
@@ -170,7 +260,8 @@ const isRerankMode = computed(() => !!rerankQuery.value.trim())
       <!-- Chat -->
       <TabsContent value="chat">
         <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
-          <Card glass class="flex h-[calc(100vh-12rem)] flex-col">
+          <!-- Single-model conversation -->
+          <Card v-if="!compareMode" glass class="flex h-[calc(100vh-12rem)] flex-col">
             <div class="flex-1 space-y-4 overflow-y-auto p-5">
               <div
                 v-for="(m, i) in messages"
@@ -210,9 +301,9 @@ const isRerankMode = computed(() => !!rerankQuery.value.trim())
                   v-model="chatInput"
                   placeholder="輸入訊息…（Enter 送出，Shift+Enter 換行）"
                   class="min-h-[44px] resize-none"
-                  @keydown.enter.exact.prevent="sendChat"
+                  @keydown.enter.exact.prevent="send"
                 />
-                <Button :disabled="busy" class="h-11" @click="sendChat">
+                <Button :disabled="busy" class="h-11" @click="send">
                   <Loader2 v-if="busy" class="size-4 animate-spin" /><Send v-else class="size-4" />
                 </Button>
               </div>
@@ -225,19 +316,137 @@ const isRerankMode = computed(() => !!rerankQuery.value.trim())
             </div>
           </Card>
 
+          <!-- Compare: one prompt, many models side by side -->
+          <div v-else class="flex h-[calc(100vh-12rem)] flex-col gap-3">
+            <div
+              v-if="!lanes.length"
+              class="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/60 text-center text-muted-foreground"
+            >
+              <Bot class="size-10 opacity-30" />
+              <p class="mt-3 text-sm">在右側選擇至少一個模型以開始並排對比。</p>
+            </div>
+            <div v-else class="flex flex-1 gap-3 overflow-x-auto">
+              <Card
+                v-for="lane in lanes"
+                :key="lane.model"
+                glass
+                class="flex min-w-[280px] flex-1 flex-col"
+              >
+                <div class="flex items-center gap-2 border-b border-border/70 px-4 py-2.5">
+                  <span class="truncate font-mono text-xs font-semibold">{{ lane.model }}</span>
+                  <Loader2 v-if="lane.busy" class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                  <div class="ml-auto flex shrink-0 items-center gap-1.5">
+                    <Badge v-if="lane.ttft != null" variant="muted" class="tabular">首字 {{ formatLatency(lane.ttft) }}</Badge>
+                    <Badge v-if="lane.latency != null" variant="muted" class="tabular">⏱ {{ formatLatency(lane.latency) }}</Badge>
+                    <button class="text-muted-foreground hover:text-foreground" title="移除此模型" @click="toggleLane(lane.model)">
+                      <X class="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div class="flex-1 space-y-3 overflow-y-auto p-4">
+                  <div
+                    v-for="(m, i) in lane.messages"
+                    :key="i"
+                    class="flex gap-2"
+                    :class="m.role === 'user' ? 'flex-row-reverse' : ''"
+                  >
+                    <div
+                      class="flex size-6 shrink-0 items-center justify-center rounded-full"
+                      :class="m.role === 'user' ? 'bg-[var(--chart-1)] text-white' : 'bg-muted'"
+                    >
+                      <User v-if="m.role === 'user'" class="size-3.5" />
+                      <Bot v-else class="size-3.5" />
+                    </div>
+                    <div
+                      class="max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-relaxed"
+                      :class="
+                        m.role === 'user'
+                          ? 'bg-[var(--chart-1)] text-white'
+                          : 'border border-border/60 bg-background/40'
+                      "
+                    >
+                      {{ m.content }}<span v-if="lane.busy && i === lane.messages.length - 1" class="animate-pulse">▋</span>
+                    </div>
+                  </div>
+                  <div
+                    v-if="!lane.messages.length"
+                    class="flex h-full items-center justify-center text-center text-xs text-muted-foreground"
+                  >
+                    等待提問…
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            <!-- Shared input fans out to every lane -->
+            <Card class="p-4">
+              <div class="flex items-end gap-2">
+                <Textarea
+                  v-model="chatInput"
+                  placeholder="同一個問題會同時送給所有選中的模型…（Enter 送出）"
+                  class="min-h-[44px] resize-none"
+                  @keydown.enter.exact.prevent="send"
+                />
+                <Button :disabled="anyBusy || !lanes.length" class="h-11" @click="send">
+                  <Loader2 v-if="anyBusy" class="size-4 animate-spin" /><Send v-else class="size-4" />
+                </Button>
+              </div>
+              <div class="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                <span>{{ lanes.length }} 個模型並排</span>
+                <button
+                  v-if="lanes.some((l) => l.messages.length)"
+                  class="ml-auto flex items-center gap-1 hover:text-foreground"
+                  @click="clearCompare"
+                >
+                  <Trash2 class="size-3.5" />清除全部
+                </button>
+              </div>
+            </Card>
+          </div>
+
           <!-- Params -->
           <Card class="h-fit p-5">
             <p class="mb-4 text-sm font-semibold">參數</p>
             <div class="space-y-4 text-sm">
-              <label class="block">
-                <span class="text-xs text-muted-foreground">模型</span>
+              <label class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">對比模式（多模型同問題）</span>
+                <input v-model="compareMode" type="checkbox" class="size-4 accent-[var(--chart-1)]" />
+              </label>
+
+              <!-- Single: one model -->
+              <label v-if="!compareMode" class="block">
+                <span class="text-xs text-muted-foreground">模型（僅顯示已就緒）</span>
                 <select
+                  v-if="modelOptions.length"
                   v-model="model"
                   class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
                 >
                   <option v-for="o in modelOptions" :key="o" :value="o">{{ o }}</option>
                 </select>
+                <p v-else class="mt-1 text-xs text-muted-foreground">目前沒有已啟動的模型，請先至「模型」頁啟動。</p>
               </label>
+
+              <!-- Compare: pick many models -->
+              <div v-else class="block">
+                <span class="text-xs text-muted-foreground">模型（可多選，僅顯示已就緒）</span>
+                <div class="mt-1 max-h-48 space-y-1 overflow-y-auto rounded-md border border-input bg-background/40 p-2">
+                  <label
+                    v-for="o in modelOptions"
+                    :key="o"
+                    class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 hover:bg-muted/50"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="isSelected(o)"
+                      class="size-3.5 accent-[var(--chart-1)]"
+                      @change="toggleLane(o)"
+                    />
+                    <span class="truncate font-mono text-xs">{{ o }}</span>
+                  </label>
+                  <p v-if="!modelOptions.length" class="px-1 text-xs text-muted-foreground">目前沒有已啟動的模型。</p>
+                </div>
+              </div>
+
               <label class="block">
                 <span class="flex justify-between text-xs text-muted-foreground"
                   >最大 Tokens <span class="tabular text-foreground">{{ maxTokens }}</span></span

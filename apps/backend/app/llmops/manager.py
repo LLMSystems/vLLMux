@@ -285,6 +285,63 @@ class ModelManager:
         logger.info("Created dynamic model %s", key)
         return inst
 
+    async def update_overlay_model(self, key: str, instance: dict, model_config: dict):
+        """Edit a model's instance fields and/or shared model_config, persisting
+        the change as an overlay override (config.yaml is never rewritten).
+
+        Works for both dynamic and config.yaml-defined LLM models; the latter's
+        edits are layered on as deltas. The model must be stopped — parameters
+        only take effect on the next launch. Editing model_config affects every
+        instance in the group."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+        from app.llmops.state import ModelKind
+
+        inst = self._require(key)
+        if inst.kind != ModelKind.LLM:
+            raise ModelConflict("only LLM models are editable")
+        if inst.state not in (ModelState.STOPPED, ModelState.FAILED):
+            raise ModelConflict(f"stop {key} before editing it")
+        if not model_config.get("model_tag"):
+            raise ModelConflict("model_tag is required")
+
+        group, _, instance_id = key.partition("::")
+        instance = dict(instance)
+        instance["id"] = instance_id  # id is the key — never editable
+
+        new_port = instance.get("port")
+        if new_port in (self._used_ports() - {inst.port}):
+            raise ModelConflict(f"port {new_port} is already in use")
+
+        overlay = load_overlay(self.overlay_path)
+        entry = overlay.setdefault("LLM_engines", {}).setdefault(group, {"instances": []})
+        instances = entry.setdefault("instances", [])
+        for n, i in enumerate(instances):
+            if i.get("id") == instance_id:
+                instances[n] = instance
+                break
+        else:
+            instances.append(instance)
+        entry["model_config"] = model_config
+
+        # Validate the merged result before persisting anything.
+        new_config = build_merged_config(self.config_path, overlay)
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+
+        # Re-resolve the spec so the next start uses the edited values.
+        launcher = self._launchers[ModelKind.LLM]
+        spec = launcher.build_spec(self.config, self.config_path, key)
+        async with self.registry.lock:
+            inst.host = spec.host
+            inst.port = spec.port
+            inst.spec = spec
+            inst.model_tag = spec.model_tag
+            inst.log_path = spec.log_path
+            inst.touch()
+        await self._record(inst, None, inst.state, "edited via dashboard")
+        logger.info("Updated model %s", key)
+        return inst
+
     async def delete_overlay_model(self, key: str) -> None:
         """Remove a dynamically-added model. Only overlay-owned, stopped models."""
         from app.services.overlay import build_merged_config, load_overlay, overlay_owns, save_overlay

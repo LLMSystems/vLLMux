@@ -82,6 +82,11 @@ export const api = {
     }),
   createModel: (payload: CreateModelPayload) =>
     request<ModelView>(API_BASE, '/api/models', { method: 'POST', body: JSON.stringify(payload) }),
+  updateModel: (key: string, payload: CreateModelPayload) =>
+    request<ModelView>(API_BASE, `/api/models/${enc(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   deleteModel: (key: string) =>
     request<null>(API_BASE, `/api/models/${enc(key)}`, { method: 'DELETE' }),
   getConfig: () => request<ConfigSummary>(API_BASE, '/api/config'),

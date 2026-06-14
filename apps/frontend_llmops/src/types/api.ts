@@ -114,6 +114,7 @@ export interface ConfigSummary {
   LLM_engines: Record<
     string,
     {
+      host: string
       port: number
       cuda_device: number
       max_model_len: number

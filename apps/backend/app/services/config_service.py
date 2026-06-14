@@ -35,6 +35,7 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
             inst_extra = _extra(inst)
             key = f"{name}::{inst.id}"
             llm_engines[key] = {
+                "host": inst.host,
                 "port": inst.port,
                 "cuda_device": inst.cuda_device,
                 "max_model_len": settings.max_model_len,
