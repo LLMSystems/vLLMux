@@ -17,6 +17,11 @@ def test_start_rejects_mismatched_lengths(client):
     assert resp.status_code == 400
 
 
+def test_start_sla_requires_params(client):
+    resp = client.post("/api/perf", json={"model": "Qwen3-0.6B", "mode": "sla"})
+    assert resp.status_code == 400
+
+
 def test_start_unknown_model_is_400(client):
     resp = client.post("/api/perf", json={
         "model": "nope", "parallel": [1], "number": [10],

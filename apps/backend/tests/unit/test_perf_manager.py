@@ -72,10 +72,42 @@ def test_parse_result_extracts_points_and_p99(tmp_path):
         "parallel_1_number_10": {"metrics": {"concurrency": 1, "request_throughput": 5.0}, "percentiles": {}},
     }
     path = tmp_path / "result.json"
+    # tolerate the legacy flat shape (no "points" wrapper)
     path.write_text(json.dumps(data), encoding="utf-8")
-    points = pm._parse_result(str(path))
+    parsed = pm._parse_result(str(path))
+    points = parsed["points"]
+    assert parsed["sla"] is None
     # sorted by concurrency ascending
     assert [p["concurrency"] for p in points] == [1, 4]
     hi = points[1]
     assert hi["rps"] == 12.5 and hi["success"] == 20
     assert hi["ttft_p99"] == 150 and hi["latency_p99"] == 2.5
+
+
+def test_parse_result_new_shape_with_sla(tmp_path):
+    pm = _manager(tmp_path)
+    data = {
+        "points": {"parallel_8": {"metrics": {"concurrency": 8, "request_throughput": 9.0}, "percentiles": {}}},
+        "sla": [{"criteria": "p99_latency <= 2.0", "variable": "parallel", "max_satisfied": 8, "note": "Satisfied",
+                 "points": [{"val": 8, "passed": True, "metrics": {"p99_latency": 0.6}}]}],
+    }
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    parsed = pm._parse_result(str(path))
+    assert parsed["points"][0]["concurrency"] == 8
+    assert parsed["sla"][0]["max_satisfied"] == 8
+
+
+def test_build_cfg_sla_mode(tmp_path):
+    pm = _manager(tmp_path)
+    cfg = pm._build_cfg(
+        {"model": "Qwen2.5-0.5B", "mode": "sla", "dataset": "random",
+         "sla_variable": "parallel", "sla_params": [{"p99_latency": "<=2"}],
+         "sla_lower_bound": 1, "sla_upper_bound": 16, "max_tokens": 64},
+        str(tmp_path / "1"),
+    )
+    assert cfg["sla_auto_tune"] is True
+    assert cfg["sla_variable"] == "parallel"
+    assert cfg["sla_params"] == [{"p99_latency": "<=2"}]
+    assert cfg["sla_upper_bound"] == 16 and cfg["parallel"] == 1
+    assert "number" in cfg  # placeholder; the tuner recomputes per point

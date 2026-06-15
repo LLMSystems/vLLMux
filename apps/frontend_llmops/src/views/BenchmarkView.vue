@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronDown, ExternalLink, Gauge, Loader2, Play, Square, Trash2 } from '@lucide/vue'
+import { Check, ChevronDown, ExternalLink, Gauge, Loader2, Play, Plus, Square, Trash2, X } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
 import { formatLatency, formatNumber, formatTime } from '@/lib/utils'
-import type { PerfPoint, PerfRun } from '@/types/api'
+import type { PerfPoint, PerfRequest, PerfRun, SlaGroup } from '@/types/api'
 import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
@@ -27,6 +27,7 @@ const target = ref<'router' | 'instance'>('router')
 const instanceKey = ref('')
 const dataset = ref<'random' | 'openqa'>('random')
 const endpoint = ref<'chat' | 'completions'>('chat')
+const mode = ref<'sweep' | 'sla'>('sweep')
 const parallelInput = ref('1,4,8,16')
 const reqPerPoint = ref(50)
 const maxTokens = ref(256)
@@ -34,6 +35,33 @@ const promptLen = ref(512)
 const warmup = ref(0.1)
 const stream = ref(true)
 const launching = ref(false)
+
+// SLA auto-tune form (conditions are OR-ed: each becomes its own search).
+const slaVariable = ref<'parallel' | 'rate'>('parallel')
+const slaConditions = ref<{ metric: string; op: string; value: number }[]>([
+  { metric: 'p99_latency', op: '<=', value: 2 },
+])
+const slaLower = ref(1)
+const slaUpper = ref(32)
+const slaNumRuns = ref(1)
+const slaFixedParallel = ref(10)
+const SLA_METRICS = [
+  { v: 'p99_latency', label: 'p99 延遲 (s)' },
+  { v: 'avg_latency', label: '平均延遲 (s)' },
+  { v: 'p99_ttft', label: 'p99 TTFT (ms)' },
+  { v: 'avg_ttft', label: '平均 TTFT (ms)' },
+  { v: 'p99_tpot', label: 'p99 TPOT (ms)' },
+  { v: 'avg_tpot', label: '平均 TPOT (ms)' },
+  { v: 'rps', label: 'RPS (req/s)' },
+  { v: 'tps', label: '輸出 tok/s' },
+]
+const SLA_OPS = ['<=', '<', '>=', '>', 'max', 'min']
+function addCondition() {
+  slaConditions.value.push({ metric: 'avg_ttft', op: '<=', value: 200 })
+}
+function removeCondition(i: number) {
+  slaConditions.value.splice(i, 1)
+}
 
 const instanceOptions = computed(() =>
   models.llms.filter((m) => m.key.split('::')[0] === model.value).map((m) => m.key),
@@ -53,7 +81,19 @@ const busy = ref(false)
 const selectedId = ref<number | null>(null)
 const selected = ref<PerfRun | null>(null)
 const points = ref<PerfPoint[]>([])
+const sla = ref<SlaGroup[] | null>(null)
 const log = ref('')
+
+function parseResult(raw: string | null | undefined): { points: PerfPoint[]; sla: SlaGroup[] | null } {
+  if (!raw) return { points: [], sla: null }
+  try {
+    const p = JSON.parse(raw)
+    if (Array.isArray(p)) return { points: p, sla: null } // legacy sweep shape
+    return { points: p.points ?? [], sla: p.sla ?? null }
+  } catch {
+    return { points: [], sla: null }
+  }
+}
 let poll: ReturnType<typeof setInterval> | null = null
 
 const selectedRunning = computed(() => selected.value?.status === 'running')
@@ -72,7 +112,9 @@ async function select(id: number) {
   selectedId.value = id
   try {
     selected.value = await api.getPerf(id)
-    points.value = selected.value.result ? (JSON.parse(selected.value.result) as PerfPoint[]) : []
+    const r = parseResult(selected.value.result)
+    points.value = r.points
+    sla.value = r.sla
   } catch (e) {
     toast.error('無法載入結果', { description: String(e) })
   }
@@ -90,28 +132,53 @@ async function loadLog() {
 
 async function launch() {
   if (!model.value || launching.value) return
-  if (!parallel.value.length) {
-    toast.error('請輸入至少一個並發數')
-    return
+  const common = {
+    model: model.value,
+    name: name.value || undefined,
+    mode: mode.value,
+    target: target.value,
+    instance_key: target.value === 'instance' ? instanceKey.value : undefined,
+    dataset: dataset.value,
+    endpoint: endpoint.value,
+    max_tokens: maxTokens.value,
+    min_prompt_length: promptLen.value,
+    max_prompt_length: promptLen.value,
+    stream: stream.value,
+  }
+  let req: PerfRequest
+  if (mode.value === 'sla') {
+    if (!slaConditions.value.length) {
+      toast.error('請至少加入一個 SLA 條件')
+      return
+    }
+    req = {
+      ...common,
+      sla_variable: slaVariable.value,
+      // each condition is its own OR-group; max/min ignore the value
+      sla_params: slaConditions.value.map((c) => ({
+        [c.metric]: c.op === 'max' || c.op === 'min' ? c.op : `${c.op}${c.value}`,
+      })),
+      sla_lower_bound: slaLower.value,
+      sla_upper_bound: slaUpper.value,
+      sla_num_runs: slaNumRuns.value,
+      sla_fixed_parallel: slaVariable.value === 'rate' ? slaFixedParallel.value : undefined,
+    }
+  } else {
+    if (!parallel.value.length) {
+      toast.error('請輸入至少一個並發數')
+      return
+    }
+    req = {
+      ...common,
+      parallel: parallel.value,
+      number: parallel.value.map(() => reqPerPoint.value),
+      warmup_num: warmup.value || undefined,
+    }
   }
   if (!(await ensureUnlocked())) return
   launching.value = true
   try {
-    const run = await api.startPerf({
-      model: model.value,
-      name: name.value || undefined,
-      target: target.value,
-      instance_key: target.value === 'instance' ? instanceKey.value : undefined,
-      dataset: dataset.value,
-      endpoint: endpoint.value,
-      parallel: parallel.value,
-      number: parallel.value.map(() => reqPerPoint.value),
-      max_tokens: maxTokens.value,
-      min_prompt_length: promptLen.value,
-      max_prompt_length: promptLen.value,
-      stream: stream.value,
-      warmup_num: warmup.value || undefined,
-    })
+    const run = await api.startPerf(req)
     toast.success(`已開始壓測 #${run.id}`, { description: '可離開此頁，背景持續執行。' })
     await loadRuns()
     await select(run.id)
@@ -204,6 +271,17 @@ const statusColor: Record<string, string> = {
             <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : '（未啟動）' }}</option>
           </select>
         </label>
+        <div class="inline-flex w-full rounded-lg border border-border/60 bg-muted/40 p-0.5">
+          <button
+            v-for="m in (['sweep', 'sla'] as const)"
+            :key="m"
+            class="flex-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
+            :class="mode === m ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            @click="mode = m"
+          >
+            {{ m === 'sweep' ? '並發 Sweep' : 'SLA 自動調優' }}
+          </button>
+        </div>
         <label class="block">
           <span class="text-xs text-muted-foreground">目標</span>
           <select v-model="target" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
@@ -233,28 +311,80 @@ const statusColor: Record<string, string> = {
             </select>
           </label>
         </div>
-        <label class="block">
-          <span class="text-xs text-muted-foreground">並發點（逗號分隔，掃描）</span>
-          <Input v-model="parallelInput" placeholder="1,4,8,16" class="mt-1 font-mono" />
-        </label>
-        <div class="grid grid-cols-2 gap-2">
+        <!-- Sweep-specific -->
+        <template v-if="mode === 'sweep'">
           <label class="block">
-            <span class="text-xs text-muted-foreground">每點請求數</span>
-            <Input v-model.number="reqPerPoint" type="number" min="1" class="mt-1" />
+            <span class="text-xs text-muted-foreground">並發點（逗號分隔，掃描）</span>
+            <Input v-model="parallelInput" placeholder="1,4,8,16" class="mt-1 font-mono" />
           </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block">
+              <span class="text-xs text-muted-foreground">每點請求數</span>
+              <Input v-model.number="reqPerPoint" type="number" min="1" class="mt-1" />
+            </label>
+            <label class="block">
+              <span class="text-xs text-muted-foreground">預熱比例</span>
+              <Input v-model.number="warmup" type="number" min="0" step="0.1" class="mt-1" />
+            </label>
+          </div>
+        </template>
+
+        <!-- SLA-specific (conditions OR-ed; each runs its own binary search) -->
+        <template v-else>
+          <label class="block">
+            <span class="text-xs text-muted-foreground">搜尋變數</span>
+            <select v-model="slaVariable" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
+              <option value="parallel">並發 parallel</option>
+              <option value="rate">速率 rate（open-loop）</option>
+            </select>
+          </label>
+          <div>
+            <div class="mb-1 flex items-center justify-between">
+              <span class="text-xs text-muted-foreground">SLA 條件（多條 = OR）</span>
+              <Button size="sm" variant="ghost" @click="addCondition"><Plus class="size-3.5" />新增</Button>
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="(c, i) in slaConditions" :key="i" class="flex items-center gap-1.5">
+                <select v-model="c.metric" class="h-8 flex-1 rounded-md border border-input bg-background/40 px-1 text-xs">
+                  <option v-for="m in SLA_METRICS" :key="m.v" :value="m.v">{{ m.label }}</option>
+                </select>
+                <select v-model="c.op" class="h-8 w-14 rounded-md border border-input bg-background/40 px-1 text-xs">
+                  <option v-for="o in SLA_OPS" :key="o" :value="o">{{ o }}</option>
+                </select>
+                <Input v-if="c.op !== 'max' && c.op !== 'min'" v-model.number="c.value" type="number" step="0.01" class="h-8 w-16 text-xs" />
+                <button v-if="slaConditions.length > 1" class="text-muted-foreground hover:text-foreground" @click="removeCondition(i)"><Trash2 class="size-3.5" /></button>
+              </div>
+            </div>
+          </div>
+          <label v-if="slaVariable === 'rate'" class="block">
+            <span class="text-xs text-muted-foreground">固定並發（rate 模式）</span>
+            <Input v-model.number="slaFixedParallel" type="number" min="1" class="mt-1" />
+          </label>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="block">
+              <span class="text-xs text-muted-foreground">下界</span>
+              <Input v-model.number="slaLower" type="number" min="1" class="mt-1" />
+            </label>
+            <label class="block">
+              <span class="text-xs text-muted-foreground">上界</span>
+              <Input v-model.number="slaUpper" type="number" min="1" class="mt-1" />
+            </label>
+            <label class="block">
+              <span class="text-xs text-muted-foreground">每點 runs</span>
+              <Input v-model.number="slaNumRuns" type="number" min="1" class="mt-1" />
+            </label>
+          </div>
+        </template>
+
+        <!-- Common knobs -->
+        <div class="grid grid-cols-2 gap-2">
           <label class="block">
             <span class="text-xs text-muted-foreground">輸出 tokens</span>
             <Input v-model.number="maxTokens" type="number" min="1" class="mt-1" />
           </label>
-        </div>
-        <div class="grid grid-cols-2 gap-2">
           <label v-if="dataset === 'random'" class="block">
             <span class="text-xs text-muted-foreground">輸入長度</span>
             <Input v-model.number="promptLen" type="number" min="1" class="mt-1" />
-          </label>
-          <label class="block">
-            <span class="text-xs text-muted-foreground">預熱比例</span>
-            <Input v-model.number="warmup" type="number" min="0" step="0.1" class="mt-1" />
           </label>
         </div>
         <label class="block">
@@ -313,17 +443,50 @@ const statusColor: Record<string, string> = {
               <div><span class="text-muted-foreground">模型</span> <span class="font-mono">{{ selected.model }}</span></div>
               <div><span class="text-muted-foreground">資料集</span> {{ parsedParams.dataset ?? '—' }}</div>
               <div><span class="text-muted-foreground">目標</span> <span class="font-mono">{{ selected.target_url.replace(/^https?:\/\//, '') }}</span></div>
-              <div><span class="text-muted-foreground">並發點</span> {{ (parsedParams.parallel as number[] | undefined)?.join(', ') ?? '—' }}</div>
+              <div>
+                <span class="text-muted-foreground">模式</span>
+                {{ sla ? `SLA（${parsedParams.sla_variable ?? 'parallel'}）` : '並發 Sweep' }}
+              </div>
               <div><span class="text-muted-foreground">輸出 tokens</span> {{ parsedParams.max_tokens ?? '—' }}</div>
               <div><span class="text-muted-foreground">總測試時間</span> <span class="tabular">{{ aggregates.duration.toFixed(1) }}s</span></div>
               <div><span class="text-muted-foreground">總生成</span> <span class="tabular">{{ formatNumber(Math.round(aggregates.generated)) }} tok</span></div>
               <div><span class="text-muted-foreground">平均輸出速率</span> <span class="tabular">{{ aggregates.rate.toFixed(1) }} tok/s</span></div>
             </div>
-            <Button variant="outline" size="sm" class="shrink-0" @click="openReport">
+            <!-- evalscope only writes an HTML report for sweep runs. -->
+            <Button v-if="!sla" variant="outline" size="sm" class="shrink-0" @click="openReport">
               <ExternalLink class="size-3.5" />完整報告
             </Button>
           </div>
         </Card>
+
+        <!-- SLA auto-tune answer cards (one per OR condition) + search trace -->
+        <div v-if="sla && sla.length" class="grid gap-4 md:grid-cols-2">
+          <Card v-for="(g, gi) in sla" :key="gi" class="p-4">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <p class="font-mono text-xs text-muted-foreground">{{ g.criteria }}</p>
+                <p class="mt-1 text-2xl font-semibold tabular">
+                  {{ g.max_satisfied ?? '—' }}
+                  <span class="text-sm font-normal text-muted-foreground">最大 {{ g.variable === 'rate' ? '速率' : '並發' }}</span>
+                </p>
+              </div>
+              <Badge :class="g.max_satisfied != null ? 'text-status-ready' : 'text-status-failed'" variant="muted">{{ g.note }}</Badge>
+            </div>
+            <!-- search trace -->
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <span
+                v-for="(p, pi) in g.points"
+                :key="pi"
+                class="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] tabular"
+                :class="p.passed ? 'border-status-ready/40 text-status-ready' : 'border-status-failed/40 text-status-failed'"
+              >
+                <Check v-if="p.passed" class="size-3" /><X v-else class="size-3" />
+                {{ g.variable === 'rate' ? 'r' : 'p' }}{{ p.val }}
+                <span class="text-muted-foreground">· {{ Object.values(p.metrics).map((v) => (v == null ? '—' : v.toFixed(2))).join('/') }}</span>
+              </span>
+            </div>
+          </Card>
+        </div>
 
         <!-- Charts: throughput + decode + tail latency vs concurrency -->
         <div v-if="points.length" class="grid gap-4 lg:grid-cols-3">

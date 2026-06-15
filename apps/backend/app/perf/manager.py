@@ -74,8 +74,6 @@ class PerfManager:
             "url": f"{base}{path}",
             "api": "openai",
             "dataset": req.get("dataset", "random"),
-            "parallel": req["parallel"],
-            "number": req["number"],
             "max_tokens": req.get("max_tokens", 256),
             "stream": req.get("stream", True),
             "tokenizer_path": model_tag,
@@ -91,8 +89,30 @@ class PerfManager:
                 "prefix_length": 0,
                 "extra_args": {"ignore_eos": True},
             })
-        if req.get("warmup_num"):
-            cfg["warmup_num"] = req["warmup_num"]
+
+        if req.get("mode") == "sla":
+            variable = req.get("sla_variable", "parallel")
+            lo = req.get("sla_lower_bound", 1)
+            cfg.update({
+                "sla_auto_tune": True,
+                "sla_variable": variable,
+                "sla_params": req["sla_params"],
+                "sla_lower_bound": lo,
+                "sla_upper_bound": req.get("sla_upper_bound", 64),
+                "sla_num_runs": req.get("sla_num_runs", 1),
+                "number": 1,  # the tuner recomputes per search point
+            })
+            if variable == "rate":
+                cfg["rate"] = lo
+                cfg["sla_fixed_parallel"] = req.get("sla_fixed_parallel", 10)
+            else:
+                cfg["parallel"] = lo
+        else:  # sweep
+            cfg["parallel"] = req["parallel"]
+            cfg["number"] = req["number"]
+            if req.get("warmup_num"):
+                cfg["warmup_num"] = req["warmup_num"]
+
         # Use the admin token so a benchmark isn't throttled by router rate limits.
         if getattr(self.settings, "admin_token", ""):
             cfg["api_key"] = self.settings.admin_token
@@ -148,11 +168,11 @@ class PerfManager:
             return
         if rc == 0 and os.path.exists(result_path):
             try:
-                points = self._parse_result(result_path)
+                parsed = self._parse_result(result_path)
                 await self.store.finish_perf_run(
-                    run_id, "completed", result=json.dumps(points), output_dir=run_dir,
+                    run_id, "completed", result=json.dumps(parsed), output_dir=run_dir,
                 )
-                logger.info("Perf run %d completed (%d points)", run_id, len(points))
+                logger.info("Perf run %d completed (%d points)", run_id, len(parsed["points"]))
             except Exception as e:
                 await self.store.finish_perf_run(
                     run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}",
@@ -171,11 +191,14 @@ class PerfManager:
                 return row
         return {}
 
-    def _parse_result(self, path: str) -> list[dict]:
+    def _parse_result(self, path: str) -> dict:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
+        # New runner format: {"points": {...}, "sla": [...]}; tolerate the old flat shape.
+        raw = data.get("points", data) if isinstance(data, dict) else {}
+        sla = data.get("sla") if isinstance(data, dict) else None
         points: list[dict] = []
-        for label, val in data.items():
+        for label, val in raw.items():
             m = val.get("metrics") or {}
             pct = val.get("percentiles") or {}
             p50 = self._pct(pct, "50%", "p50", "50")
@@ -204,7 +227,7 @@ class PerfManager:
                 "tpot_p50": p50.get("tpot"), "tpot_p99": p99.get("tpot"), "tpot_max": pmax.get("tpot"),
             })
         points.sort(key=lambda p: (p.get("concurrency") or 0, p.get("rate") or 0))
-        return points
+        return {"points": points, "sla": sla}
 
     async def cancel(self, run_id: int) -> bool:
         proc = self._procs.get(run_id)

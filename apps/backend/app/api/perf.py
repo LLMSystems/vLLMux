@@ -25,17 +25,26 @@ def _store(request: Request):
 class PerfRequest(BaseModel):
     model: str  # model group
     name: Optional[str] = None
+    mode: Literal["sweep", "sla"] = "sweep"
     target: Literal["router", "instance"] = "router"
     instance_key: Optional[str] = None
     dataset: Literal["random", "openqa"] = "random"
     endpoint: Literal["chat", "completions"] = "chat"
-    parallel: list[int] = Field(min_length=1)
-    number: list[int] = Field(min_length=1)
     max_tokens: int = Field(default=256, ge=1)
     min_prompt_length: int = Field(default=512, ge=1)
     max_prompt_length: int = Field(default=512, ge=1)
     stream: bool = True
+    # sweep mode
+    parallel: Optional[list[int]] = None
+    number: Optional[list[int]] = None
     warmup_num: Optional[float] = None
+    # sla auto-tune mode
+    sla_variable: Literal["parallel", "rate"] = "parallel"
+    sla_params: Optional[list[dict[str, str]]] = None  # [{metric: "op value"}], groups OR-ed
+    sla_lower_bound: int = Field(default=1, ge=1)
+    sla_upper_bound: int = Field(default=64, ge=1)
+    sla_num_runs: int = Field(default=1, ge=1)
+    sla_fixed_parallel: Optional[int] = Field(default=None, ge=1)
 
 
 @router.get("")
@@ -45,8 +54,14 @@ async def list_runs(request: Request, limit: int = 50):
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin)])
 async def start_run(body: PerfRequest, request: Request):
-    if len(body.parallel) != len(body.number):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "parallel and number must be the same length")
+    if body.mode == "sla":
+        if not body.sla_params:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "sla_params is required in SLA mode")
+    else:
+        if not body.parallel or not body.number:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "parallel and number are required in sweep mode")
+        if len(body.parallel) != len(body.number):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "parallel and number must be the same length")
     try:
         return await _pm(request).start(body.model_dump())
     except PerfBusy as e:

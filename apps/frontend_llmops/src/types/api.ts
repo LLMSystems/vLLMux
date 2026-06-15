@@ -244,6 +244,26 @@ export interface PerfPoint {
   tpot_max: number | null
 }
 
+export interface SlaTracePoint {
+  val: number | null
+  passed: boolean
+  rps: number | null
+  tps: number | null
+  metrics: Record<string, number | null>
+}
+export interface SlaGroup {
+  criteria: string
+  variable: string
+  max_satisfied: number | null
+  note: string
+  points: SlaTracePoint[]
+}
+/** Parsed shape of PerfRun.result (string-encoded). */
+export interface PerfResult {
+  points: PerfPoint[]
+  sla: SlaGroup[] | null
+}
+
 export type PerfStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface PerfRun {
@@ -264,17 +284,26 @@ export interface PerfRun {
 export interface PerfRequest {
   model: string
   name?: string
+  mode: 'sweep' | 'sla'
   target: 'router' | 'instance'
   instance_key?: string
   dataset: 'random' | 'openqa'
   endpoint: 'chat' | 'completions'
-  parallel: number[]
-  number: number[]
   max_tokens: number
   min_prompt_length: number
   max_prompt_length: number
   stream: boolean
+  // sweep
+  parallel?: number[]
+  number?: number[]
   warmup_num?: number
+  // sla auto-tune
+  sla_variable?: 'parallel' | 'rate'
+  sla_params?: Record<string, string>[]
+  sla_lower_bound?: number
+  sla_upper_bound?: number
+  sla_num_runs?: number
+  sla_fixed_parallel?: number
 }
 
 export type SettingValue = string | number | boolean | null
