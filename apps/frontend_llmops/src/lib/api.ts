@@ -11,6 +11,8 @@ import type {
   ModelView,
   OpenAIModelList,
   ParsedModel,
+  PerfRequest,
+  PerfRun,
   RequestRow,
   ResourcesView,
   RouterMetrics,
@@ -201,6 +203,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo_id: repoId }),
     }),
+
+  // ---- Load testing (perf) --------------------------------------------------
+  listPerf: () => request<{ busy: boolean; runs: PerfRun[] }>(API_BASE, '/api/perf'),
+  startPerf: (body: PerfRequest) =>
+    request<PerfRun>(API_BASE, '/api/perf', { method: 'POST', body: JSON.stringify(body) }),
+  getPerf: (id: number) => request<PerfRun>(API_BASE, `/api/perf/${id}`),
+  getPerfLog: (id: number, tail = 200) =>
+    request<{ content: string }>(API_BASE, `/api/perf/${id}/log?tail=${tail}`),
+  cancelPerf: (id: number) =>
+    request<{ ok: boolean }>(API_BASE, `/api/perf/${id}/cancel`, { method: 'POST' }),
+  deletePerf: (id: number) => request<null>(API_BASE, `/api/perf/${id}`, { method: 'DELETE' }),
+  /** URL of the full evalscope HTML report (open in a new tab). */
+  perfReportUrl: (id: number) => `${API_BASE}/api/perf/${id}/report`,
 
   listKeys: () => request<ApiKey[]>(API_BASE, '/api/keys'),
   createKey: (name: string, rpmLimit?: number | null) =>

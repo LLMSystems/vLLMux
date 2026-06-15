@@ -1,5 +1,6 @@
 vllm
 gunicorn
+evalscope
 aiosqlite
 pytest
 pytest-asyncio

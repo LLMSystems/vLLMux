@@ -215,6 +215,68 @@ export interface DownloadJob {
   updated_at: number
 }
 
+// ---- Load testing (evalscope perf) ----
+export interface PerfPoint {
+  label: string
+  concurrency: number | null
+  rate: number | null
+  total: number | null
+  success: number | null
+  failed: number | null
+  duration: number | null
+  rps: number | null
+  avg_latency: number | null
+  avg_ttft: number | null
+  avg_tpot: number | null
+  avg_itl: number | null
+  output_tps: number | null
+  total_tps: number | null
+  avg_in: number | null
+  avg_out: number | null
+  latency_p50: number | null
+  latency_p99: number | null
+  latency_max: number | null
+  ttft_p50: number | null
+  ttft_p99: number | null
+  ttft_max: number | null
+  tpot_p50: number | null
+  tpot_p99: number | null
+  tpot_max: number | null
+}
+
+export type PerfStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface PerfRun {
+  id: number
+  created_at: number
+  name: string | null
+  model: string
+  target_url: string
+  status: PerfStatus
+  params: string | null // JSON string of the launch config
+  result?: string | null // JSON string of PerfPoint[] (only from get)
+  output_dir: string | null
+  error: string | null
+  started_at: number | null
+  finished_at: number | null
+}
+
+export interface PerfRequest {
+  model: string
+  name?: string
+  target: 'router' | 'instance'
+  instance_key?: string
+  dataset: 'random' | 'openqa'
+  endpoint: 'chat' | 'completions'
+  parallel: number[]
+  number: number[]
+  max_tokens: number
+  min_prompt_length: number
+  max_prompt_length: number
+  stream: boolean
+  warmup_num?: number
+}
+
 export type SettingValue = string | number | boolean | null
 
 export interface ParsedModel {

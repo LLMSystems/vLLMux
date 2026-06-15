@@ -6,3 +6,4 @@ httpx
 psutil
 aiosqlite
 huggingface_hub
+evalscope

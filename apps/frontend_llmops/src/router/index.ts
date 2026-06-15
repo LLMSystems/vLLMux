@@ -34,6 +34,12 @@ const router = createRouter({
       component: () => import('@/views/RequestsView.vue'),
     },
     {
+      path: '/benchmark',
+      name: 'benchmark',
+      meta: { title: 'Benchmark' },
+      component: () => import('@/views/BenchmarkView.vue'),
+    },
+    {
       path: '/playground',
       name: 'playground',
       meta: { title: 'Playground' },

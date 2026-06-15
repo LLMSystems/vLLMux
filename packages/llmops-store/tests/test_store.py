@@ -87,6 +87,26 @@ async def test_migration_adds_api_key_name_to_legacy_db(tmp_path):
     await s.close()
 
 
+async def test_perf_run_lifecycle(store):
+    rid = await store.create_perf_run(model="Qwen", target_url="http://r/v1/chat/completions",
+                                      params='{"parallel":[1,4]}', name="ci")
+    run = await store.get_perf_run(rid)
+    assert run["status"] == "running" and run["model"] == "Qwen"
+    await store.finish_perf_run(rid, "completed", result='[{"rps":12}]', output_dir="/out")
+    run = await store.get_perf_run(rid)
+    assert run["status"] == "completed" and run["result"] == '[{"rps":12}]'
+    assert any(r["id"] == rid for r in await store.list_perf_runs())
+    assert await store.delete_perf_run(rid) is True
+    assert await store.get_perf_run(rid) is None
+
+
+async def test_mark_stale_perf_runs(store):
+    rid = await store.create_perf_run(model="M", target_url="u", params="{}")
+    await store.mark_stale_perf_runs()
+    run = await store.get_perf_run(rid)
+    assert run["status"] == "failed" and "restart" in run["error"]
+
+
 async def test_record_and_query_model_events(store):
     await store.record_model_event("Qwen::a", "llm", "stopped", "starting")
     await store.record_model_event("Qwen::a", "llm", "starting", "ready")

@@ -13,6 +13,7 @@ import main  # noqa: E402  (importing app.core.config puts config-schema on sys.
 from app.core.settings import BackendSettings  # noqa: E402
 from app.llmops.launchers import EmbeddingLauncher, VllmLauncher  # noqa: E402
 from app.llmops.manager import ModelManager, build_registry  # noqa: E402
+from app.perf.manager import PerfManager  # noqa: E402
 from app.services.downloads import DownloadManager  # noqa: E402
 from schema import RootConfig  # noqa: E402
 
@@ -128,6 +129,42 @@ class FakeStore:
     async def list_api_keys(self):
         return [{k: v for k, v in r.items() if k != "key_hash"} for r in reversed(self.api_keys)]
 
+    # -- Perf runs --
+    def __init_perf(self):
+        if not hasattr(self, "perf"):
+            self.perf = []
+
+    async def create_perf_run(self, model, target_url, params, name=None, ts=None):
+        self.__init_perf()
+        rid = len(self.perf) + 1
+        self.perf.append({"id": rid, "model": model, "target_url": target_url, "params": params,
+                          "name": name, "status": "running", "result": None, "output_dir": None,
+                          "error": None, "created_at": 0.0, "started_at": 0.0, "finished_at": None})
+        return rid
+
+    async def finish_perf_run(self, run_id, status, result=None, output_dir=None, error=None, ts=None):
+        self.__init_perf()
+        for r in self.perf:
+            if r["id"] == run_id:
+                r.update(status=status, result=result, output_dir=output_dir, error=error)
+
+    async def list_perf_runs(self, limit=50):
+        self.__init_perf()
+        return list(reversed(self.perf))[:limit]
+
+    async def get_perf_run(self, run_id):
+        self.__init_perf()
+        return next((r for r in self.perf if r["id"] == run_id), None)
+
+    async def delete_perf_run(self, run_id):
+        self.__init_perf()
+        before = len(self.perf)
+        self.perf = [r for r in self.perf if r["id"] != run_id]
+        return len(self.perf) < before
+
+    async def mark_stale_perf_runs(self):
+        self.__init_perf()
+
     async def api_key_usage(self):
         agg: dict = {}
         for r in self.reqs:
@@ -170,6 +207,12 @@ def app(monkeypatch):
 
     monkeypatch.setattr(manager_mod, "spawn_process", lambda spec: FakeProc())
     monkeypatch.setattr(manager_mod, "terminate_process_group", lambda proc, timeout=10.0: None)
+    # No real GPU in tests/CI: make the start preflights a no-op so start/stop
+    # tests don't depend on the host's actual free VRAM. (Tests that exercise the
+    # GPU guard override this locally.)
+    from app.services import gpu_service
+
+    monkeypatch.setattr(gpu_service, "get_gpu_info", lambda: [])
 
     launchers = [VllmLauncher(), EmbeddingLauncher()]
     registry = build_registry(FAKE_CONFIG, "config.yaml", launchers)
@@ -189,6 +232,9 @@ def app(monkeypatch):
     )
     application.state.gpu_processes = []
     application.state.download_manager = DownloadManager()
+    application.state.perf_manager = PerfManager(
+        store, application.state.manager, settings, str(BACKEND_ROOT), "http://127.0.0.1:8887"
+    )
     return application
 
 

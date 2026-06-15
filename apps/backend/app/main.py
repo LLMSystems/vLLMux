@@ -9,6 +9,7 @@ Lifespan responsibilities:
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import httpx
@@ -20,6 +21,7 @@ from app.api import config as config_routes
 from app.api import downloads as download_routes
 from app.api import embedding as embedding_routes
 from app.api import models as model_routes
+from app.api import perf as perf_routes
 from app.api import observability as observability_routes
 from app.api import system as system_routes
 from app.core.config import get_config_path
@@ -30,6 +32,7 @@ from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
+from app.perf.manager import PerfManager
 from app.services.downloads import DownloadManager
 from app.services.gpu_service import get_gpu_processes_with_info
 from app.services.overlay import build_merged_config, overlay_path
@@ -83,6 +86,10 @@ async def lifespan(app: FastAPI):
     app.state.manager = manager
     app.state.gpu_processes = []
     app.state.download_manager = DownloadManager()
+    perf_root = os.path.join(os.path.dirname(store.db_path), "perf")
+    router_url = os.environ.get("LLMOPS_ROUTER_URL", "http://127.0.0.1:8887")
+    app.state.perf_manager = PerfManager(store, manager, settings, perf_root, router_url)
+    await store.mark_stale_perf_runs()  # orphaned 'running' rows from a prior crash
 
     logger.info("Config loaded from %s (%d instances)", config_path, len(registry.keys()))
     logger.info("Telemetry store at %s", store.db_path)
@@ -134,6 +141,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_routes.router, prefix="/api")
     app.include_router(download_routes.router, prefix="/api")
     app.include_router(embedding_routes.router, prefix="/api")
+    app.include_router(perf_routes.router, prefix="/api")
 
     @app.get("/healthz", tags=["health"])
     async def healthz():

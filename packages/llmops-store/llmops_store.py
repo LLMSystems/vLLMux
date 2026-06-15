@@ -71,6 +71,22 @@ CREATE TABLE IF NOT EXISTS api_keys (
     rpm_limit    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+
+CREATE TABLE IF NOT EXISTS perf_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  REAL    NOT NULL,
+    name        TEXT,
+    model       TEXT    NOT NULL,
+    target_url  TEXT    NOT NULL,
+    status      TEXT    NOT NULL,   -- running | completed | failed | cancelled
+    params      TEXT,               -- JSON of the launch config
+    result      TEXT,               -- JSON: parsed summary points
+    output_dir  TEXT,               -- evalscope raw output directory
+    error       TEXT,
+    started_at  REAL,
+    finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_perf_runs_created ON perf_runs(created_at);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -209,6 +225,65 @@ class LLMOpsStore:
         if row is None or row["revoked"]:
             return None
         return dict(row)
+
+    # -- Perf runs (load tests) --------------------------------------------
+
+    async def create_perf_run(
+        self, model: str, target_url: str, params: str, name: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> int:
+        import time
+
+        now = ts or time.time()
+        cur = await self._db.execute(
+            "INSERT INTO perf_runs (created_at, name, model, target_url, status, params, started_at) "
+            "VALUES (?, ?, ?, ?, 'running', ?, ?)",
+            (now, name, model, target_url, params, now),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def finish_perf_run(
+        self, run_id: int, status: str, result: Optional[str] = None,
+        output_dir: Optional[str] = None, error: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> None:
+        import time
+
+        await self._db.execute(
+            "UPDATE perf_runs SET status = ?, result = ?, output_dir = ?, error = ?, "
+            "finished_at = ? WHERE id = ?",
+            (status, result, output_dir, error, ts or time.time(), run_id),
+        )
+        await self._db.commit()
+
+    async def list_perf_runs(self, limit: int = 50) -> list[dict]:
+        cur = await self._db.execute(
+            "SELECT id, created_at, name, model, target_url, status, params, "
+            "output_dir, error, started_at, finished_at "
+            "FROM perf_runs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_perf_run(self, run_id: int) -> Optional[dict]:
+        cur = await self._db.execute("SELECT * FROM perf_runs WHERE id = ?", (run_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def delete_perf_run(self, run_id: int) -> bool:
+        cur = await self._db.execute("DELETE FROM perf_runs WHERE id = ?", (run_id,))
+        await self._db.commit()
+        return cur.rowcount > 0
+
+    async def mark_stale_perf_runs(self) -> None:
+        """On startup, any 'running' row is orphaned (its process died with the
+        previous backend) — flip it to failed so it doesn't linger forever."""
+        await self._db.execute(
+            "UPDATE perf_runs SET status = 'failed', error = 'interrupted by restart' "
+            "WHERE status = 'running'"
+        )
+        await self._db.commit()
 
     async def api_key_usage(self) -> dict[str, dict]:
         """Per-key request aggregates keyed by key name (from request_logs)."""
