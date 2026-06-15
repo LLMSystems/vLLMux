@@ -57,6 +57,63 @@ def test_build_cfg_no_limit_means_full(tmp_path):
     assert "limit" not in cfg  # full dataset
 
 
+def test_build_cfg_no_judge_uses_rule_strategy(tmp_path):
+    em = _manager(tmp_path)
+    cfg = em._build_cfg(
+        {"model": "Qwen2.5-0.5B", "target": "router", "datasets": ["gsm8k"]},
+        str(tmp_path / "1"),
+    )
+    assert cfg["judge_strategy"] == "rule"
+    assert "judge_model_args" not in cfg
+
+
+def test_build_cfg_internal_judge_via_router(tmp_path):
+    em = _manager(tmp_path)
+    cfg = em._build_cfg(
+        {"model": "Qwen2.5-0.5B", "target": "router", "datasets": ["simple_qa"],
+         "judge_enabled": True, "judge_strategy": "auto",
+         "judge_target": "internal", "judge_model": "Qwen2.5-0.5B"},
+        str(tmp_path / "1"),
+    )
+    assert cfg["judge_strategy"] == "auto"
+    assert cfg["judge_model_args"] == {
+        "model_id": "Qwen2.5-0.5B", "api_url": "http://127.0.0.1:8887/v1", "api_key": "adm",
+        "generation_config": {"max_tokens": 2048, "temperature": 0.0},
+    }
+
+
+def test_build_cfg_external_judge(tmp_path):
+    em = _manager(tmp_path)
+    cfg = em._build_cfg(
+        {"model": "Qwen2.5-0.5B", "target": "router", "datasets": ["simple_qa"],
+         "judge_enabled": True, "judge_target": "external", "judge_model": "gpt-4o-mini",
+         "judge_api_url": "https://api.openai.com/v1", "judge_api_key": "sk-x"},
+        str(tmp_path / "1"),
+    )
+    assert cfg["judge_model_args"] == {
+        "model_id": "gpt-4o-mini", "api_url": "https://api.openai.com/v1", "api_key": "sk-x",
+        "generation_config": {"max_tokens": 2048, "temperature": 0.0},
+    }
+
+
+def test_extract_error_pulls_real_cause(tmp_path):
+    run_dir = tmp_path / "r"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text(
+        "INFO some noise\n"
+        "\x1b[33mWARNING\x1b[0m: Attempt 1 / 5 failed: Error code: 400 - "
+        "{'error': {'message': \"This model's maximum context length is 5000 tokens\"}}\n"
+        "more noise\n",
+        encoding="utf-8",
+    )
+    msg = EvalManager._extract_error(str(run_dir))
+    assert msg and "Error code: 400" in msg and "\x1b" not in msg
+
+
+def test_extract_error_none_when_no_log(tmp_path):
+    assert EvalManager._extract_error(str(tmp_path / "missing")) is None
+
+
 def test_resolve_unknown_group_raises(tmp_path):
     em = _manager(tmp_path)
     with pytest.raises(EvalError):

@@ -363,6 +363,9 @@ export interface EvalDataset {
   tier: string
   metric?: string
   note?: string
+  needs_judge?: boolean
+  long_context?: boolean
+  needs_tool_parser?: boolean
 }
 
 export interface EvalMetricScore {
@@ -415,6 +418,15 @@ export interface EvalRequest {
   eval_batch_size?: number
   timeout?: number
   stream?: boolean
+  // LLM judge (for free-form QA datasets)
+  judge_enabled?: boolean
+  judge_strategy?: 'auto' | 'llm'
+  judge_target?: 'internal' | 'external'
+  judge_model?: string
+  judge_api_url?: string
+  judge_api_key?: string
+  // Per-dataset advanced settings (few_shot_num, subset_list, …)
+  dataset_args?: Record<string, Record<string, unknown>>
 }
 
 export type SettingValue = string | number | boolean | null

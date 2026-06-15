@@ -43,6 +43,7 @@ watch(
 interface ChatMsg {
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string // thinking, when the model uses a reasoning parser (reasoning_content)
 }
 interface Usage {
   completion_tokens?: number
@@ -135,7 +136,15 @@ async function streamChatCompletion(
         try {
           const json = JSON.parse(payload)
           if (json.usage) usage = json.usage // final chunk carries token counts
-          const delta = json.choices?.[0]?.delta?.content ?? ''
+          const d = json.choices?.[0]?.delta ?? {}
+          // Reasoning parser splits <think> into a separate field; vLLM uses
+          // `reasoning`, some OpenAI-compatible servers use `reasoning_content`.
+          const think = d.reasoning ?? d.reasoning_content ?? ''
+          if (think) {
+            opts.onFirstToken?.()
+            assistant.reasoning = (assistant.reasoning ?? '') + think
+          }
+          const delta = d.content ?? ''
           if (delta) {
             opts.onFirstToken?.()
             assistant.content += delta
@@ -148,7 +157,11 @@ async function streamChatCompletion(
   } else {
     const json = await res.json()
     opts.onFirstToken?.()
-    assistant.content = json.choices?.[0]?.message?.content ?? '（空回應）'
+    const msg = json.choices?.[0]?.message ?? {}
+    const think = msg.reasoning ?? msg.reasoning_content
+    if (think) assistant.reasoning = think
+    // content can be null when the model spent its whole budget thinking.
+    assistant.content = msg.content ?? (think ? '' : '（空回應）')
     usage = json.usage ?? null
   }
   return usage
@@ -354,6 +367,10 @@ watch(
                       : 'border border-border/60 bg-background/40'
                   "
                 >
+                  <details v-if="m.role === 'assistant' && m.reasoning" open class="mb-2">
+                    <summary class="cursor-pointer text-xs text-muted-foreground">💭 思考過程</summary>
+                    <div class="mt-1 whitespace-pre-wrap border-l-2 border-border/60 pl-2 text-xs text-muted-foreground">{{ m.reasoning }}</div>
+                  </details>
                   {{ m.content }}<span v-if="busy && i === messages.length - 1" class="animate-pulse">▋</span>
                 </div>
               </div>
@@ -441,6 +458,10 @@ watch(
                           : 'border border-border/60 bg-background/40'
                       "
                     >
+                      <details v-if="m.role === 'assistant' && m.reasoning" open class="mb-1.5">
+                        <summary class="cursor-pointer text-xs text-muted-foreground">💭 思考過程</summary>
+                        <div class="mt-1 whitespace-pre-wrap border-l-2 border-border/60 pl-2 text-xs text-muted-foreground">{{ m.reasoning }}</div>
+                      </details>
                       {{ m.content }}<span v-if="lane.busy && i === lane.messages.length - 1" class="animate-pulse">▋</span>
                     </div>
                   </div>

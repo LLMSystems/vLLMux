@@ -49,6 +49,20 @@
 
 ### Playground
 - OpenAI 相容的 **chat（串流）**、completions、**embeddings**、**reranking**，直接經由 router
+- **思考（reasoning）顯示** — 模型搭配 vLLM reasoning parser 時，`reasoning` 串流會顯示在答案上方的可摺疊「💭 思考過程」區塊
+
+### 壓測與評測（evalscope）
+- **壓測**（`/benchmark`）— 並發 sweep、到達率 open-loop、多輪、**SLA 自動調優**，以及 **embedding／rerank** 吞吐與單請求**速度基準**；每次執行為獨立子進程，含即時圖表、run 比較、完整 evalscope HTML 報告
+- **準確度／品質評測**（`/eval`）— **30+ 個基準資料集**，依能力分組（基線、知識進階、中文、推理、數學、多語言、**工具調用**、**長上下文**、程式碼、需裁判的問答）：MMLU/ARC/GSM8K/IFEval、C-Eval/C-MMLU、GPQA/MMLU-Pro、AIME、HumanEval、ToolBench/General-FunctionCall、Needle-in-a-Haystack…
+  - 每資料集分數、**run 對 run 的比較表**（每列標出最高分）、互動式 HTML 報告
+  - **裁判模型（LLM-as-judge）** 給自由問答評分 — 可選自家部署的模型（經 router）或外部 OpenAI 相容 API
+  - **進階 `dataset_args`** — few-shot 數 + 依資料集的原始覆寫（子集選擇等）
+  - 防呆：需裁判的資料集會強制設定裁判；長上下文與真實工具調用資料集會提醒模型前提（夠大的 `max_model_len`、vLLM tool parser）
+
+### 資料庫
+- **模型庫**（`/library`）— 在 UI 掃描／預下載／刪除 HF 權重，含即時下載進度
+- **資料集庫**（`/datasets`）— 預先下載壓測與評測資料集到共用 ModelScope 快取，執行時就不會卡在首次下載
+- **工具調用設定助手** — 模型編輯器把模型家族對應到正確的 vLLM `tool_call_parser`（Qwen→`hermes`、Qwen3-Coder→`qwen3_xml`、Llama→`llama3_json`/`llama4_pythonic`…），一鍵帶入（見 `docs/vllm_auto_tool_整理.md`）
 
 ### 使用體驗
 - 明暗雙主題、資訊密集的「控制室」介面

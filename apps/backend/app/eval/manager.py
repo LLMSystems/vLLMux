@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 
@@ -100,7 +101,36 @@ class EvalManager:
             cfg["limit"] = req["limit"]
         if req.get("dataset_args"):
             cfg["dataset_args"] = req["dataset_args"]
+        self._apply_judge(req, cfg)
         return cfg
+
+    def _apply_judge(self, req: dict, cfg: dict) -> None:
+        """Wire an LLM judge for free-form QA datasets. The judge is either one of
+        our deployed models (via the router) or an external OpenAI-compatible API.
+        Disabled -> 'rule' strategy so rule-scored datasets never call a judge."""
+        if not req.get("judge_enabled"):
+            cfg["judge_strategy"] = "rule"
+            return
+        cfg["judge_strategy"] = req.get("judge_strategy", "auto")
+        # Cap the judge's output length. evalscope's LLMJudge otherwise defaults to
+        # max_tokens=4096, which overflows a small-context model (e.g. a prompt of
+        # ~900 tokens + 4096 > a 5000-token window -> every grading call 400s and
+        # the dataset silently scores 0). Reuse the eval's own budget.
+        gen = {"max_tokens": req.get("max_tokens", 2048), "temperature": 0.0}
+        if req.get("judge_target") == "external":
+            cfg["judge_model_args"] = {
+                "model_id": req["judge_model"],
+                "api_url": req["judge_api_url"],
+                "api_key": req.get("judge_api_key") or "EMPTY",
+                "generation_config": gen,
+            }
+        else:  # internal: judge through our own router (eval_type defaults to openai_api)
+            cfg["judge_model_args"] = {
+                "model_id": req["judge_model"],
+                "api_url": f"{self.router_url}/v1",
+                "api_key": getattr(self.settings, "admin_token", "") or "EMPTY",
+                "generation_config": gen,
+            }
 
     async def start(self, req: dict) -> dict:
         if self._current is not None:
@@ -165,9 +195,35 @@ class EvalManager:
                     run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}",
                 )
         else:
-            await self.store.finish_eval_run(
-                run_id, "failed", output_dir=run_dir, error=f"runner exited rc={rc}; see run.log",
-            )
+            detail = self._extract_error(run_dir)
+            msg = f"runner exited rc={rc}" + (f": {detail}" if detail else "; see run.log")
+            await self.store.finish_eval_run(run_id, "failed", output_dir=run_dir, error=msg)
+
+    @staticmethod
+    def _extract_error(run_dir: str, max_len: int = 400) -> str | None:
+        """Pull the most informative error line out of the runner log so the UI can
+        show the real cause (e.g. a vLLM 400 / context-length / missing-dep message)
+        instead of a bare exit code."""
+        path = os.path.join(run_dir, "run.log")
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except OSError:
+            return None
+        # Prefer specific, actionable signatures; fall back to any ERROR/exception.
+        keys = ("Error code:", "BadRequestError", "maximum context length",
+                "ImportError", "RuntimeError", "ValueError", "requires sandbox",
+                "ERROR", "Exception")
+        for key in keys:
+            for ln in reversed(lines):
+                if key in ln:
+                    # Strip ANSI colour + log prefix noise, collapse whitespace.
+                    clean = re.sub(r"\x1b\[[0-9;]*m", "", ln).strip()
+                    clean = re.sub(r"^.*?(ERROR|WARNING)[^:]*:\s*", "", clean) or clean
+                    clean = " ".join(clean.split())
+                    if clean:
+                        return clean[:max_len]
+        return None
 
     async def cancel(self, run_id: int) -> bool:
         proc = self._procs.get(run_id)

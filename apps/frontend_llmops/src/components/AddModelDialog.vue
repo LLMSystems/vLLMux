@@ -192,6 +192,30 @@ function removeParam(i: number) {
   params.value.splice(i, 1)
 }
 
+// ---- Tool-calling presets (see docs/vllm_auto_tool_整理.md) ----
+const showToolHint = ref(false)
+// Recommended (tool_call_parser, reasoning_parser) by model family.
+const TOOL_PRESETS = [
+  { label: 'Qwen2.5 / QwQ', parser: 'hermes', reasoning: '' },
+  { label: 'Qwen3（含 thinking）', parser: 'hermes', reasoning: 'qwen3' },
+  { label: 'Qwen3-Coder', parser: 'qwen3_xml', reasoning: '' },
+  { label: 'Llama 3.1/3.2', parser: 'llama3_json', reasoning: '' },
+  { label: 'Llama 4', parser: 'llama4_pythonic', reasoning: '' },
+  { label: 'Mistral', parser: 'mistral', reasoning: '' },
+  { label: 'DeepSeek-V3/R1', parser: 'deepseek_v3', reasoning: '' },
+  { label: 'GLM-4.5/4.6', parser: 'glm45', reasoning: '' },
+]
+function setParam(key: string, value: string) {
+  const existing = params.value.find((p) => p.key === key)
+  if (existing) existing.value = value
+  else params.value.push({ key, value })
+}
+function applyToolPreset(parser: string, reasoning: string) {
+  setParam('enable_auto_tool_choice', 'true')
+  setParam('tool_call_parser', parser)
+  if (reasoning) setParam('reasoning_parser', reasoning)
+}
+
 async function submit() {
   if (!canSubmit.value || creating.value) return
   creating.value = true
@@ -375,6 +399,44 @@ async function submit() {
               <Button size="icon-sm" variant="ghost" @click="removeParam(i)"><Trash2 class="size-3.5" /></Button>
             </div>
             <p v-if="!params.length" class="text-xs text-muted-foreground">無額外參數。</p>
+          </div>
+
+          <!-- Tool-calling hint + quick presets -->
+          <div class="mt-2 rounded-md border border-border/60 bg-muted/30 p-2.5">
+            <button
+              type="button"
+              class="flex w-full items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground"
+              @click="showToolHint = !showToolHint"
+            >
+              <span>🛠 工具調用（tool calling）參數參考</span>
+              <span>{{ showToolHint ? '▾' : '▸' }}</span>
+            </button>
+            <div v-if="showToolHint" class="mt-2 space-y-2 text-[11px] text-muted-foreground">
+              <p>
+                要讓模型支援 <span class="font-mono">tool_choice="auto"</span>，需加
+                <span class="font-mono">enable_auto_tool_choice=true</span> +
+                <span class="font-mono">tool_call_parser=&lt;parser&gt;</span>，reasoning 模型再加
+                <span class="font-mono">reasoning_parser</span>。parser 要對得上模型輸出格式，別看品牌猜。
+              </p>
+              <p class="font-medium text-foreground">點一下帶入推薦參數：</p>
+              <div class="flex flex-wrap gap-1.5">
+                <Button
+                  v-for="t in TOOL_PRESETS"
+                  :key="t.label"
+                  size="sm"
+                  variant="outline"
+                  class="h-7 text-[11px]"
+                  :title="`tool_call_parser=${t.parser}${t.reasoning ? ` · reasoning_parser=${t.reasoning}` : ''}`"
+                  @click="applyToolPreset(t.parser, t.reasoning)"
+                >
+                  {{ t.label }}
+                </Button>
+              </div>
+              <p class="text-muted-foreground/80">
+                完整對照見 <span class="font-mono">docs/vllm_auto_tool_整理.md</span>。
+                沒有對應 parser 的模型（如 SmolLM2 / TinyLlama / Phi-3.5）請勿亂加。
+              </p>
+            </div>
           </div>
         </div>
 

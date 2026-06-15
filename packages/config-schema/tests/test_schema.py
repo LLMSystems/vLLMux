@@ -22,7 +22,7 @@ def test_engine_model_config_aliases_to_settings():
     engine = cfg.LLM_engines["Qwen3-0.6B"]
     assert engine.settings.model_tag == "Qwen/Qwen3-0.6B"
     assert engine.settings.max_model_len == 500
-    assert len(engine.instances) == 2
+    assert len(engine.instances) == 4
     assert engine.instances[0].id == "qwen3"
 
 

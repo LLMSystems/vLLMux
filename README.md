@@ -51,6 +51,20 @@ This project combines a routing server (LLM-Router-Server) with an easy-to-use m
 
 ### Playground
 - OpenAI-compatible **chat (streaming)**, completions, **embeddings**, and **reranking**, sent straight through the router
+- **Reasoning ("thinking") display** — when a model runs with a vLLM reasoning parser, the `reasoning` stream is shown in a collapsible *思考過程* block above the answer
+
+### Benchmarking & Evaluation (evalscope)
+- **Load testing** (`/benchmark`) — concurrency sweep, arrival-rate open-loop, multi-turn, **SLA auto-tune**, plus **embedding / rerank** throughput and single-request **speed benchmark**; each run is an isolated subprocess, with live charts, run comparison, and the full evalscope HTML report
+- **Accuracy / quality evaluation** (`/eval`) — **30+ benchmark datasets** grouped by capability tier (Baseline, Knowledge, Chinese, Reasoning, Math, Multilingual, **Tool-calling**, **Long-context**, Code, and judge-scored QA): MMLU/ARC/GSM8K/IFEval, C-Eval/C-MMLU, GPQA/MMLU-Pro, AIME, HumanEval, ToolBench/General-FunctionCall, Needle-in-a-Haystack, …
+  - Per-dataset scores, a **run-to-run comparison matrix** (highlights the best per dataset), and the interactive HTML report
+  - **LLM-as-judge** for free-form QA — pick one of your own deployed models (via the router) or an external OpenAI-compatible API
+  - **Advanced `dataset_args`** — few-shot count + raw per-dataset overrides (subset selection, etc.)
+  - Sanity guards: judge-scored datasets require a judge; long-context and real tool-calling datasets warn about their model prerequisites (large `max_model_len`, vLLM tool parser)
+
+### Libraries
+- **Model library** (`/library`) — scan / pre-download / delete HF model weights from the UI, with live download progress
+- **Dataset library** (`/datasets`) — pre-download load-test and evaluation datasets into the shared ModelScope cache so a run never stalls on a first-time download
+- **Tool-calling config helper** — the model editor maps model families to the right vLLM `tool_call_parser` (Qwen→`hermes`, Qwen3-Coder→`qwen3_xml`, Llama→`llama3_json`/`llama4_pythonic`, …) with one-click preset insertion (see `docs/vllm_auto_tool_整理.md`)
 
 ### UX
 - Light / dark theme, dense "control-room" interface

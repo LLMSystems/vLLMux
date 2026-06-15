@@ -68,6 +68,44 @@ const temperature = ref(0)
 const maxTokens = ref(2048)
 const launching = ref(false)
 
+// Long-context datasets need a big context window — warn if any are selected.
+const longContextSelected = computed(() =>
+  [...selected.value].some((k) => catalog.value.find((d) => d.key === k)?.long_context),
+)
+// general_fc et al. need the served model to have a vLLM tool parser enabled.
+const toolParserSelected = computed(() =>
+  [...selected.value].some((k) => catalog.value.find((d) => d.key === k)?.needs_tool_parser),
+)
+
+// ---- advanced (dataset_args) ----
+const fewShot = ref(0) // 0 = dataset default
+const datasetArgsJson = ref('') // raw per-dataset overrides (advanced)
+const showAdvanced = ref(false)
+// Build TaskConfig.dataset_args from the few-shot convenience + raw JSON override.
+function buildDatasetArgs(): Record<string, Record<string, unknown>> | undefined {
+  const da: Record<string, Record<string, unknown>> = {}
+  if (fewShot.value > 0) for (const k of selected.value) da[k] = { few_shot_num: fewShot.value }
+  if (datasetArgsJson.value.trim()) {
+    const custom = JSON.parse(datasetArgsJson.value) as Record<string, Record<string, unknown>>
+    for (const [k, v] of Object.entries(custom)) da[k] = { ...da[k], ...v }
+  }
+  return Object.keys(da).length ? da : undefined
+}
+
+// ---- LLM judge (only for free-form QA datasets that can't be rule-scored) ----
+const judgeTarget = ref<'internal' | 'external'>('internal')
+const judgeModel = ref('') // internal group key OR external model id
+const judgeApiUrl = ref('')
+const judgeApiKey = ref('')
+// The judge is needed exactly when a selected dataset is judge-scored; it's
+// pointless for rule-scored datasets, so we only show/send it then.
+const judgeEnabled = computed(() =>
+  [...selected.value].some((k) => catalog.value.find((d) => d.key === k)?.needs_judge),
+)
+watch([judgeTarget, groups], () => {
+  if (judgeTarget.value === 'internal' && !judgeModel.value) judgeModel.value = groups.value[0] ?? ''
+}, { immediate: true })
+
 async function loadCatalog() {
   try {
     catalog.value = (await api.listEvalDatasets()).datasets
@@ -152,6 +190,21 @@ async function launch() {
     toast.error('請至少選擇一個資料集')
     return
   }
+  if (judgeEnabled.value && !judgeModel.value) {
+    toast.error('請設定裁判模型')
+    return
+  }
+  if (judgeEnabled.value && judgeTarget.value === 'external' && !judgeApiUrl.value) {
+    toast.error('外部裁判需要 API URL')
+    return
+  }
+  let datasetArgs: EvalRequest['dataset_args']
+  try {
+    datasetArgs = buildDatasetArgs()
+  } catch {
+    toast.error('進階 dataset_args 不是合法 JSON')
+    return
+  }
   const req: EvalRequest = {
     model: model.value,
     name: name.value || undefined,
@@ -162,6 +215,12 @@ async function launch() {
     repeats: repeats.value,
     temperature: temperature.value,
     max_tokens: maxTokens.value,
+    judge_enabled: judgeEnabled.value,
+    judge_target: judgeEnabled.value ? judgeTarget.value : undefined,
+    judge_model: judgeEnabled.value ? judgeModel.value : undefined,
+    judge_api_url: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiUrl.value : undefined,
+    judge_api_key: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiKey.value || undefined : undefined,
+    dataset_args: datasetArgs,
   }
   if (!(await ensureUnlocked())) return
   launching.value = true
@@ -196,6 +255,44 @@ async function remove(id: number) {
   } catch (e) {
     toast.error('刪除失敗', { description: String(e) })
   }
+}
+
+// ---- run comparison (dataset × run score matrix) ----
+const compareIds = ref<number[]>([])
+function toggleCompare(id: number) {
+  const i = compareIds.value.indexOf(id)
+  if (i >= 0) compareIds.value.splice(i, 1)
+  else compareIds.value.push(id)
+}
+const compareRuns = computed(() =>
+  compareIds.value
+    .map((id) => runs.value.find((r) => r.id === id))
+    .filter((r): r is EvalRun => r != null && r.status === 'completed'),
+)
+// Union of datasets across the compared runs (row order = first appearance).
+const compareDatasets = computed(() => {
+  const seen = new Map<string, string>() // dataset -> pretty
+  for (const r of compareRuns.value)
+    for (const d of parseResult(r.result)?.datasets ?? [])
+      if (!seen.has(d.dataset)) seen.set(d.dataset, d.pretty)
+  return [...seen.entries()].map(([dataset, pretty]) => ({ dataset, pretty }))
+})
+// scoreFor[runId][dataset] = score (0..1) or undefined
+const compareScores = computed(() => {
+  const m: Record<number, Record<string, number>> = {}
+  for (const r of compareRuns.value) {
+    m[r.id] = {}
+    for (const d of parseResult(r.result)?.datasets ?? []) m[r.id]![d.dataset] = d.score
+  }
+  return m
+})
+function bestForDataset(dataset: string): number | null {
+  let best: number | null = null
+  for (const r of compareRuns.value) {
+    const s = compareScores.value[r.id]?.[dataset]
+    if (s != null && (best == null || s > best)) best = s
+  }
+  return best
 }
 
 // Re-fetch the selected run's detail once it leaves the running state.
@@ -287,11 +384,24 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
                 @click="toggleDataset(d.key)"
               >
                 {{ d.label }}
+                <span v-if="d.needs_judge" class="ml-1 text-amber-500" title="需裁判模型">⚖</span>
                 <span v-if="cachedKeys.has(d.key)" class="ml-1 text-[var(--chart-1)]">●</span>
               </button>
             </div>
           </div>
-          <p class="text-[10px] text-muted-foreground">● = 已快取，未快取的會在執行時下載。</p>
+          <p class="text-[10px] text-muted-foreground">● = 已快取，未快取的會在執行時下載。⚖ = 需裁判模型評分。</p>
+          <p
+            v-if="longContextSelected"
+            class="rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-600"
+          >
+            ⚠ 已選長上下文資料集，需模型有夠大的 <span class="font-mono">max_model_len</span>（數萬 token），否則會被截斷或回 400。
+          </p>
+          <p
+            v-if="toolParserSelected"
+            class="rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-600"
+          >
+            ⚠ 已選真實函數調用資料集，需模型啟用 vLLM tool parser（<span class="font-mono">enable_auto_tool_choice</span> + <span class="font-mono">tool_call_parser</span>），否則分數恆為 0。
+          </p>
         </div>
 
         <!-- Params -->
@@ -314,6 +424,55 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           </div>
         </div>
 
+        <!-- Advanced: dataset_args -->
+        <div class="space-y-2 rounded-md border border-border/60 p-3">
+          <button class="text-xs font-medium text-muted-foreground hover:text-foreground" @click="showAdvanced = !showAdvanced">
+            進階設定 {{ showAdvanced ? '▾' : '▸' }}
+          </button>
+          <template v-if="showAdvanced">
+            <div class="space-y-1">
+              <label class="text-xs font-medium text-muted-foreground">few-shot 範例數（0=各資料集預設）</label>
+              <Input v-model.number="fewShot" type="number" min="0" />
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs font-medium text-muted-foreground">dataset_args JSON（依資料集名覆寫，選填）</label>
+              <textarea
+                v-model="datasetArgsJson"
+                rows="3"
+                spellcheck="false"
+                placeholder='例：{"arc": {"subset_list": ["ARC-Challenge"]}}'
+                class="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px]"
+              />
+              <p class="text-[10px] text-muted-foreground">如 few_shot_num、subset_list、shuffle。math 多採樣可配「重複次數」+ <span class="font-mono">aggregation</span>。</p>
+            </div>
+          </template>
+        </div>
+
+        <!-- LLM judge — only shown when a judge-scored (⚖) dataset is selected -->
+        <div v-if="judgeEnabled" class="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+          <p class="flex items-center gap-2 text-xs font-medium">
+            <span class="text-amber-500">⚖</span>裁判模型
+            <span class="text-[10px] font-normal text-muted-foreground">所選問答資料集需要 LLM 評分</span>
+          </p>
+          <div class="flex gap-1.5">
+            <Button size="sm" :variant="judgeTarget === 'internal' ? 'default' : 'outline'" @click="judgeTarget = 'internal'">內部模型</Button>
+            <Button size="sm" :variant="judgeTarget === 'external' ? 'default' : 'outline'" @click="judgeTarget = 'external'">外部 API</Button>
+          </div>
+          <select
+            v-if="judgeTarget === 'internal'"
+            v-model="judgeModel"
+            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+          >
+            <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : ' · 離線' }}</option>
+          </select>
+          <template v-else>
+            <Input v-model="judgeApiUrl" placeholder="API URL，例：https://api.openai.com/v1" />
+            <Input v-model="judgeModel" placeholder="裁判模型 ID，例：gpt-4o-mini" />
+            <Input v-model="judgeApiKey" type="password" placeholder="API Key（選填）" />
+          </template>
+          <p class="text-[10px] text-muted-foreground">裁判越強分數越可靠；小模型當裁判僅供參考。</p>
+        </div>
+
         <div class="space-y-1">
           <label class="text-xs font-medium text-muted-foreground">名稱（選填）</label>
           <Input v-model="name" placeholder="例如：Qwen3-0.6B 基線" />
@@ -330,7 +489,10 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
       <div class="min-w-0 space-y-4">
         <!-- Run list -->
         <Card class="overflow-hidden">
-          <div class="border-b border-border/60 px-5 py-3 text-sm font-semibold">評測紀錄</div>
+          <div class="flex items-center justify-between border-b border-border/60 px-5 py-3">
+            <span class="text-sm font-semibold">評測紀錄</span>
+            <span class="text-[11px] text-muted-foreground">勾選 ≥2 筆比較分數</span>
+          </div>
           <div v-if="runs.length" class="divide-y divide-border/60">
             <button
               v-for="r in runs"
@@ -339,6 +501,14 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
               :class="selectedId === r.id && 'bg-muted/60'"
               @click="select(r.id)"
             >
+              <input
+                type="checkbox"
+                class="accent-[var(--chart-1)]"
+                :checked="compareIds.includes(r.id)"
+                :disabled="r.status !== 'completed'"
+                title="加入比較"
+                @click.stop="toggleCompare(r.id)"
+              />
               <span class="tabular text-xs text-muted-foreground">#{{ r.id }}</span>
               <Badge :variant="STATUS_VARIANT[r.status] ?? 'outline'">{{ r.status }}</Badge>
               <span class="min-w-0 flex-1 truncate">
@@ -361,6 +531,40 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           <p v-else class="px-5 py-8 text-center text-sm text-muted-foreground">尚無評測紀錄。</p>
         </Card>
 
+        <!-- Comparison matrix (datasets × runs) -->
+        <Card v-if="compareRuns.length >= 2" class="overflow-hidden">
+          <div class="border-b border-border/60 px-5 py-3 text-sm font-semibold">分數比較</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border/60 text-left text-xs text-muted-foreground">
+                  <th class="px-5 py-2">資料集</th>
+                  <th v-for="r in compareRuns" :key="r.id" class="px-3 py-2 text-right">
+                    {{ r.name || r.model }}<span class="text-muted-foreground/60"> #{{ r.id }}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in compareDatasets" :key="d.dataset" class="border-b border-border/40">
+                  <td class="px-5 py-1.5 font-medium">{{ d.pretty }}</td>
+                  <td
+                    v-for="r in compareRuns"
+                    :key="r.id"
+                    class="px-3 py-1.5 text-right tabular"
+                    :class="compareScores[r.id]?.[d.dataset] != null
+                      && compareScores[r.id]?.[d.dataset] === bestForDataset(d.dataset)
+                      ? 'font-semibold text-[var(--chart-1)]'
+                      : ''"
+                  >
+                    {{ compareScores[r.id]?.[d.dataset] != null ? pct(compareScores[r.id]![d.dataset]!) : '—' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="px-5 py-2 text-[10px] text-muted-foreground">每列最高分以主色標示。</p>
+        </Card>
+
         <!-- Selected detail -->
         <Card v-if="detail" class="p-5">
           <div class="mb-3 flex items-center justify-between">
@@ -381,7 +585,10 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           <div v-if="detail.status === 'running'" class="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 class="size-4 animate-spin" />評測執行中…（可離開此頁）
           </div>
-          <div v-else-if="detail.status === 'failed'" class="text-sm text-status-failed">
+          <div
+            v-else-if="detail.status === 'failed'"
+            class="break-words rounded-md bg-status-failed/10 p-3 text-sm text-status-failed"
+          >
             失敗：{{ detail.error }}
           </div>
 

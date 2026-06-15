@@ -44,6 +44,27 @@ def test_start_eval_conflicts_with_running_load_test(client, app):
     assert resp.status_code == 409
 
 
+def test_judge_dataset_without_judge_is_400(client):
+    resp = client.post("/api/eval", json={"model": "Qwen3-0.6B", "datasets": ["simple_qa"]})
+    assert resp.status_code == 400
+    assert "judge" in resp.json()["detail"].lower()
+
+
+def test_judge_enabled_without_model_is_400(client):
+    resp = client.post("/api/eval", json={
+        "model": "Qwen3-0.6B", "datasets": ["gsm8k"], "judge_enabled": True,
+    })
+    assert resp.status_code == 400
+
+
+def test_external_judge_without_url_is_400(client):
+    resp = client.post("/api/eval", json={
+        "model": "Qwen3-0.6B", "datasets": ["gsm8k"], "judge_enabled": True,
+        "judge_target": "external", "judge_model": "gpt-4o-mini",
+    })
+    assert resp.status_code == 400
+
+
 def test_get_unknown_eval_run_is_404(client):
     assert client.get("/api/eval/999").status_code == 404
 

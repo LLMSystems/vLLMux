@@ -37,6 +37,18 @@ class EvalRequest(BaseModel):
     eval_batch_size: int = Field(default=8, ge=1)
     timeout: int = Field(default=600, ge=1)
     stream: bool = True
+    # Per-dataset advanced settings, keyed by dataset name, e.g.
+    # {"arc": {"few_shot_num": 4, "subset_list": ["ARC-Challenge"]}}. Forwarded
+    # verbatim to evalscope's TaskConfig.dataset_args.
+    dataset_args: Optional[dict] = None
+    # LLM judge (for free-form QA datasets that can't be rule-scored). The judge
+    # can be one of our own deployed models (via the router) or an external API.
+    judge_enabled: bool = False
+    judge_strategy: Literal["auto", "llm"] = "auto"
+    judge_target: Literal["internal", "external"] = "internal"
+    judge_model: Optional[str] = None  # internal group key OR external model id
+    judge_api_url: Optional[str] = None  # external only (e.g. https://api.openai.com/v1)
+    judge_api_key: Optional[str] = None  # external only
 
 
 @router.get("/datasets")
@@ -52,10 +64,22 @@ async def list_runs(request: Request, limit: int = 50):
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin)])
 async def start_run(body: EvalRequest, request: Request):
-    known = {d["key"] for d in EVAL_CATALOG}
-    unknown = [d for d in body.datasets if d not in known]
+    by_key = {d["key"]: d for d in EVAL_CATALOG}
+    unknown = [d for d in body.datasets if d not in by_key]
     if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown dataset(s): {unknown}")
+    # Judge config: datasets that grade free-form answers need an LLM judge.
+    needs_judge = [d for d in body.datasets if by_key[d].get("needs_judge")]
+    if needs_judge and not body.judge_enabled:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"dataset(s) {needs_judge} require a judge model — enable it",
+        )
+    if body.judge_enabled:
+        if not body.judge_model:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "judge_model is required when judge is enabled")
+        if body.judge_target == "external" and not body.judge_api_url:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "judge_api_url is required for an external judge")
     # A load test and an eval both saturate the same model — don't let them overlap.
     if request.app.state.perf_manager.busy:
         raise HTTPException(status.HTTP_409_CONFLICT, "a load test is running; try again later")

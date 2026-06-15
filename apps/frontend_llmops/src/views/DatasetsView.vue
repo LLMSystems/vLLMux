@@ -125,7 +125,10 @@ onBeforeUnmount(() => {
 
     <!-- Perf (load-test) datasets -->
     <Card class="overflow-hidden">
-      <div class="border-b border-border/60 px-5 py-3 text-sm font-semibold">壓測資料集</div>
+      <div class="flex items-center justify-between border-b border-border/60 px-5 py-3">
+        <span class="text-sm font-semibold">壓測資料集</span>
+        <span class="text-xs text-muted-foreground">下載後可在「壓測」頁選用</span>
+      </div>
       <div v-if="perfDatasets.length" class="divide-y divide-border/60">
         <div v-for="d in perfDatasets" :key="d.key" class="flex items-center gap-4 px-5 py-3">
           <div class="min-w-0 flex-1">

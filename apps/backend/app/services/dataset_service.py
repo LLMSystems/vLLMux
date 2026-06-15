@@ -59,6 +59,12 @@ EVAL_CATALOG: list[dict[str, Any]] = [
     {"key": "gsm8k", "label": "GSM8K", "dataset_id": "AI-ModelScope/gsm8k", "category": "eval", "tier": "基線", "metric": "acc"},
     {"key": "ifeval", "label": "IFEval", "dataset_id": "opencompass/ifeval", "category": "eval", "tier": "基線", "metric": "規則"},
     {"key": "truthful_qa", "label": "TruthfulQA", "dataset_id": "evalscope/truthful_qa", "category": "eval", "tier": "基線", "metric": "acc"},
+    # 知識進階 — 更難的知識 / MCQ 基準
+    {"key": "gpqa_diamond", "label": "GPQA-Diamond", "dataset_id": "AI-ModelScope/gpqa_diamond", "category": "eval", "tier": "知識進階", "metric": "acc"},
+    {"key": "mmlu_pro", "label": "MMLU-Pro", "dataset_id": "TIGER-Lab/MMLU-Pro", "category": "eval", "tier": "知識進階", "metric": "acc"},
+    {"key": "mmlu_redux", "label": "MMLU-Redux", "dataset_id": "AI-ModelScope/mmlu-redux-2.0", "category": "eval", "tier": "知識進階", "metric": "acc"},
+    {"key": "super_gpqa", "label": "SuperGPQA", "dataset_id": "m-a-p/SuperGPQA", "category": "eval", "tier": "知識進階", "metric": "acc"},
+    {"key": "trivia_qa", "label": "TriviaQA", "dataset_id": "evalscope/trivia_qa", "category": "eval", "tier": "知識進階", "metric": "acc"},
     # 中文組
     {"key": "ceval", "label": "C-Eval", "dataset_id": "evalscope/ceval", "category": "eval", "tier": "中文", "metric": "acc"},
     {"key": "cmmlu", "label": "C-MMLU", "dataset_id": "evalscope/cmmlu", "category": "eval", "tier": "中文", "metric": "acc"},
@@ -68,6 +74,26 @@ EVAL_CATALOG: list[dict[str, Any]] = [
     {"key": "logi_qa", "label": "LogiQA", "dataset_id": "extraordinarylab/logiqa", "category": "eval", "tier": "推理", "metric": "acc"},
     # 數學組
     {"key": "math_500", "label": "MATH-500", "dataset_id": "AI-ModelScope/MATH-500", "category": "eval", "tier": "數學", "metric": "acc"},
+    {"key": "competition_math", "label": "Competition-MATH", "dataset_id": "evalscope/competition_math", "category": "eval", "tier": "數學", "metric": "acc"},
+    {"key": "aime24", "label": "AIME-2024", "dataset_id": "evalscope/aime24", "category": "eval", "tier": "數學", "metric": "acc", "note": "高難度，建議配重複採樣"},
+    {"key": "aime25", "label": "AIME-2025", "dataset_id": "evalscope/aime25", "category": "eval", "tier": "數學", "metric": "acc", "note": "高難度，建議配重複採樣"},
+    # 多語言組
+    {"key": "mgsm", "label": "MGSM", "dataset_id": "evalscope/mgsm", "category": "eval", "tier": "多語言", "metric": "acc"},
+    {"key": "mmmlu", "label": "MMMLU", "dataset_id": "openai-mirror/MMMLU", "category": "eval", "tier": "多語言", "metric": "acc"},
+    # 工具調用
+    # tool_bench: 靜態評測（模型輸出文字，用 EM/F1/Rouge 比對標準工具調用序列；不需伺服器 tools API）
+    {"key": "tool_bench", "label": "ToolBench-Static", "dataset_id": "AI-ModelScope/ToolBench-Static", "category": "eval", "tier": "工具調用", "metric": "F1/EM"},
+    # general_fc: 真實函數調用——檢查 finish_reason=tool_calls / schema 正確率，
+    # 需模型啟用 vLLM tool parser（enable_auto_tool_choice + tool_call_parser），否則全 0。
+    {"key": "general_fc", "label": "General-FunctionCall", "dataset_id": "evalscope/GeneralFunctionCall-Test", "category": "eval", "tier": "工具調用", "metric": "tool_call_f1", "needs_tool_parser": True, "note": "需模型開 tool parser"},
+    # 長上下文組 — 需要大 context window 的模型（小 max_model_len 會被截斷 / 報錯）
+    {"key": "needle_haystack", "label": "Needle-in-a-Haystack", "dataset_id": "AI-ModelScope/Needle-in-a-Haystack-Corpus", "category": "eval", "tier": "長上下文", "metric": "acc", "long_context": True, "note": "需大 context"},
+    {"key": "longbench_v2", "label": "LongBench-v2", "dataset_id": "ZhipuAI/LongBench-v2", "category": "eval", "tier": "長上下文", "metric": "acc", "long_context": True, "note": "需大 context"},
+    {"key": "frames", "label": "FRAMES", "dataset_id": "iic/frames", "category": "eval", "tier": "長上下文", "metric": "acc", "long_context": True, "note": "需大 context"},
+    {"key": "openai_mrcr", "label": "OpenAI-MRCR", "dataset_id": "openai-mirror/mrcr", "category": "eval", "tier": "長上下文", "metric": "mrcr_score", "long_context": True, "note": "需大 context"},
+    # 問答 / 事實性（需裁判模型評分）
+    {"key": "simple_qa", "label": "SimpleQA", "dataset_id": "evalscope/SimpleQA", "category": "eval", "tier": "問答（需裁判）", "metric": "judge", "needs_judge": True},
+    {"key": "chinese_simple_qa", "label": "Chinese-SimpleQA", "dataset_id": "AI-ModelScope/Chinese-SimpleQA", "category": "eval", "tier": "問答（需裁判）", "metric": "judge", "needs_judge": True},
     # 程式碼組 — HumanEval 在後端容器內本機執行生成的程式碼來算 pass@1。
     # （MBPP 被 evalscope 強制要求 docker 沙箱 ms-enclave，本部署未提供，故不列入。）
     {"key": "humaneval", "label": "HumanEval", "dataset_id": "opencompass/humaneval", "category": "eval", "tier": "程式碼", "metric": "pass@1", "note": "會執行生成碼"},
