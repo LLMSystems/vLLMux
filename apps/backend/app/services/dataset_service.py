@@ -50,10 +50,14 @@ def get_entry(key: str) -> Optional[dict[str, str]]:
 
 
 def _cache_root() -> str:
-    """ModelScope dataset cache root (respects ``MODELSCOPE_CACHE``)."""
-    from modelscope.utils.file_utils import get_dataset_cache_root
-
-    return get_dataset_cache_root()
+    """ModelScope dataset cache root. Mirrors modelscope's own resolution
+    (``$MODELSCOPE_CACHE`` or ``~/.cache/modelscope/hub``, then ``/datasets``)
+    without importing modelscope — so listing the cache works even where the
+    heavy package isn't installed (e.g. the lightweight CI test job)."""
+    base = os.environ.get("MODELSCOPE_CACHE") or os.path.join(
+        os.path.expanduser("~"), ".cache", "modelscope", "hub"
+    )
+    return os.path.join(os.path.expanduser(base), "datasets")
 
 
 def file_path(entry: dict[str, str]) -> str:
