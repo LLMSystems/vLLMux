@@ -125,8 +125,13 @@ def main() -> int:
     # Importing registers our custom rerank api ('llmops_rerank') with evalscope.
     import app.perf.rerank_plugin  # noqa: F401
 
+    from app.runners_common import heartbeat
+
     _resolve_tokenizer(cfg)
-    results = run_perf_benchmark(Arguments(**cfg))
+    # No per-sample output files here — heartbeat just proves liveness during the
+    # benchmark so the streamed run.log isn't frozen.
+    with heartbeat(run_dir, count_glob=None):
+        results = run_perf_benchmark(Arguments(**cfg))
 
     points = {
         key: {"metrics": _norm_metrics(val.get("metrics")), "percentiles": _norm_pct(val.get("percentiles"))}

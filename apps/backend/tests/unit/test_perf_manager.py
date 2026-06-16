@@ -219,3 +219,43 @@ def test_build_cfg_sla_mode(tmp_path):
     assert cfg["sla_params"] == [{"p99_latency": "<=2"}]
     assert cfg["sla_upper_bound"] == 16 and cfg["parallel"] == 1
     assert "number" in cfg  # placeholder; the tuner recomputes per point
+
+
+# ---- cancel: non-blocking + force kill -------------------------------------
+
+async def test_cancel_running_is_nonblocking_and_terminates(tmp_path, monkeypatch):
+    import asyncio
+
+    from app.perf import manager as perf_mod
+
+    calls = []
+    monkeypatch.setattr(perf_mod, "terminate_process_group", lambda proc: calls.append("term"))
+    monkeypatch.setattr(perf_mod, "kill_process_group", lambda proc: calls.append("kill"))
+
+    pm = _manager(tmp_path)
+    pm._procs[7] = object()  # pretend a run is in flight
+    assert await pm.cancel(7) is True
+    assert 7 in pm._cancelled
+    await asyncio.sleep(0.05)  # let the fire-and-forget executor run
+    assert calls == ["term"]
+
+
+async def test_cancel_force_uses_sigkill(tmp_path, monkeypatch):
+    import asyncio
+
+    from app.perf import manager as perf_mod
+
+    calls = []
+    monkeypatch.setattr(perf_mod, "terminate_process_group", lambda proc: calls.append("term"))
+    monkeypatch.setattr(perf_mod, "kill_process_group", lambda proc: calls.append("kill"))
+
+    pm = _manager(tmp_path)
+    pm._procs[9] = object()
+    assert await pm.cancel(9, force=True) is True
+    await asyncio.sleep(0.05)
+    assert calls == ["kill"]
+
+
+async def test_cancel_unknown_run_returns_false(tmp_path):
+    pm = _manager(tmp_path)
+    assert await pm.cancel(123) is False

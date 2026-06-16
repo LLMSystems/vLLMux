@@ -424,7 +424,21 @@ export interface EvalResult {
   datasets: EvalDatasetScore[]
 }
 
-export type EvalStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type EvalStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvalListResponse {
+  busy: boolean
+  running: number
+  queued: number
+  budget: number
+  used_budget: number
+  runs: EvalRun[]
+}
+
+export interface EvalConfig {
+  concurrency_budget: number
+  used_budget: number
+}
 
 export interface EvalRun {
   id: number

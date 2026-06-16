@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { CheckCircle2 } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
+import { lorasOfGroup } from '@/composables/useModelOptions'
 import Card from '@/components/ui/Card.vue'
 import CardHeader from '@/components/ui/CardHeader.vue'
 import CardTitle from '@/components/ui/CardTitle.vue'
@@ -18,6 +19,15 @@ const models = useModelsStore()
 const base = api.routerBase
 
 const groups = computed(() => [...new Set(models.llms.map((m) => m.key.split('::')[0] ?? m.key))])
+// LoRA adapters across all groups — selectable in the chat dropdown so the code
+// snippets switch to a LoRA call just by changing the `model` field.
+const loraOptions = computed(() => {
+  const out: { value: string; group: string }[] = []
+  for (const g of groups.value) {
+    for (const l of lorasOfGroup(models, g)) out.push({ value: l.name, group: g })
+  }
+  return out
+})
 const model = ref('')
 const stream = ref(false)
 const tab = ref('curl')
@@ -147,6 +157,23 @@ const langs = [
   { value: 'node', label: 'Node (SDK)', code: node },
 ]
 
+// ---- LoRA snippets ----
+const exampleBase = computed(() => loraOptions.value[0]?.group ?? 'Qwen3-0.6B')
+const exampleLora = computed(() => loraOptions.value[0]?.value ?? 'qwen3-test-lora')
+const modelsCurl = computed(
+  () => `curl ${base}/v1/models
+# 帶 "parent" 的項目就是 LoRA（指向它的 base 模型）：
+# {"id": "${exampleBase.value}", "object": "model"}
+# {"id": "${exampleLora.value}", "object": "model", "parent": "${exampleBase.value}"}`,
+)
+const loraListPy = computed(
+  () => `import requests
+
+models = requests.get("${base}/v1/models").json()["data"]
+loras = [m["id"] for m in models if m.get("parent")]
+print(loras)  # 這些名稱可直接填進 chat 請求的 "model" 欄位`,
+)
+
 // ---- Embedding / rerank snippets ----
 const embCurl = computed(
   () => `curl ${base}/v1/embeddings \\
@@ -210,6 +237,9 @@ curl ${base}/v1/embeddings \\
               class="h-8 rounded-md border border-input bg-background/40 px-2 text-sm text-foreground"
             >
               <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+              <optgroup v-if="loraOptions.length" label="LoRA">
+                <option v-for="l in loraOptions" :key="l.value" :value="l.value">{{ l.group }} / {{ l.value }}</option>
+              </optgroup>
             </select>
           </label>
           <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -219,6 +249,10 @@ curl ${base}/v1/embeddings \\
         </div>
       </CardHeader>
       <CardContent>
+        <p v-if="loraOptions.length" class="mb-3 text-xs text-muted-foreground">
+          下拉選單裡的 <span class="font-medium text-[var(--chart-3)]">LoRA</span> 項：把
+          <span class="font-mono">model</span> 換成它的 served name 即可，其餘請求完全不變。
+        </p>
         <Tabs v-model="tab" class="space-y-3">
           <TabsList>
             <TabsTrigger v-for="l in langs" :key="l.value" :value="l.value">{{ l.label }}</TabsTrigger>
@@ -227,6 +261,34 @@ curl ${base}/v1/embeddings \\
             <CodeBlock :code="l.code.value" />
           </TabsContent>
         </Tabs>
+      </CardContent>
+    </Card>
+
+    <!-- LoRA adapters -->
+    <Card>
+      <CardHeader>
+        <CardTitle>LoRA Adapters</CardTitle>
+        <p class="text-xs text-muted-foreground">
+          呼叫 LoRA 與一般模型相同，只把 <span class="font-mono">model</span> 改成 adapter 的 served name（例
+          <span class="font-mono">{{ exampleLora }}</span>），Router 會路由到對應 base 模型的實例。
+        </p>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="grid gap-4 lg:grid-cols-2">
+          <div class="space-y-2">
+            <p class="text-xs font-medium text-muted-foreground">列出可用模型 / LoRA · cURL</p>
+            <CodeBlock :code="modelsCurl" />
+          </div>
+          <div class="space-y-2">
+            <p class="text-xs font-medium text-muted-foreground">只挑出 LoRA · Python</p>
+            <CodeBlock :code="loraListPy" />
+          </div>
+        </div>
+        <div class="space-y-1 text-xs text-muted-foreground">
+          <p>· 前提：base 模型需以 <span class="font-mono">enable_lora</span> 啟動，且 adapter 已掛載（config 靜態掛，或在模型詳情抽屜熱載入）。</p>
+          <p>· 打一個未掛載的名稱會回 <span class="font-mono">404 — Model not found</span>。</p>
+          <p>· Base vs LoRA A/B：同一請求只換 <span class="font-mono">model</span>；Playground 比較模式可並排對照。</p>
+        </div>
       </CardContent>
     </Card>
 

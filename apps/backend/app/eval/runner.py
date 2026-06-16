@@ -55,7 +55,12 @@ def main() -> int:
     from evalscope.config import TaskConfig
     from evalscope.run import run_task
 
-    run_task(task_cfg=TaskConfig(**cfg))
+    from app.runners_common import heartbeat
+
+    # evalscope logs nothing during its prediction loop; the heartbeat keeps the
+    # streamed run.log alive (elapsed + samples done) so the UI shows progress.
+    with heartbeat(run_dir):
+        run_task(task_cfg=TaskConfig(**cfg))
 
     datasets = _collect_reports(run_dir)
     out_path = os.path.join(run_dir, "result.json")

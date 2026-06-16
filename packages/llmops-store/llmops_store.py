@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     model       TEXT    NOT NULL,
     target_url  TEXT    NOT NULL,
     datasets    TEXT    NOT NULL,      -- JSON list of dataset ids
-    status      TEXT    NOT NULL,      -- running | completed | failed | cancelled
+    status      TEXT    NOT NULL,      -- queued | running | completed | failed | cancelled
     params      TEXT,                  -- JSON of the launch config
     result      TEXT,                  -- JSON: {dataset: {metric: score, ...}, ...}
     output_dir  TEXT,                  -- evalscope raw output directory
@@ -130,10 +130,18 @@ class LLMOpsStore:
 
     async def init(self) -> "LLMOpsStore":
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
+        # isolation_level=None -> autocommit: every statement is its own committed
+        # unit, so a write that loses the WAL lock can never leave a dangling
+        # implicit transaction open (which would wedge the write lock for every
+        # process until the connection writes again — see the eval finalize hang).
+        # The explicit commit() calls below become harmless no-ops.
+        self._db = await aiosqlite.connect(self.db_path, isolation_level=None)
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA busy_timeout=5000")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        # Wait (rather than erroring) up to 30s for a contended write lock; under a
+        # parallel eval the router + backend write concurrently.
+        await self._db.execute("PRAGMA busy_timeout=30000")
         await self._db.executescript(_SCHEMA)
         await self._migrate()
         await self._db.commit()
@@ -307,17 +315,32 @@ class LLMOpsStore:
     async def create_eval_run(
         self, model: str, target_url: str, datasets: str, params: str,
         name: Optional[str] = None, ts: Optional[float] = None,
+        status: str = "running",
     ) -> int:
         import time
 
         now = ts or time.time()
+        # A 'queued' run hasn't actually started yet, so leave started_at unset
+        # until start_eval_run flips it to 'running'.
+        started_at = None if status == "queued" else now
         cur = await self._db.execute(
             "INSERT INTO eval_runs (created_at, name, model, target_url, datasets, "
-            "status, params, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
-            (now, name, model, target_url, datasets, params, now),
+            "status, params, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, name, model, target_url, datasets, status, params, started_at),
         )
         await self._db.commit()
         return cur.lastrowid
+
+    async def start_eval_run(self, run_id: int, ts: Optional[float] = None) -> None:
+        """Flip a queued run to 'running' once a concurrency slot frees up."""
+        import time
+
+        await self._db.execute(
+            "UPDATE eval_runs SET status = 'running', started_at = ? "
+            "WHERE id = ? AND status = 'queued'",
+            (ts or time.time(), run_id),
+        )
+        await self._db.commit()
 
     async def finish_eval_run(
         self, run_id: int, status: str, result: Optional[str] = None,
@@ -357,7 +380,7 @@ class LLMOpsStore:
         backend) to failed so they don't linger forever."""
         await self._db.execute(
             "UPDATE eval_runs SET status = 'failed', error = 'interrupted by restart' "
-            "WHERE status = 'running'"
+            "WHERE status IN ('running', 'queued')"
         )
         await self._db.commit()
 

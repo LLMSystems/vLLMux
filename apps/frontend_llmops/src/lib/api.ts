@@ -7,7 +7,9 @@ import type {
   DatasetCacheInfo,
   DatasetDownloadJob,
   DownloadJob,
+  EvalConfig,
   EvalDataset,
+  EvalListResponse,
   EvalRequest,
   EvalRun,
   GpuProcess,
@@ -254,15 +256,23 @@ export const api = {
   getPerf: (id: number) => request<PerfRun>(API_BASE, `/api/perf/${id}`),
   getPerfLog: (id: number, tail = 200) =>
     request<{ content: string }>(API_BASE, `/api/perf/${id}/log?tail=${tail}`),
-  cancelPerf: (id: number) =>
-    request<{ ok: boolean }>(API_BASE, `/api/perf/${id}/cancel`, { method: 'POST' }),
+  cancelPerf: (id: number, force = false) =>
+    request<{ ok: boolean }>(API_BASE, `/api/perf/${id}/cancel${force ? '?force=true' : ''}`, {
+      method: 'POST',
+    }),
   deletePerf: (id: number) => request<null>(API_BASE, `/api/perf/${id}`, { method: 'DELETE' }),
   /** URL of the full evalscope HTML report (open in a new tab). */
   perfReportUrl: (id: number) => `${API_BASE}/api/perf/${id}/report`,
 
   // ---- Accuracy / quality evaluation (eval) ---------------------------------
   listEvalDatasets: () => request<{ datasets: EvalDataset[] }>(API_BASE, '/api/eval/datasets'),
-  listEval: () => request<{ busy: boolean; runs: EvalRun[] }>(API_BASE, '/api/eval'),
+  listEval: () => request<EvalListResponse>(API_BASE, '/api/eval'),
+  getEvalConfig: () => request<EvalConfig>(API_BASE, '/api/eval/config'),
+  setEvalConfig: (concurrency_budget: number) =>
+    request<EvalConfig>(API_BASE, '/api/eval/config', {
+      method: 'PATCH',
+      body: JSON.stringify({ concurrency_budget }),
+    }),
   startEval: (body: EvalRequest) =>
     request<EvalRun>(API_BASE, '/api/eval', { method: 'POST', body: JSON.stringify(body) }),
   getEval: (id: number) => request<EvalRun>(API_BASE, `/api/eval/${id}`),

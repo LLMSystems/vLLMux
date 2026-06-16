@@ -170,14 +170,22 @@ class FakeStore:
         if not hasattr(self, "evals"):
             self.evals = []
 
-    async def create_eval_run(self, model, target_url, datasets, params, name=None, ts=None):
+    async def create_eval_run(self, model, target_url, datasets, params, name=None, ts=None,
+                              status="running"):
         self.__init_eval()
         rid = len(self.evals) + 1
         self.evals.append({"id": rid, "model": model, "target_url": target_url, "datasets": datasets,
-                          "params": params, "name": name, "status": "running", "result": None,
-                          "output_dir": None, "error": None, "created_at": 0.0, "started_at": 0.0,
+                          "params": params, "name": name, "status": status, "result": None,
+                          "output_dir": None, "error": None, "created_at": 0.0,
+                          "started_at": None if status == "queued" else 0.0,
                           "finished_at": None})
         return rid
+
+    async def start_eval_run(self, run_id, ts=None):
+        self.__init_eval()
+        for r in self.evals:
+            if r["id"] == run_id:
+                r.update(status="running", started_at=0.0)
 
     async def finish_eval_run(self, run_id, status, result=None, output_dir=None, error=None, ts=None):
         self.__init_eval()
@@ -280,6 +288,9 @@ def app(monkeypatch):
     application.state.eval_manager = EvalManager(
         store, application.state.manager, settings, str(BACKEND_ROOT), "http://127.0.0.1:8887"
     )
+    # Mirror main.lifespan's cross-injection so the eval/load-test mutex works.
+    application.state.eval_manager.perf_manager = application.state.perf_manager
+    application.state.perf_manager.eval_manager = application.state.eval_manager
     return application
 
 

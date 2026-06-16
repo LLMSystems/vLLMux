@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 
-from app.llmops.process import terminate_process_group
+from app.llmops.process import kill_process_group, terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class PerfManager:
         self._current: int | None = None
         self._procs: dict[int, subprocess.Popen] = {}
         self._cancelled: set[int] = set()
+        # Set by main.py — so a finished load test can release queued evals.
+        self.eval_manager = None
 
     @property
     def busy(self) -> bool:
@@ -261,6 +263,7 @@ class PerfManager:
         log_file = open(os.path.join(run_dir, "run.log"), "w", encoding="utf-8")
         env = os.environ.copy()
         env["PYTHONPATH"] = _BACKEND_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+        env["PYTHONUNBUFFERED"] = "1"  # flush stdout live so the log tail isn't frozen
         proc = subprocess.Popen(
             [sys.executable, "-m", "app.perf.runner", config_path, run_dir],
             cwd=_BACKEND_ROOT,
@@ -276,31 +279,47 @@ class PerfManager:
         logger.info("Started perf run %d (%s)", run_id, group)
         return await self.store.get_perf_run(run_id)
 
+    async def _finish(self, run_id: int, status: str, **kwargs) -> None:
+        """Persist a run's terminal state, retrying transient DB-lock errors so a
+        finished run is never left stuck in 'running'. Never raises."""
+        for attempt in range(6):
+            try:
+                await self.store.finish_perf_run(run_id, status, **kwargs)
+                return
+            except Exception as e:  # noqa: BLE001 — last-resort durability
+                if attempt == 5:
+                    logger.error("Failed to persist perf run %d as %s: %s", run_id, status, e)
+                    return
+                await asyncio.sleep(0.5 * (attempt + 1))
+
     async def _watch(self, run_id: int, proc: subprocess.Popen, run_dir: str) -> None:
         loop = asyncio.get_event_loop()
         rc = await loop.run_in_executor(None, proc.wait)
         self._procs.pop(run_id, None)
         if self._current == run_id:
             self._current = None
+        # The GPU is free again — let any evals that were waiting on this load test
+        # start now.
+        if self.eval_manager is not None and not self.busy:
+            await self.eval_manager._pump()
 
         result_path = os.path.join(run_dir, "result.json")
         if run_id in self._cancelled:
             self._cancelled.discard(run_id)
-            await self.store.finish_perf_run(run_id, "cancelled", output_dir=run_dir)
+            await self._finish(run_id, "cancelled", output_dir=run_dir)
             return
         if rc == 0 and os.path.exists(result_path):
             try:
                 parsed = self._parse_result(result_path)
-                await self.store.finish_perf_run(
+            except Exception as e:  # result.json unreadable/corrupt
+                await self._finish(run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}")
+            else:
+                await self._finish(
                     run_id, "completed", result=json.dumps(parsed), output_dir=run_dir,
                 )
                 logger.info("Perf run %d completed (%d points)", run_id, len(parsed["points"]))
-            except Exception as e:
-                await self.store.finish_perf_run(
-                    run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}",
-                )
         else:
-            await self.store.finish_perf_run(
+            await self._finish(
                 run_id, "failed", output_dir=run_dir, error=f"runner exited rc={rc}; see run.log",
             )
 
@@ -356,10 +375,18 @@ class PerfManager:
         points.sort(key=lambda p: (p.get("concurrency") or 0, p.get("rate") or 0))
         return {"points": points, "sla": sla}
 
-    async def cancel(self, run_id: int) -> bool:
+    async def cancel(self, run_id: int, force: bool = False) -> bool:
+        """Stop a running load test. Non-blocking: the kill runs in the background
+        and _watch flips the run to 'cancelled' once the process actually dies, so
+        the HTTP call returns immediately (the UI shows 'stopping…'). force=True
+        SIGKILLs at once instead of giving a 10s SIGTERM grace — for wedged runs."""
         proc = self._procs.get(run_id)
         if proc is None:
             return False
         self._cancelled.add(run_id)
-        await asyncio.get_event_loop().run_in_executor(None, terminate_process_group, proc)
+        killer = kill_process_group if force else terminate_process_group
+        loop = asyncio.get_event_loop()
+        # Fire-and-forget; swallow errors so an unretrieved future can't surface.
+        fut = loop.run_in_executor(None, killer, proc)
+        fut.add_done_callback(lambda f: f.exception())
         return True

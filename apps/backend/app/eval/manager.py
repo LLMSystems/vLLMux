@@ -26,7 +26,7 @@ _BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__f
 
 
 class EvalBusy(RuntimeError):
-    """An eval is already running (only one at a time)."""
+    """Kept for backwards compatibility; no longer raised (evals now queue)."""
 
 
 class EvalError(RuntimeError):
@@ -40,13 +40,29 @@ class EvalManager:
         self.settings = settings
         self.eval_root = eval_root
         self.router_url = router_url.rstrip("/")
-        self._current: int | None = None
-        self._procs: dict[int, subprocess.Popen] = {}
+        # Evals run in parallel within a shared batch_size budget; the rest queue.
+        self.concurrency_budget: int = getattr(settings, "eval_concurrency_budget", 32)
+        # Set by main.py after construction — used to keep evals off the GPU while
+        # a load test owns it (and vice-versa).
+        self.perf_manager = None
+        self._procs: dict[int, subprocess.Popen] = {}  # run_id -> proc (running)
+        self._queued: list[int] = []                   # FIFO of waiting run_ids
+        self._pending: dict[int, dict] = {}            # run_id -> req (until launched)
+        self._batch: dict[int, int] = {}               # run_id -> eval_batch_size
         self._cancelled: set[int] = set()
 
     @property
     def busy(self) -> bool:
-        return self._current is not None
+        """Any eval running or queued — used by the load-test mutex."""
+        return bool(self._procs or self._queued)
+
+    @property
+    def used_budget(self) -> int:
+        """Sum of batch_size across currently running evals."""
+        return sum(self._batch.get(rid, 0) for rid in self._procs)
+
+    def _perf_busy(self) -> bool:
+        return bool(self.perf_manager is not None and self.perf_manager.busy)
 
     def _lora_lookup(self, name: str):
         """Find a base group exposing a LoRA served as `name`. Returns
@@ -150,8 +166,8 @@ class EvalManager:
             }
 
     async def start(self, req: dict) -> dict:
-        if self._current is not None:
-            raise EvalBusy("an eval is already running")
+        """Create a run (queued) and try to launch it. Returns the run row, which
+        will be 'running' if a concurrency slot was free or 'queued' otherwise."""
         if not req.get("datasets"):
             raise EvalError("at least one dataset is required")
         group = req["model"]
@@ -160,8 +176,32 @@ class EvalManager:
 
         run_id = await self.store.create_eval_run(
             model=group, target_url=api_url, datasets=json.dumps(req["datasets"]),
-            params=json.dumps(req), name=req.get("name"),
+            params=json.dumps(req), name=req.get("name"), status="queued",
         )
+        self._pending[run_id] = req
+        self._batch[run_id] = int(req.get("eval_batch_size", 8))
+        self._queued.append(run_id)
+        logger.info("Queued eval run %d (%s: %s)", run_id, group, req["datasets"])
+        await self._pump()
+        return await self.store.get_eval_run(run_id)
+
+    async def _pump(self) -> None:
+        """Launch queued runs in FIFO order while the batch_size budget allows and
+        no load test is running. A run is admitted if either nothing is running
+        (so a lone run larger than the budget still proceeds) or it fits the
+        remaining budget."""
+        while self._queued and not self._perf_busy():
+            run_id = self._queued[0]
+            batch = self._batch.get(run_id, 8)
+            if self._procs and self.used_budget + batch > self.concurrency_budget:
+                break  # head doesn't fit; FIFO — don't skip ahead
+            self._queued.pop(0)
+            await self._launch(run_id)
+
+    async def _launch(self, run_id: int) -> None:
+        req = self._pending.pop(run_id, None)
+        if req is None:  # cancelled out of the queue before launch
+            return
         run_dir = os.path.join(self.eval_root, str(run_id))
         os.makedirs(run_dir, exist_ok=True)
         cfg = self._build_cfg(req, run_dir)
@@ -172,6 +212,7 @@ class EvalManager:
         log_file = open(os.path.join(run_dir, "run.log"), "w", encoding="utf-8")
         env = os.environ.copy()
         env["PYTHONPATH"] = _BACKEND_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+        env["PYTHONUNBUFFERED"] = "1"  # flush stdout live so the log tail isn't frozen
         proc = subprocess.Popen(
             [sys.executable, "-m", "app.eval.runner", config_path, run_dir],
             cwd=_BACKEND_ROOT,
@@ -181,40 +222,52 @@ class EvalManager:
             start_new_session=True,
         )
         log_file.close()
-        self._current = run_id
         self._procs[run_id] = proc
+        await self.store.start_eval_run(run_id)
         asyncio.create_task(self._watch(run_id, proc, run_dir))
-        logger.info("Started eval run %d (%s: %s)", run_id, group, req["datasets"])
-        return await self.store.get_eval_run(run_id)
+        logger.info("Started eval run %d (%s: %s)", run_id, req["model"], req["datasets"])
+
+    async def _finish(self, run_id: int, status: str, **kwargs) -> None:
+        """Persist a run's terminal state, retrying transient DB-lock errors so a
+        finished run is never left stuck in 'running'. Never raises."""
+        for attempt in range(6):
+            try:
+                await self.store.finish_eval_run(run_id, status, **kwargs)
+                return
+            except Exception as e:  # noqa: BLE001 — last-resort durability
+                if attempt == 5:
+                    logger.error("Failed to persist eval run %d as %s: %s", run_id, status, e)
+                    return
+                await asyncio.sleep(0.5 * (attempt + 1))
 
     async def _watch(self, run_id: int, proc: subprocess.Popen, run_dir: str) -> None:
         loop = asyncio.get_event_loop()
         rc = await loop.run_in_executor(None, proc.wait)
         self._procs.pop(run_id, None)
-        if self._current == run_id:
-            self._current = None
-
-        result_path = os.path.join(run_dir, "result.json")
-        if run_id in self._cancelled:
-            self._cancelled.discard(run_id)
-            await self.store.finish_eval_run(run_id, "cancelled", output_dir=run_dir)
-            return
-        if rc == 0 and os.path.exists(result_path):
-            try:
-                with open(result_path, encoding="utf-8") as f:
-                    parsed = json.load(f)
-                await self.store.finish_eval_run(
-                    run_id, "completed", result=json.dumps(parsed), output_dir=run_dir,
-                )
-                logger.info("Eval run %d completed (%d datasets)", run_id, len(parsed.get("datasets", [])))
-            except Exception as e:
-                await self.store.finish_eval_run(
-                    run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}",
-                )
-        else:
-            detail = self._extract_error(run_dir)
-            msg = f"runner exited rc={rc}" + (f": {detail}" if detail else "; see run.log")
-            await self.store.finish_eval_run(run_id, "failed", output_dir=run_dir, error=msg)
+        self._batch.pop(run_id, None)
+        try:
+            result_path = os.path.join(run_dir, "result.json")
+            if run_id in self._cancelled:
+                self._cancelled.discard(run_id)
+                await self._finish(run_id, "cancelled", output_dir=run_dir)
+                return
+            if rc == 0 and os.path.exists(result_path):
+                try:
+                    with open(result_path, encoding="utf-8") as f:
+                        parsed = json.load(f)
+                except Exception as e:  # result.json unreadable/corrupt
+                    await self._finish(run_id, "failed", output_dir=run_dir, error=f"result parse error: {e}")
+                else:
+                    await self._finish(
+                        run_id, "completed", result=json.dumps(parsed), output_dir=run_dir,
+                    )
+                    logger.info("Eval run %d completed (%d datasets)", run_id, len(parsed.get("datasets", [])))
+            else:
+                detail = self._extract_error(run_dir)
+                msg = f"runner exited rc={rc}" + (f": {detail}" if detail else "; see run.log")
+                await self._finish(run_id, "failed", output_dir=run_dir, error=msg)
+        finally:
+            await self._pump()  # a slot freed up — admit the next queued run
 
     @staticmethod
     def _extract_error(run_dir: str, max_len: int = 400) -> str | None:
@@ -243,6 +296,13 @@ class EvalManager:
         return None
 
     async def cancel(self, run_id: int) -> bool:
+        # Still queued (no process yet): drop it from the queue and mark cancelled.
+        if run_id in self._queued:
+            self._queued.remove(run_id)
+            self._pending.pop(run_id, None)
+            self._batch.pop(run_id, None)
+            await self.store.finish_eval_run(run_id, "cancelled")
+            return True
         proc = self._procs.get(run_id)
         if proc is None:
             return False

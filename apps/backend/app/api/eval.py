@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import require_admin
-from app.eval.manager import EvalBusy, EvalError
+from app.eval.manager import EvalError
 from app.services.dataset_service import EVAL_CATALOG
 
 router = APIRouter(prefix="/eval", tags=["eval"])
@@ -59,7 +59,35 @@ async def list_eval_datasets():
 
 @router.get("")
 async def list_runs(request: Request, limit: int = 50):
-    return {"busy": _em(request).busy, "runs": await _store(request).list_eval_runs(limit)}
+    em = _em(request)
+    return {
+        "busy": em.busy,
+        "running": len(em._procs),
+        "queued": len(em._queued),
+        "budget": em.concurrency_budget,
+        "used_budget": em.used_budget,
+        "runs": await _store(request).list_eval_runs(limit),
+    }
+
+
+class EvalConfig(BaseModel):
+    concurrency_budget: int = Field(ge=1)
+
+
+@router.get("/config")
+async def get_config(request: Request):
+    em = _em(request)
+    return {"concurrency_budget": em.concurrency_budget, "used_budget": em.used_budget}
+
+
+@router.patch("/config", dependencies=[Depends(require_admin)])
+async def set_config(body: EvalConfig, request: Request):
+    """Adjust the shared concurrency budget at runtime (not persisted across
+    restart). Raising it lets more queued evals start immediately."""
+    em = _em(request)
+    em.concurrency_budget = body.concurrency_budget
+    await em._pump()  # a bigger budget may admit waiting runs right away
+    return {"concurrency_budget": em.concurrency_budget, "used_budget": em.used_budget}
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin)])
@@ -80,13 +108,10 @@ async def start_run(body: EvalRequest, request: Request):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "judge_model is required when judge is enabled")
         if body.judge_target == "external" and not body.judge_api_url:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "judge_api_url is required for an external judge")
-    # A load test and an eval both saturate the same model — don't let them overlap.
-    if request.app.state.perf_manager.busy:
-        raise HTTPException(status.HTTP_409_CONFLICT, "a load test is running; try again later")
+    # Evals run in parallel within the budget and queue beyond it; if a load test
+    # is running the run is created queued and starts once the GPU is free.
     try:
         return await _em(request).start(body.model_dump())
-    except EvalBusy as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     except EvalError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -102,9 +127,12 @@ async def get_run(run_id: int, request: Request):
 @router.get("/{run_id}/log")
 async def get_run_log(run_id: int, request: Request, tail: int = 200):
     run = await _store(request).get_eval_run(run_id)
-    if run is None or not run.get("output_dir"):
+    if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown eval run: {run_id}")
-    path = os.path.join(run["output_dir"], "run.log")
+    # output_dir is only persisted when the run finishes; while it's still running
+    # derive the run dir from the manager root so the live log streams.
+    out_dir = run.get("output_dir") or os.path.join(_em(request).eval_root, str(run_id))
+    path = os.path.join(out_dir, "run.log")
     if not os.path.exists(path):
         return {"content": ""}
     with open(path, encoding="utf-8", errors="replace") as f:

@@ -363,10 +363,16 @@ const compareXLabel = computed(() =>
   compareIds.value.some((id) => compareData.value[id]?.run.params?.includes('"openloop"')) ? '速率' : '並發',
 )
 
-async function cancel(id: number) {
+// Runs we've asked to stop — shows a 'stopping…' state and reveals force-kill.
+const cancelling = ref<Set<number>>(new Set())
+async function cancel(id: number, force = false) {
+  if (force && !confirm(`強制終止壓測 #${id}？將立即 SIGKILL,結果會作廢。`)) return
   try {
-    await api.cancelPerf(id)
-    toast.info('已要求取消')
+    await api.cancelPerf(id, force)
+    cancelling.value = new Set(cancelling.value).add(id)
+    toast.info(force ? '已強制終止' : '停止中…', {
+      description: force ? undefined : '正在停止,最多約 10 秒;仍卡住可按「強制」。',
+    })
     await loadRuns()
   } catch (e) {
     toast.error('取消失敗', { description: String(e) })
@@ -389,6 +395,14 @@ async function remove(id: number) {
 
 // Re-fetch the selected run's detail once it leaves the running state.
 watch(runs, (list) => {
+  // Drop 'stopping…' state for runs that have actually stopped.
+  if (cancelling.value.size) {
+    const stillRunning = new Set(
+      list.filter((r) => r.status === 'running').map((r) => r.id),
+    )
+    const next = new Set([...cancelling.value].filter((id) => stillRunning.has(id)))
+    if (next.size !== cancelling.value.size) cancelling.value = next
+  }
   if (selectedId.value == null) return
   const r = list.find((x) => x.id === selectedId.value)
   if (r && selected.value && r.status !== selected.value.status) void select(r.id)
@@ -738,8 +752,24 @@ const statusColor: Record<string, string> = {
               <p class="truncate text-sm font-medium">{{ r.name || r.model }} <span class="text-xs text-muted-foreground">#{{ r.id }}</span></p>
               <p class="truncate font-mono text-[11px] text-muted-foreground">{{ r.model }} · {{ formatTime(r.created_at) }}</p>
             </div>
-            <Badge variant="muted" :class="statusColor[r.status]">{{ r.status }}</Badge>
-            <Button v-if="r.status === 'running'" size="icon-sm" variant="ghost" title="取消" @click.stop="cancel(r.id)"><Square class="size-3.5" /></Button>
+            <Badge variant="muted" :class="statusColor[r.status]">{{ cancelling.has(r.id) ? '停止中…' : r.status }}</Badge>
+            <template v-if="r.status === 'running'">
+              <Button
+                v-if="!cancelling.has(r.id)"
+                size="icon-sm"
+                variant="ghost"
+                title="取消(停止)"
+                @click.stop="cancel(r.id)"
+              ><Square class="size-3.5" /></Button>
+              <Button
+                v-else
+                size="icon-sm"
+                variant="ghost"
+                title="強制終止(立即 SIGKILL)"
+                class="text-status-failed"
+                @click.stop="cancel(r.id, true)"
+              ><X class="size-3.5" /></Button>
+            </template>
             <Button v-else size="icon-sm" variant="ghost" title="刪除" @click.stop="remove(r.id)"><Trash2 class="size-3.5" /></Button>
           </div>
         </div>

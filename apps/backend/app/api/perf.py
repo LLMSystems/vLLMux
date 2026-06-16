@@ -93,6 +93,11 @@ async def start_run(body: PerfRequest, request: Request):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "parallel and number are required in sweep mode")
         if len(body.parallel) != len(body.number):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "parallel and number must be the same length")
+    # A load test measures latency/throughput and must own the GPU — refuse to
+    # start while any eval is running or queued (evals share the GPU and would
+    # pollute the numbers).
+    if request.app.state.eval_manager.busy:
+        raise HTTPException(status.HTTP_409_CONFLICT, "an eval is running or queued; try again later")
     try:
         return await _pm(request).start(body.model_dump())
     except PerfBusy as e:
@@ -112,9 +117,12 @@ async def get_run(run_id: int, request: Request):
 @router.get("/{run_id}/log")
 async def get_run_log(run_id: int, request: Request, tail: int = 200):
     run = await _store(request).get_perf_run(run_id)
-    if run is None or not run.get("output_dir"):
+    if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown perf run: {run_id}")
-    path = os.path.join(run["output_dir"], "run.log")
+    # output_dir is only persisted when the run finishes; while it's still running
+    # derive the run dir from the manager root so the live log streams.
+    out_dir = run.get("output_dir") or os.path.join(_pm(request).perf_root, str(run_id))
+    path = os.path.join(out_dir, "run.log")
     if not os.path.exists(path):
         return {"content": ""}
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -135,8 +143,10 @@ async def get_run_report(run_id: int, request: Request):
 
 
 @router.post("/{run_id}/cancel", dependencies=[Depends(require_admin)])
-async def cancel_run(run_id: int, request: Request):
-    if not await _pm(request).cancel(run_id):
+async def cancel_run(run_id: int, request: Request, force: bool = False):
+    """Stop a running load test. force=true SIGKILLs immediately (for a wedged
+    run) instead of the default SIGTERM-then-SIGKILL grace."""
+    if not await _pm(request).cancel(run_id, force=force):
         raise HTTPException(status.HTTP_409_CONFLICT, "run is not active")
     return {"ok": True}
 

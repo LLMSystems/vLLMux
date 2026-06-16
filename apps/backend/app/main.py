@@ -99,6 +99,10 @@ async def lifespan(app: FastAPI):
     app.state.perf_manager = PerfManager(store, manager, settings, perf_root, router_url)
     eval_root = os.path.join(os.path.dirname(store.db_path), "eval")
     app.state.eval_manager = EvalManager(store, manager, settings, eval_root, router_url)
+    # A load test and an eval both contend for the GPU — they stay mutually
+    # exclusive, so each manager needs a handle to the other.
+    app.state.eval_manager.perf_manager = app.state.perf_manager
+    app.state.perf_manager.eval_manager = app.state.eval_manager
     await store.mark_stale_perf_runs()  # orphaned 'running' rows from a prior crash
     await store.mark_stale_eval_runs()
 

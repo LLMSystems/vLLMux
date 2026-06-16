@@ -150,3 +150,105 @@ def test_resolve_lora_on_instance_uses_served_name_not_tag(tmp_path):
     model_field, url = em._resolve("sql-lora", "instance", "Llama::a")
     assert model_field == "sql-lora"  # vLLM serves the adapter under its name
     assert url == "http://127.0.0.1:8000/v1"
+
+
+# ---- parallel queue (budget-based admission) -------------------------------
+
+class _FakeStore:
+    """Minimal store double for the queue tests (no SQLite, no subprocess)."""
+
+    def __init__(self):
+        self.runs: dict[int, dict] = {}
+        self._id = 0
+
+    async def create_eval_run(self, *, model, target_url, datasets, params, name, status):
+        self._id += 1
+        self.runs[self._id] = {"id": self._id, "model": model, "status": status}
+        return self._id
+
+    async def start_eval_run(self, run_id, ts=None):
+        self.runs[run_id]["status"] = "running"
+
+    async def finish_eval_run(self, run_id, status, **kw):
+        self.runs[run_id]["status"] = status
+
+    async def get_eval_run(self, run_id):
+        return self.runs[run_id]
+
+
+def _queue_manager(tmp_path, budget=32):
+    engine = SimpleNamespace(
+        settings=SimpleNamespace(model_tag="Qwen/Qwen2.5-0.5B-Instruct"),
+        instances=[SimpleNamespace(id="a", port=8006)],
+    )
+    fake_mgr = SimpleNamespace(config=SimpleNamespace(LLM_engines={"Qwen2.5-0.5B": engine}))
+    settings = BackendSettings(admin_token="adm", eval_concurrency_budget=budget)
+    em = EvalManager(_FakeStore(), fake_mgr, settings, str(tmp_path), "http://127.0.0.1:8887")
+    # Stub the real subprocess launch: just occupy a slot.
+    launched: list[int] = []
+
+    async def fake_launch(run_id):
+        em._pending.pop(run_id, None)
+        em._procs[run_id] = object()
+        await em.store.start_eval_run(run_id)
+        launched.append(run_id)
+
+    em._launch = fake_launch  # type: ignore[method-assign]
+    em._launched = launched   # type: ignore[attr-defined]
+    return em
+
+
+def _req(batch):
+    return {"model": "Qwen2.5-0.5B", "target": "router", "datasets": ["gsm8k"],
+            "eval_batch_size": batch}
+
+
+async def test_queue_admits_within_budget_and_queues_the_rest(tmp_path):
+    em = _queue_manager(tmp_path, budget=32)
+    r1 = await em.start(_req(16))
+    r2 = await em.start(_req(16))
+    r3 = await em.start(_req(8))
+    assert r1["status"] == "running" and r2["status"] == "running"  # 16+16 == 32
+    assert r3["status"] == "queued"  # would overflow the budget
+    assert em.used_budget == 32 and em._queued == [r3["id"]]
+
+
+async def test_finishing_a_run_pumps_the_queue(tmp_path):
+    em = _queue_manager(tmp_path, budget=32)
+    await em.start(_req(16))
+    await em.start(_req(16))
+    r3 = await em.start(_req(8))
+    assert r3["status"] == "queued"
+    # Simulate run #1 finishing (the _watch tail does this, then pumps).
+    em._procs.pop(1)
+    em._batch.pop(1, None)
+    await em._pump()
+    assert em.store.runs[r3["id"]]["status"] == "running"
+    assert r3["id"] in em._procs
+
+
+async def test_lone_run_larger_than_budget_still_starts(tmp_path):
+    em = _queue_manager(tmp_path, budget=8)
+    r = await em.start(_req(64))  # nothing running -> admitted despite overflow
+    assert r["status"] == "running"
+
+
+async def test_load_test_blocks_the_queue(tmp_path):
+    em = _queue_manager(tmp_path, budget=32)
+    em.perf_manager = SimpleNamespace(busy=True)
+    r = await em.start(_req(8))
+    assert r["status"] == "queued" and not em._procs
+    # Load test ends -> pump admits it.
+    em.perf_manager.busy = False
+    await em._pump()
+    assert em.store.runs[r["id"]]["status"] == "running"
+
+
+async def test_cancel_queued_run_removes_it(tmp_path):
+    em = _queue_manager(tmp_path, budget=16)
+    await em.start(_req(16))
+    r2 = await em.start(_req(8))
+    assert r2["status"] == "queued"
+    assert await em.cancel(r2["id"]) is True
+    assert r2["id"] not in em._queued
+    assert em.store.runs[r2["id"]]["status"] == "cancelled"

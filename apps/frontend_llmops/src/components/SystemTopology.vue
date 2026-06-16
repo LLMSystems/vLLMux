@@ -9,10 +9,11 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
-import { Box, Cpu, Server, Settings2, Sparkles, Users } from '@lucide/vue'
+import { Box, Cpu, Layers, Server, Settings2, Sparkles, Users } from '@lucide/vue'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
 import { useTrafficStore } from '@/stores/traffic'
+import { lorasOfGroup } from '@/composables/useModelOptions'
 import StatusDot from '@/components/StatusDot.vue'
 import { formatNumber, formatPercent } from '@/lib/utils'
 import type { ModelState } from '@/types/api'
@@ -27,6 +28,9 @@ function onNodeClick({ node }: NodeMouseEvent) {
   switch (node.type) {
     case 'group':
       router.push({ path: '/models', query: { q: (node.data as GroupAgg).group } })
+      break
+    case 'lora':
+      router.push({ path: '/models', query: { q: (node.data as { group: string }).group } })
       break
     case 'embedding':
       router.push({ path: '/models', query: { q: 'embedding' } })
@@ -48,13 +52,22 @@ function onNodeClick({ node }: NodeMouseEvent) {
 const showData = ref(true)
 const showPlacement = ref(true)
 const showControl = ref(false)
+const showLora = ref(true)
+
+function togglePlane(k: string) {
+  if (k === 'data') showData.value = !showData.value
+  else if (k === 'placement') showPlacement.value = !showPlacement.value
+  else if (k === 'control') showControl.value = !showControl.value
+  else if (k === 'lora') showLora.value = !showLora.value
+}
 
 const flowId = 'system-topology'
 const { fitView, onNodesInitialized } = useVueFlow(flowId)
 onNodesInitialized(() => fitView({ padding: 0.15 }))
 
 const ROW = 92
-const COL = { client: 20, ctrl: 300, mid: 620, gpu: 1000 }
+const COL = { client: 20, ctrl: 300, mid: 620, lora: 880, gpu: 1140 }
+const LORA_CAP = 4 // max satellite nodes drawn per group; the badge shows the true total
 
 const stateBorder: Record<ModelState, string> = {
   ready: 'var(--status-ready)',
@@ -73,6 +86,7 @@ interface GroupAgg {
   waiting: number
   share: number
   gpus: number[]
+  loras: string[] // served names of adapters mounted on this group
 }
 
 const groups = computed<GroupAgg[]>(() => {
@@ -86,7 +100,7 @@ const groups = computed<GroupAgg[]>(() => {
     const inst = m.key.split('::')[1] ?? ''
     const agg =
       byGroup.get(g) ??
-      ({ group: g, ready: 0, total: 0, worst: 'stopped', running: 0, waiting: 0, share: 0, gpus: [] } as GroupAgg)
+      ({ group: g, ready: 0, total: 0, worst: 'stopped', running: 0, waiting: 0, share: 0, gpus: [], loras: [] } as GroupAgg)
     agg.total++
     if (m.state === 'ready') agg.ready++
     const gpu = models.gpuForKey(m.key, m.kind)
@@ -109,6 +123,7 @@ const groups = computed<GroupAgg[]>(() => {
           ? 'ready'
           : 'stopped'
     agg.share = reqTotal ? (reqByGroup[g] ?? 0) / reqTotal : 0
+    agg.loras = lorasOfGroup(models, g).map((l) => l.name)
   }
   return [...byGroup.values()]
 })
@@ -225,6 +240,27 @@ function buildGraph() {
         })
       }
     }
+    // LoRA satellites: structural (config) lineage, hung off the base group.
+    // Dashed (not traffic) — per-adapter request flow isn't tracked yet.
+    if (showLora.value && g.loras.length) {
+      const shown = g.loras.slice(0, LORA_CAP)
+      shown.forEach((name, k) => {
+        const lid = `lora:${g.group}:${name}`
+        nextNodes.push({
+          id: lid,
+          type: 'lora',
+          position: { x: COL.lora, y: i * ROW + 14 + (k - (shown.length - 1) / 2) * 26 },
+          data: { name, group: g.group, state: g.worst, extra: k === LORA_CAP - 1 ? g.loras.length - LORA_CAP : 0 },
+          ...base,
+        })
+        nextEdges.push({
+          id: `e-${id}-${lid}`,
+          source: id,
+          target: lid,
+          style: { stroke: 'var(--chart-3)', strokeWidth: 1, strokeDasharray: '3 3', opacity: 0.55 },
+        })
+      })
+    }
   })
 
   // --- Embedding server ---
@@ -296,7 +332,7 @@ function buildGraph() {
 let lastLayoutKey = ''
 
 watch(
-  [groups, embedding, gpus, showData, showPlacement, showControl, routerUp],
+  [groups, embedding, gpus, showData, showPlacement, showControl, showLora, routerUp],
   buildGraph,
   { immediate: true, deep: true },
 )
@@ -321,6 +357,7 @@ function miniColor(node: Node) {
         <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-1)]" />資料</span>
         <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-2)]" />部署</span>
         <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-4)]" />控制</span>
+        <span class="flex items-center gap-1"><span class="w-4 border-t border-dashed border-[var(--chart-3)]" />LoRA</span>
       </div>
       <div class="ml-auto flex items-center gap-1.5">
         <button
@@ -328,6 +365,7 @@ function miniColor(node: Node) {
             { k: 'data', label: '資料', model: showData },
             { k: 'placement', label: '部署', model: showPlacement },
             { k: 'control', label: '控制', model: showControl },
+            { k: 'lora', label: 'LoRA', model: showLora },
           ]"
           :key="t.k"
           class="rounded-md border px-2 py-0.5 text-xs transition-colors"
@@ -336,13 +374,7 @@ function miniColor(node: Node) {
               ? 'border-[var(--chart-1)]/40 bg-[var(--chart-1)]/10 text-foreground'
               : 'border-border bg-background/40 text-muted-foreground hover:text-foreground'
           "
-          @click="
-            t.k === 'data'
-              ? (showData = !showData)
-              : t.k === 'placement'
-                ? (showPlacement = !showPlacement)
-                : (showControl = !showControl)
-          "
+          @click="togglePlane(t.k)"
         >
           {{ t.label }}
         </button>
@@ -427,6 +459,22 @@ function miniColor(node: Node) {
               執行 {{ data.running }} · 等待 {{ data.waiting }}
               <span v-if="data.gpus.length"> · GPU {{ data.gpus.join(',') }}</span>
             </p>
+            <p v-if="data.loras?.length" class="flex items-center gap-1 text-[10px] text-[var(--chart-3)]">
+              <Layers class="size-3" />{{ data.loras.length }} LoRA
+            </p>
+          </div>
+        </template>
+
+        <!-- LoRA adapter (structural satellite of a base group) -->
+        <template #node-lora="{ data }">
+          <div
+            class="topo-node items-center gap-1 px-2 py-1"
+            :style="{ borderColor: stateBorder[data.state as ModelState] }"
+          >
+            <Handle type="target" :position="Position.Left" />
+            <Layers class="size-3 shrink-0 text-[var(--chart-3)]" />
+            <span class="max-w-[120px] truncate text-[10px] font-medium" :title="data.name">{{ data.name }}</span>
+            <span v-if="data.extra > 0" class="text-[10px] text-muted-foreground">+{{ data.extra }}</span>
           </div>
         </template>
 

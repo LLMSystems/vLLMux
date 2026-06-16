@@ -50,6 +50,11 @@ class BackendSettings:
     admin_token: str = ""
     # Optional webhook URL; a JSON alert is POSTed when a model enters FAILED.
     alert_webhook: str = ""
+    # Total concurrency budget shared across running evals (sum of their
+    # eval_batch_size). Evals run in parallel as long as the sum stays within
+    # this; the rest queue. Maps to vLLM's max-num-seqs pressure. Runtime-editable
+    # via the eval API (not persisted across restart).
+    eval_concurrency_budget: int = 32
 
     @property
     def auth_enabled(self) -> bool:
@@ -69,4 +74,5 @@ class BackendSettings:
             auto_restart=_env_bool("LLMOPS_AUTO_RESTART", True),
             max_restarts=int(_env_float("LLMOPS_MAX_RESTARTS", 3)),
             restart_backoff_base=_env_float("LLMOPS_RESTART_BACKOFF", 5.0),
+            eval_concurrency_budget=int(_env_float("LLMOPS_EVAL_CONCURRENCY_BUDGET", 32)),
         )

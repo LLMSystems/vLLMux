@@ -54,5 +54,27 @@ def test_start_requires_admin_when_enabled(auth_client):
     assert resp.status_code == 401
 
 
+def test_start_blocked_while_eval_busy(client, app):
+    # An eval running or queued holds the GPU — a load test must wait.
+    app.state.eval_manager._queued.append(99)
+    resp = client.post("/api/perf", json={
+        "model": "Qwen3-0.6B", "parallel": [1], "number": [10],
+    })
+    assert resp.status_code == 409
+
+
 def test_get_unknown_run_is_404(client):
     assert client.get("/api/perf/999").status_code == 404
+
+
+async def test_perf_log_streams_while_running(client, app, tmp_path):
+    app.state.perf_manager.perf_root = str(tmp_path)
+    rid = await app.state.store.create_perf_run(
+        model="Qwen3-0.6B", target_url="u", params="{}",
+    )
+    run_dir = tmp_path / str(rid)
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("[runner] running… 5s elapsed\n", encoding="utf-8")
+    resp = client.get(f"/api/perf/{rid}/log")
+    assert resp.status_code == 200
+    assert "5s elapsed" in resp.json()["content"]

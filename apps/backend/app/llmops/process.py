@@ -109,6 +109,26 @@ def terminate_process_group(proc: subprocess.Popen, timeout: float = 10.0) -> No
         pass
 
 
+def kill_process_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the whole process group immediately, no graceful grace period.
+
+    For force-stopping a wedged run that ignores SIGTERM. Blocking (proc.wait):
+    call via run_in_executor from async code.
+    """
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        logger.warning("Process group %s force-killed (SIGKILL)", pgid)
+        proc.wait()
+    except ProcessLookupError:
+        pass
+
+
 def read_log_tail(log_path: str, max_bytes: int = 2000) -> str:
     """Return the last ~max_bytes of a log file, for surfacing failure reasons."""
     try:

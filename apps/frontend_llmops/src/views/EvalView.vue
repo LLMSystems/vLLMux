@@ -21,10 +21,19 @@ const groups = computed(() => [...new Set(models.llms.map((m) => m.key.split('::
 function groupReady(g: string) {
   return models.llms.some((m) => m.key.split('::')[0] === g && m.state === 'ready')
 }
-const model = ref('')
+// Multiple models can be queued in one go (each becomes its own run); they run
+// in parallel within the shared batch_size budget. A LoRA served name counts as
+// a model here too.
+const selectedModels = ref<Set<string>>(new Set())
 const name = ref('')
 const target = ref<'router' | 'instance'>('router')
 const instanceKey = ref('')
+function toggleModel(v: string) {
+  const s = new Set(selectedModels.value)
+  if (s.has(v)) s.delete(v)
+  else s.add(v)
+  selectedModels.value = s
+}
 // LoRA adapters mounted on ready base groups — selectable as an eval target
 // (router routes them over the base group's instances).
 const loraOptions = computed(() => {
@@ -38,13 +47,22 @@ const loraOptions = computed(() => {
 function baseGroupOf(v: string): string {
   return loraOptions.value.find((l) => l.value === v)?.group ?? v
 }
+// Direct-to-instance only makes sense for a single model; its instances.
+const singleModel = computed(() => (selectedModels.value.size === 1 ? [...selectedModels.value][0]! : ''))
 const instanceOptions = computed(() =>
-  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(model.value)).map((m) => m.key),
+  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(singleModel.value)).map((m) => m.key),
 )
 watch(groups, (g) => {
-  if (!model.value && g.length) model.value = g.find(groupReady) ?? g[0]!
+  if (!selectedModels.value.size && g.length) {
+    const seed = g.find(groupReady) ?? g[0]!
+    selectedModels.value = new Set([seed])
+  }
 }, { immediate: true })
-watch(model, () => { instanceKey.value = instanceOptions.value[0] ?? '' })
+// Instance target needs exactly one model; fall back to router otherwise.
+watch(selectedModels, () => {
+  if (selectedModels.value.size !== 1 && target.value === 'instance') target.value = 'router'
+  instanceKey.value = instanceOptions.value[0] ?? ''
+})
 
 // ---- dataset catalog (grouped by tier) + cached state ----
 const catalog = ref<EvalDataset[]>([])
@@ -80,6 +98,10 @@ const limit = ref(10) // 0 = full dataset
 const repeats = ref(1)
 const temperature = ref(0)
 const maxTokens = ref(2048)
+// evalscope's internal concurrency — how many requests it fires at the running
+// vLLM instance at once. Higher fills vLLM's batch better (faster), but too high
+// can queue requests past their timeout. Doesn't affect scores.
+const batchSize = ref(8)
 const launching = ref(false)
 
 // Long-context datasets need a big context window — warn if any are selected.
@@ -137,6 +159,11 @@ async function loadCatalog() {
 // ---- runs ----
 const runs = ref<EvalRun[]>([])
 const busy = ref(false)
+const runningCount = ref(0)
+const queuedCount = ref(0)
+const budget = ref(32)
+const usedBudget = ref(0)
+const budgetDraft = ref(32) // editable; applied on blur/Enter
 const selectedId = ref<number | null>(null)
 const detail = ref<EvalRun | null>(null)
 const result = ref<EvalResult | null>(null)
@@ -169,8 +196,31 @@ async function loadRuns() {
     const r = await api.listEval()
     runs.value = r.runs
     busy.value = r.busy
+    runningCount.value = r.running
+    queuedCount.value = r.queued
+    budget.value = r.budget
+    usedBudget.value = r.used_budget
+    if (!budgetEditing.value) budgetDraft.value = r.budget
   } catch {
     /* transient */
+  }
+}
+
+const budgetEditing = ref(false)
+async function applyBudget() {
+  budgetEditing.value = false
+  if (budgetDraft.value === budget.value || budgetDraft.value < 1) {
+    budgetDraft.value = budget.value
+    return
+  }
+  try {
+    const c = await api.setEvalConfig(budgetDraft.value)
+    budget.value = c.concurrency_budget
+    usedBudget.value = c.used_budget
+    toast.success(`並發預算已設為 ${c.concurrency_budget}`)
+  } catch (e) {
+    toast.error('無法調整預算', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    budgetDraft.value = budget.value
   }
 }
 
@@ -196,12 +246,17 @@ async function loadLog() {
 
 async function launch() {
   if (launching.value) return
-  if (!model.value) {
-    toast.error('請選擇一個模型')
+  const targetModels = [...selectedModels.value]
+  if (!targetModels.length) {
+    toast.error('請至少選擇一個模型')
     return
   }
   if (!selected.value.size) {
     toast.error('請至少選擇一個資料集')
+    return
+  }
+  if (target.value === 'instance' && targetModels.length !== 1) {
+    toast.error('直連實例僅支援單一模型')
     return
   }
   if (judgeEnabled.value && !judgeModel.value) {
@@ -219,32 +274,45 @@ async function launch() {
     toast.error('進階 dataset_args 不是合法 JSON')
     return
   }
-  const req: EvalRequest = {
-    model: model.value,
-    name: name.value || undefined,
-    target: target.value,
-    instance_key: target.value === 'instance' ? instanceKey.value : undefined,
-    datasets: [...selected.value],
-    limit: limit.value > 0 ? limit.value : null,
-    repeats: repeats.value,
-    temperature: temperature.value,
-    max_tokens: maxTokens.value,
-    judge_enabled: judgeEnabled.value,
-    judge_target: judgeEnabled.value ? judgeTarget.value : undefined,
-    judge_model: judgeEnabled.value ? judgeModel.value : undefined,
-    judge_api_url: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiUrl.value : undefined,
-    judge_api_key: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiKey.value || undefined : undefined,
-    dataset_args: datasetArgs,
-  }
   if (!(await ensureUnlocked())) return
   launching.value = true
+  // One run per selected model; they share the datasets/params and queue against
+  // the concurrency budget on the backend.
+  let firstId: number | null = null
+  let ok = 0
   try {
-    const run = await api.startEval(req)
-    toast.success(`已開始評測 #${run.id}`, { description: '可離開此頁，背景持續執行。' })
-    await loadRuns()
-    await select(run.id)
-  } catch (e) {
-    toast.error('無法開始評測', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    for (const mdl of targetModels) {
+      const req: EvalRequest = {
+        model: mdl,
+        name: name.value || undefined,
+        target: target.value,
+        instance_key: target.value === 'instance' ? instanceKey.value : undefined,
+        datasets: [...selected.value],
+        limit: limit.value > 0 ? limit.value : null,
+        repeats: repeats.value,
+        temperature: temperature.value,
+        max_tokens: maxTokens.value,
+        eval_batch_size: batchSize.value,
+        judge_enabled: judgeEnabled.value,
+        judge_target: judgeEnabled.value ? judgeTarget.value : undefined,
+        judge_model: judgeEnabled.value ? judgeModel.value : undefined,
+        judge_api_url: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiUrl.value : undefined,
+        judge_api_key: judgeEnabled.value && judgeTarget.value === 'external' ? judgeApiKey.value || undefined : undefined,
+        dataset_args: datasetArgs,
+      }
+      try {
+        const run = await api.startEval(req)
+        if (firstId === null) firstId = run.id
+        ok++
+      } catch (e) {
+        toast.error(`無法評測 ${mdl}`, { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+      }
+    }
+    if (ok > 0) {
+      toast.success(`已排入 ${ok} 個評測`, { description: '可離開此頁，背景持續執行。' })
+      await loadRuns()
+      if (firstId !== null) await select(firstId)
+    }
   } finally {
     launching.value = false
   }
@@ -327,7 +395,7 @@ onMounted(() => {
 onBeforeUnmount(() => { if (poll) clearInterval(poll) })
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
-  completed: 'default', running: 'secondary', failed: 'outline', cancelled: 'outline',
+  completed: 'default', running: 'secondary', queued: 'outline', failed: 'outline', cancelled: 'outline',
 }
 </script>
 
@@ -346,28 +414,54 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
       <!-- Config -->
       <Card class="space-y-4 p-5">
         <div class="space-y-1.5">
-          <label class="text-xs font-medium text-muted-foreground">模型</label>
-          <select
-            v-model="model"
-            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-          >
-            <option v-if="!groups.length" disabled value="">尚未設定模型</option>
-            <option v-for="g in groups" :key="g" :value="g">
-              {{ g }}{{ groupReady(g) ? '' : ' · 離線' }}
-            </option>
-            <optgroup v-if="loraOptions.length" label="LoRA">
-              <option v-for="l in loraOptions" :key="l.value" :value="l.value">
-                {{ l.group }} / {{ l.value }}
-              </option>
-            </optgroup>
-          </select>
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-medium text-muted-foreground">模型</label>
+            <span class="text-[10px] text-muted-foreground">已選 {{ selectedModels.size }}</span>
+          </div>
+          <p v-if="!groups.length" class="text-xs text-muted-foreground">尚未設定模型</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="g in groups"
+              :key="g"
+              class="rounded-md border px-2 py-1 text-xs transition-colors"
+              :class="selectedModels.has(g)
+                ? 'border-[var(--chart-1)] bg-[var(--chart-1)]/10 text-foreground'
+                : 'border-border text-muted-foreground hover:bg-muted'"
+              @click="toggleModel(g)"
+            >
+              {{ g }}<span v-if="!groupReady(g)" class="ml-1 text-muted-foreground/70">· 離線</span>
+            </button>
+          </div>
+          <div v-if="loraOptions.length" class="flex flex-wrap gap-1.5">
+            <button
+              v-for="l in loraOptions"
+              :key="l.value"
+              class="rounded-md border px-2 py-1 text-xs transition-colors"
+              :class="selectedModels.has(l.value)
+                ? 'border-[var(--chart-3)] bg-[var(--chart-3)]/10 text-foreground'
+                : 'border-border text-muted-foreground hover:bg-muted'"
+              :title="`LoRA · ${l.group}`"
+              @click="toggleModel(l.value)"
+            >
+              <span class="text-[var(--chart-3)]">◆</span> {{ l.value }}
+            </button>
+          </div>
+          <p v-if="selectedModels.size > 1" class="text-[10px] text-muted-foreground">
+            多選 = 每個模型各排一個評測，依共用並發預算並行 / 排隊。
+          </p>
         </div>
 
         <div class="space-y-1.5">
           <label class="text-xs font-medium text-muted-foreground">目標</label>
           <div class="flex gap-1.5">
             <Button size="sm" :variant="target === 'router' ? 'default' : 'outline'" @click="target = 'router'">路由器</Button>
-            <Button size="sm" :variant="target === 'instance' ? 'default' : 'outline'" @click="target = 'instance'">直連實例</Button>
+            <Button
+              size="sm"
+              :variant="target === 'instance' ? 'default' : 'outline'"
+              :disabled="selectedModels.size !== 1"
+              :title="selectedModels.size !== 1 ? '直連實例僅支援單一模型' : ''"
+              @click="target = 'instance'"
+            >直連實例</Button>
           </div>
           <select
             v-if="target === 'instance'"
@@ -441,6 +535,11 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
             <label class="text-xs font-medium text-muted-foreground">最大輸出 tokens</label>
             <Input v-model.number="maxTokens" type="number" min="1" />
           </div>
+          <div class="space-y-1">
+            <label class="text-xs font-medium text-muted-foreground">並發數（batch size）</label>
+            <Input v-model.number="batchSize" type="number" min="1" />
+            <p class="text-[10px] text-muted-foreground">一次對模型發幾個並發請求；調高可跑更快，太高會排隊逾時。不影響分數。</p>
+          </div>
         </div>
 
         <!-- Advanced: dataset_args -->
@@ -499,18 +598,35 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
 
         <Button class="w-full" :disabled="launching" @click="launch">
           <Loader2 v-if="launching" class="size-4 animate-spin" />
-          <Play v-else class="size-4" />開始評測
+          <Play v-else class="size-4" />{{ selectedModels.size > 1 ? `排入 ${selectedModels.size} 個評測` : '開始評測' }}
         </Button>
-        <p v-if="busy" class="text-center text-[11px] text-amber-600">目前有評測在執行，需等它結束。</p>
       </Card>
 
       <!-- Runs + detail -->
       <div class="min-w-0 space-y-4">
         <!-- Run list -->
         <Card class="overflow-hidden">
-          <div class="flex items-center justify-between border-b border-border/60 px-5 py-3">
-            <span class="text-sm font-semibold">評測紀錄</span>
-            <span class="text-[11px] text-muted-foreground">勾選 ≥2 筆比較分數</span>
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-5 py-3">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">評測紀錄</span>
+              <span v-if="runningCount" class="rounded bg-[var(--chart-1)]/10 px-1.5 py-0.5 text-[10px] text-[var(--chart-1)]">執行中 {{ runningCount }}</span>
+              <span v-if="queuedCount" class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">排隊 {{ queuedCount }}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1 text-[11px] text-muted-foreground" title="所有並行評測的 batch_size 加總上限；填滿就排隊。即時生效，重啟回預設。">
+                並發預算
+                <Input
+                  v-model.number="budgetDraft"
+                  type="number"
+                  min="1"
+                  class="h-7 w-16 text-xs"
+                  @focus="budgetEditing = true"
+                  @blur="applyBudget"
+                  @keyup.enter="applyBudget"
+                />
+              </label>
+              <span class="text-[10px] text-muted-foreground">用量 {{ usedBudget }}/{{ budget }}</span>
+            </div>
           </div>
           <div v-if="runs.length" class="divide-y divide-border/60">
             <button
@@ -536,8 +652,9 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
               </span>
               <span class="shrink-0 text-xs text-muted-foreground">{{ formatTime(r.created_at) }}</span>
               <Square
-                v-if="r.status === 'running'"
+                v-if="r.status === 'running' || r.status === 'queued'"
                 class="size-3.5 text-muted-foreground hover:text-status-failed"
+                :title="r.status === 'queued' ? '取消排隊' : '取消'"
                 @click.stop="cancel(r.id)"
               />
               <Trash2
@@ -601,7 +718,10 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
             </a>
           </div>
 
-          <div v-if="detail.status === 'running'" class="flex items-center gap-2 text-sm text-muted-foreground">
+          <div v-if="detail.status === 'queued'" class="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 class="size-4 animate-spin" />排隊中…等待並發預算或壓測結束。
+          </div>
+          <div v-else-if="detail.status === 'running'" class="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 class="size-4 animate-spin" />評測執行中…（可離開此頁）
           </div>
           <div
