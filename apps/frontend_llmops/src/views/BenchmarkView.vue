@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, ChevronDown, ExternalLink, Gauge, Loader2, Play, Plus, Square, Trash2, X } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
@@ -175,6 +175,15 @@ async function select(id: number) {
     toast.error('無法載入結果', { description: String(e) })
   }
   await loadLog()
+}
+
+// The result block; bringing it into view on an explicit pick (not on poll
+// re-selects) means a chosen result is never buried below a long history.
+const resultArea = ref<HTMLElement | null>(null)
+async function onSelectRun(id: number) {
+  await select(id)
+  await nextTick()
+  resultArea.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 async function loadLog() {
@@ -726,16 +735,17 @@ const statusColor: Record<string, string> = {
       <!-- History -->
       <Card class="overflow-hidden">
         <div class="flex items-center justify-between border-b border-border/60 px-4 py-2.5 text-sm font-semibold">
-          <span>壓測歷史</span>
+          <span>壓測歷史 <span class="text-xs font-normal text-muted-foreground">({{ runs.length }})</span></span>
           <span class="text-xs font-normal text-muted-foreground">勾選 ≥2 筆比較</span>
         </div>
-        <div v-if="runs.length" class="divide-y divide-border/60">
+        <!-- Bounded + scrollable so a long history never pushes the result far down. -->
+        <div v-if="runs.length" class="max-h-72 divide-y divide-border/60 overflow-y-auto">
           <div
             v-for="r in runs"
             :key="r.id"
             class="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-accent/30"
             :class="selectedId === r.id ? 'bg-accent/40' : ''"
-            @click="select(r.id)"
+            @click="onSelectRun(r.id)"
           >
             <input
               v-if="r.status === 'completed'"
@@ -776,6 +786,8 @@ const statusColor: Record<string, string> = {
         <p v-else class="px-4 py-8 text-center text-sm text-muted-foreground">尚無壓測紀錄。</p>
       </Card>
 
+      <!-- Comparison + selected result; scrolled into view on an explicit pick. -->
+      <div ref="resultArea" class="scroll-mt-4 space-y-4">
       <!-- Comparison (≥2 completed runs selected) -->
       <Card v-if="compareSeries.length >= 2" class="p-4">
         <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -947,6 +959,7 @@ const statusColor: Record<string, string> = {
           <pre class="max-h-64 overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">{{ log || '（等待輸出…）' }}</pre>
         </Card>
       </template>
+      </div>
     </div>
     </div>
   </div>

@@ -89,3 +89,54 @@ async def test_eval_log_streams_while_running(client, app, tmp_path):
     resp = client.get(f"/api/eval/{rid}/log")
     assert resp.status_code == 200
     assert "5s elapsed" in resp.json()["content"]
+
+
+async def _seed_run_with_outputs(app, tmp_path):
+    """A completed run whose output dir has a minimal report + sample files."""
+    import json
+    app.state.eval_manager.eval_root = str(tmp_path)
+    rid = await app.state.store.create_eval_run(
+        model="Qwen3-0.6B", target_url="u", datasets='["gsm8k"]', params="{}", status="running",
+    )
+    rd = tmp_path / str(rid)
+    (rd / "reports" / "m").mkdir(parents=True)
+    (rd / "reports" / "m" / "gsm8k.json").write_text(json.dumps({
+        "dataset_name": "gsm8k", "dataset_pretty_name": "GSM8K", "score": 0.5, "num": 2,
+        "metrics": [{"name": "mean_acc", "score": 0.5, "num": 2, "categories": [
+            {"subsets": [{"name": "main", "score": 0.5, "num": 2, "is_aggregate": False}]}]}],
+        "perf_metrics": {"summary": {"n_samples": 2, "latency": {"mean": 5.0, "50%": 5.0, "99%": 5.0, "max": 5.0},
+                                     "throughput": {"avg_output_tps": 40.0}, "usage": {}}},
+    }), encoding="utf-8")
+    (rd / "reviews" / "m").mkdir(parents=True)
+    (rd / "reviews" / "m" / "gsm8k_main.jsonl").write_text(
+        "\n".join(json.dumps({"index": i, "target": str(i), "messages": [],
+            "sample_score": {"score": {"value": {"acc": float(i - 1)},
+            "extracted_prediction": str(i), "prediction": f"a{i}"}}}) for i in (1, 2)),
+        encoding="utf-8")
+    return rid
+
+
+async def test_eval_detail_returns_perf_and_subsets(client, app, tmp_path):
+    from app.services import eval_reports
+    eval_reports._compact_rows.cache_clear()
+    rid = await _seed_run_with_outputs(app, tmp_path)
+    body = client.get(f"/api/eval/{rid}/detail").json()
+    [d] = body["datasets"]
+    assert d["dataset"] == "gsm8k" and d["perf"]["output_tps"] == 40.0
+    assert d["metrics"][0]["subsets"] == [{"name": "main", "score": 0.5, "num": 2}]
+
+
+async def test_eval_samples_paginated_and_filtered(client, app, tmp_path):
+    from app.services import eval_reports
+    eval_reports._compact_rows.cache_clear()
+    rid = await _seed_run_with_outputs(app, tmp_path)
+    allp = client.get(f"/api/eval/{rid}/samples?dataset=gsm8k").json()
+    assert allp["total"] == 2 and allp["total_correct"] == 1
+    wrong = client.get(f"/api/eval/{rid}/samples?dataset=gsm8k&filter=wrong").json()
+    assert wrong["total"] == 1 and wrong["samples"][0]["correct"] is False
+    one = client.get(f"/api/eval/{rid}/samples/2?dataset=gsm8k").json()
+    assert one["index"] == 2 and one["correct"] is True and one["target"] == "2"
+
+
+def test_eval_samples_unknown_run_is_404(client):
+    assert client.get("/api/eval/9999/samples?dataset=gsm8k").status_code == 404

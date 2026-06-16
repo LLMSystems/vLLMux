@@ -456,6 +456,65 @@ export interface EvalRun {
   finished_at: number | null
 }
 
+// ---- Rich eval detail (lazy: fetched when a run is opened) ----
+export interface EvalSubsetScore {
+  name: string
+  score: number
+  num: number
+}
+export interface EvalReportMetric {
+  name: string
+  score: number | null
+  num: number | null
+  subsets: EvalSubsetScore[]
+}
+export interface EvalReportPerf {
+  n_samples: number | null
+  latency: { mean: number | null; p50: number | null; p99: number | null; max: number | null }
+  output_tps: number | null
+  req_ps: number | null
+  input_tokens_mean: number | null
+  output_tokens_mean: number | null
+}
+export interface EvalReportDataset {
+  dataset: string
+  pretty: string
+  description: string | null
+  score: number | null
+  num: number | null
+  metrics: EvalReportMetric[]
+  perf: EvalReportPerf | null
+}
+
+// ---- Per-sample browser (lazy + paginated) ----
+export interface EvalSampleRow {
+  index: number
+  subset: string
+  scores: Record<string, number>
+  score: number | null
+  correct: boolean
+  extracted: string | null
+  target: string | null
+  preview: string | null
+}
+export interface EvalSamplesPage {
+  total: number
+  total_all: number
+  total_correct: number
+  page: number
+  page_size: number
+  samples: EvalSampleRow[]
+}
+export interface EvalSampleDetail {
+  index: number
+  prompt: { role: string; content: string }[]
+  answer: string | null
+  target: string | null
+  scores: Record<string, number>
+  correct: boolean
+  perf: { latency: number | null; ttft: number | null; input_tokens: number | null; output_tokens: number | null } | null
+}
+
 export interface EvalRequest {
   model: string
   name?: string

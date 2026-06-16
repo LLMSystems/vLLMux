@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ClipboardCheck, ExternalLink, Loader2, Play, Square, Trash2 } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
@@ -7,11 +7,18 @@ import { lorasOfGroup } from '@/composables/useModelOptions'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
 import { formatTime } from '@/lib/utils'
-import type { EvalDataset, EvalRequest, EvalResult, EvalRun } from '@/types/api'
+import type {
+  EvalDataset,
+  EvalReportDataset,
+  EvalRequest,
+  EvalResult,
+  EvalRun,
+} from '@/types/api'
 import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import Badge from '@/components/ui/Badge.vue'
+import EvalSampleBrowser from '@/components/EvalSampleBrowser.vue'
 
 const models = useModelsStore()
 const { ensureUnlocked } = useAuth()
@@ -224,15 +231,50 @@ async function applyBudget() {
   }
 }
 
+// Rich per-dataset detail (speed / subsets / description) — lazily fetched only
+// when a completed run is opened, so the run list stays light.
+const reportDetail = ref<EvalReportDataset[] | null>(null)
+const loadingDetail = ref(false)
+const showSamples = ref(false)
+const reportDatasets = computed(() => reportDetail.value?.map((d) => d.dataset) ?? [])
+
+async function loadDetail(id: number, status: string) {
+  reportDetail.value = null
+  showSamples.value = false
+  if (status !== 'completed') return
+  loadingDetail.value = true
+  try {
+    reportDetail.value = (await api.getEvalDetail(id)).datasets
+  } catch {
+    /* non-fatal: the basic score table still shows */
+  } finally {
+    loadingDetail.value = false
+  }
+}
+
 async function select(id: number) {
   selectedId.value = id
   try {
     detail.value = await api.getEval(id)
     result.value = parseResult(detail.value.result)
+    await loadDetail(id, detail.value.status)
   } catch (e) {
     toast.error('無法載入結果', { description: String(e) })
   }
   await loadLog()
+}
+
+function fmtNum(v: number | null | undefined, digits = 1) {
+  return v == null ? '—' : v.toFixed(digits)
+}
+
+// Bring the result block into view on an explicit pick (not poll re-selects), so
+// a chosen result is never buried below a long history.
+const resultArea = ref<HTMLElement | null>(null)
+async function onSelectRun(id: number) {
+  await select(id)
+  await nextTick()
+  resultArea.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 async function loadLog() {
@@ -628,13 +670,14 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
               <span class="text-[10px] text-muted-foreground">用量 {{ usedBudget }}/{{ budget }}</span>
             </div>
           </div>
-          <div v-if="runs.length" class="divide-y divide-border/60">
+          <!-- Bounded + scrollable so a long history never pushes the result far down. -->
+          <div v-if="runs.length" class="max-h-72 divide-y divide-border/60 overflow-y-auto">
             <button
               v-for="r in runs"
               :key="r.id"
               class="flex w-full items-center gap-3 px-5 py-2.5 text-left text-sm hover:bg-muted/50"
               :class="selectedId === r.id && 'bg-muted/60'"
-              @click="select(r.id)"
+              @click="onSelectRun(r.id)"
             >
               <input
                 type="checkbox"
@@ -667,6 +710,8 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           <p v-else class="px-5 py-8 text-center text-sm text-muted-foreground">尚無評測紀錄。</p>
         </Card>
 
+        <!-- Comparison + selected result; scrolled into view on an explicit pick. -->
+        <div ref="resultArea" class="scroll-mt-4 space-y-4">
         <!-- Comparison matrix (datasets × runs) -->
         <Card v-if="compareRuns.length >= 2" class="overflow-hidden">
           <div class="border-b border-border/60 px-5 py-3 text-sm font-semibold">分數比較</div>
@@ -753,12 +798,73 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
             </tbody>
           </table>
 
+          <!-- Rich detail (lazy): speed / per-subset / description, per dataset -->
+          <div v-if="loadingDetail" class="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 class="size-3.5 animate-spin" />載入詳細數據…
+          </div>
+          <div v-else-if="reportDetail?.length" class="mt-4 space-y-4">
+            <div v-for="d in reportDetail" :key="d.dataset" class="rounded-lg border border-border/60 p-3">
+              <p class="mb-2 text-sm font-semibold">{{ d.pretty }}</p>
+
+              <!-- Speed / throughput (eval also measures this) -->
+              <div v-if="d.perf" class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div class="rounded-md bg-muted/40 p-2">
+                  <p class="text-[10px] text-muted-foreground">延遲 p50 / p99</p>
+                  <p class="tabular text-sm">{{ fmtNum(d.perf.latency.p50) }}s <span class="text-muted-foreground">/ {{ fmtNum(d.perf.latency.p99) }}s</span></p>
+                </div>
+                <div class="rounded-md bg-muted/40 p-2">
+                  <p class="text-[10px] text-muted-foreground">輸出吞吐</p>
+                  <p class="tabular text-sm">{{ fmtNum(d.perf.output_tps) }} <span class="text-muted-foreground">tok/s</span></p>
+                </div>
+                <div class="rounded-md bg-muted/40 p-2">
+                  <p class="text-[10px] text-muted-foreground">平均輸入 tok</p>
+                  <p class="tabular text-sm">{{ fmtNum(d.perf.input_tokens_mean, 0) }}</p>
+                </div>
+                <div class="rounded-md bg-muted/40 p-2">
+                  <p class="text-[10px] text-muted-foreground">平均輸出 tok</p>
+                  <p class="tabular text-sm">{{ fmtNum(d.perf.output_tokens_mean, 0) }}</p>
+                </div>
+              </div>
+
+              <!-- Per-subset breakdown (only when a metric spans >1 subject) -->
+              <template v-for="m in d.metrics" :key="m.name">
+                <div v-if="m.subsets.length > 1" class="mt-3">
+                  <p class="mb-1 text-[11px] font-medium text-muted-foreground">{{ m.name }} · 分科目</p>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="s in m.subsets"
+                      :key="s.name"
+                      class="rounded-md border border-border/60 px-1.5 py-0.5 text-[11px] tabular"
+                    >{{ s.name }} <span class="font-semibold">{{ pct(s.score) }}</span> <span class="text-muted-foreground">({{ s.num }})</span></span>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Benchmark description -->
+              <details v-if="d.description" class="mt-3">
+                <summary class="cursor-pointer text-[11px] text-muted-foreground">這個評測在測什麼？</summary>
+                <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed text-muted-foreground">{{ d.description }}</pre>
+              </details>
+            </div>
+
+            <!-- Per-sample browser (lazy: nothing fetched until opened) -->
+            <div>
+              <Button variant="outline" size="sm" @click="showSamples = !showSamples">
+                {{ showSamples ? '收起逐題瀏覽' : '逐題瀏覽（看每題對錯 / 答案）' }}
+              </Button>
+              <div v-if="showSamples && reportDatasets.length" class="mt-3">
+                <EvalSampleBrowser :run-id="detail.id" :datasets="reportDatasets" />
+              </div>
+            </div>
+          </div>
+
           <!-- Log -->
           <details class="mt-4" :open="detail.status !== 'completed'">
             <summary class="cursor-pointer text-xs text-muted-foreground">執行日誌</summary>
             <pre class="mt-2 max-h-64 overflow-auto rounded-md bg-muted/60 p-3 text-[11px] leading-relaxed">{{ log || '（無日誌）' }}</pre>
           </details>
         </Card>
+        </div>
       </div>
     </div>
   </div>

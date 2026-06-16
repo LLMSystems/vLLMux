@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_admin
 from app.eval.manager import EvalError
+from app.services import eval_reports
 from app.services.dataset_service import EVAL_CATALOG
 
 router = APIRouter(prefix="/eval", tags=["eval"])
@@ -21,6 +22,15 @@ def _em(request: Request):
 
 def _store(request: Request):
     return request.app.state.store
+
+
+async def _run_dir(request: Request, run_id: int) -> str:
+    """The run's output directory, derived from the manager root while output_dir
+    isn't persisted yet (i.e. mid-run). Raises 404 for an unknown run."""
+    run = await _store(request).get_eval_run(run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown eval run: {run_id}")
+    return run.get("output_dir") or os.path.join(_em(request).eval_root, str(run_id))
 
 
 class EvalRequest(BaseModel):
@@ -150,6 +160,37 @@ async def get_run_report(run_id: int, request: Request):
     if not os.path.exists(path):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "report not available for this run")
     return FileResponse(path, media_type="text/html")
+
+
+@router.get("/{run_id}/detail")
+async def get_run_detail(run_id: int, request: Request):
+    """Rich per-dataset summary parsed on demand: scores + per-subset breakdown +
+    speed/throughput + benchmark description. Small; loaded when a run is opened."""
+    run_dir = await _run_dir(request, run_id)
+    return {"datasets": eval_reports.report(run_dir)}
+
+
+@router.get("/{run_id}/samples")
+async def get_run_samples(
+    run_id: int, request: Request, dataset: str,
+    filter: Literal["all", "correct", "wrong"] = "all",
+    page: int = 1, page_size: int = 50,
+):
+    """Paginated, server-filtered per-sample rows (compact projection — no full
+    prompt/answer text). The browser only ever holds one page."""
+    page_size = max(1, min(page_size, 200))
+    run_dir = await _run_dir(request, run_id)
+    return eval_reports.samples(run_dir, dataset, filter, page, page_size)
+
+
+@router.get("/{run_id}/samples/{index}")
+async def get_run_sample(run_id: int, index: int, request: Request, dataset: str):
+    """Full detail for one sample: prompt, model answer, target, scores, perf."""
+    run_dir = await _run_dir(request, run_id)
+    s = eval_reports.sample(run_dir, dataset, index)
+    if s is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown sample: {index}")
+    return s
 
 
 @router.post("/{run_id}/cancel", dependencies=[Depends(require_admin)])

@@ -50,6 +50,22 @@ const messages = ref<ChatMsg[]>([])
 const chatInput = ref('')
 const systemPrompt = ref('')
 const busy = ref(false)
+
+// Auto-scroll a message pane to the bottom as content streams in — but only when
+// the user is already at the bottom, so scrolling up to read history isn't yanked
+// back down. `_stick` is captured *before* the DOM grows (in beforeUpdate).
+type StickyEl = HTMLElement & { _stick?: boolean }
+const vAutoscroll = {
+  mounted: (el: StickyEl) => {
+    el.scrollTop = el.scrollHeight
+  },
+  beforeUpdate: (el: StickyEl) => {
+    el._stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  },
+  updated: (el: StickyEl) => {
+    if (el._stick) el.scrollTop = el.scrollHeight
+  },
+}
 const lastLatency = ref<number | null>(null)
 const lastUsage = ref<Usage | null>(null)
 // One controller per send (single or compare) so the Stop button aborts all.
@@ -342,7 +358,7 @@ watch(
         <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
           <!-- Single-model conversation -->
           <Card v-if="!compareMode" glass class="flex h-[calc(100vh-12rem)] flex-col">
-            <div class="flex-1 space-y-4 overflow-y-auto p-5">
+            <div v-autoscroll class="flex-1 space-y-4 overflow-y-auto p-5">
               <div
                 v-for="(m, i) in messages"
                 :key="i"
@@ -433,7 +449,7 @@ watch(
                     </button>
                   </div>
                 </div>
-                <div class="flex-1 space-y-3 overflow-y-auto p-4">
+                <div v-autoscroll class="flex-1 space-y-3 overflow-y-auto p-4">
                   <div
                     v-for="(m, i) in lane.messages"
                     :key="i"

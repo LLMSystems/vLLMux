@@ -10,8 +10,11 @@ import type {
   EvalConfig,
   EvalDataset,
   EvalListResponse,
+  EvalReportDataset,
   EvalRequest,
   EvalRun,
+  EvalSampleDetail,
+  EvalSamplesPage,
   GpuProcess,
   HealthZ,
   LogResponse,
@@ -278,6 +281,29 @@ export const api = {
   getEval: (id: number) => request<EvalRun>(API_BASE, `/api/eval/${id}`),
   getEvalLog: (id: number, tail = 200) =>
     request<{ content: string }>(API_BASE, `/api/eval/${id}/log?tail=${tail}`),
+  // Rich detail (per-dataset speed/subsets/description), loaded lazily on open.
+  getEvalDetail: (id: number) =>
+    request<{ datasets: EvalReportDataset[] }>(API_BASE, `/api/eval/${id}/detail`),
+  // Paginated, server-filtered per-sample rows (compact — no full text).
+  getEvalSamples: (
+    id: number,
+    dataset: string,
+    opts: { filter?: 'all' | 'correct' | 'wrong'; page?: number; pageSize?: number } = {},
+  ) => {
+    const q = new URLSearchParams({
+      dataset,
+      filter: opts.filter ?? 'all',
+      page: String(opts.page ?? 1),
+      page_size: String(opts.pageSize ?? 50),
+    })
+    return request<EvalSamplesPage>(API_BASE, `/api/eval/${id}/samples?${q}`)
+  },
+  // Full detail for one sample (prompt + answer + target + scores + perf).
+  getEvalSample: (id: number, dataset: string, index: number) =>
+    request<EvalSampleDetail>(
+      API_BASE,
+      `/api/eval/${id}/samples/${index}?dataset=${encodeURIComponent(dataset)}`,
+    ),
   cancelEval: (id: number) =>
     request<{ ok: boolean }>(API_BASE, `/api/eval/${id}/cancel`, { method: 'POST' }),
   deleteEval: (id: number) => request<null>(API_BASE, `/api/eval/${id}`, { method: 'DELETE' }),
