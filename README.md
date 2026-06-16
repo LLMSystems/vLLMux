@@ -80,47 +80,12 @@ This project combines a routing server (LLM-Router-Server) with an easy-to-use m
 ## System Requirements
 
 ### Hardware Requirements
-- **GPU**: NVIDIA GPU (CUDA 12.1+ recommended)
+- **GPU**: NVIDIA GPU (CUDA 13.1+ recommended)
 - **Memory**: 16GB+ RAM (depending on model size)
 - **Disk**: 50GB+ available space
 ---
 
 ## Quick Start
-
-### Frontend (Web Dashboard)
-
-The dashboard lives in **`apps/frontend_llmops`** — Vue 3 + Vite + TypeScript, Tailwind CSS v4, shadcn-vue components, [Vue Flow](https://vueflow.dev) for the topology/router graphs, Pinia + Vue Router. (The older `apps/frontend` is deprecated.)
-
-#### Local development
-
-```bash
-cd apps/frontend_llmops
-npm install
-npm run dev          # http://localhost:5173
-```
-
-#### Production build
-
-```bash
-npm run build        # outputs to dist/
-```
-
-#### Configuration — `apps/frontend_llmops/.env`
-
-```env
-VITE_API_BASE_URL=http://localhost:5000        # Dashboard backend (lifecycle, telemetry)
-VITE_ROUTER_BASE_URL=http://localhost:8887     # LLM Router (inference + /metrics + /reload)
-```
-
-> **Authentication** is backend-driven (not a build-time password). Set
-> `LLMOPS_ADMIN_TOKEN` on the backend + router to gate every control action
-> (start / stop / add / edit / remove + API-key management); the UI prompts for
-> the token once and reuses it for the session. Set `LLMOPS_REQUIRE_API_KEY=true`
-> on the router to require a bearer token (the admin token, or an API key minted
-> on the **API 金鑰** page) for all `/v1/*` inference. Both default to off for
-> local dev.
-
-> **Run all three services for full functionality**: the Dashboard Backend (`:5000`), the LLM Router (`:8887`), and the model instances the backend launches on demand. The backend and router both merge the dynamic-model overlay at startup, so models added from the UI survive restarts.
 
 ### Docker Deployment (one command)
 
@@ -169,6 +134,41 @@ without rebuilding.
 curl http://localhost:8887/v1/models     # router: configured model groups
 curl http://localhost:5000/api/models    # backend: lifecycle state of each instance
 ```
+
+### Frontend (Web Dashboard)
+
+The dashboard lives in **`apps/frontend_llmops`** — Vue 3 + Vite + TypeScript, Tailwind CSS v4, shadcn-vue components, [Vue Flow](https://vueflow.dev) for the topology/router graphs, Pinia + Vue Router. (The older `apps/frontend` is deprecated.)
+
+#### Local development
+
+```bash
+cd apps/frontend_llmops
+npm install
+npm run dev          # http://localhost:5173
+```
+
+#### Production build
+
+```bash
+npm run build        # outputs to dist/
+```
+
+#### Configuration — `apps/frontend_llmops/.env`
+
+```env
+VITE_API_BASE_URL=http://localhost:5000        # Dashboard backend (lifecycle, telemetry)
+VITE_ROUTER_BASE_URL=http://localhost:8887     # LLM Router (inference + /metrics + /reload)
+```
+
+> **Authentication** is backend-driven (not a build-time password). Set
+> `LLMOPS_ADMIN_TOKEN` on the backend + router to gate every control action
+> (start / stop / add / edit / remove + API-key management); the UI prompts for
+> the token once and reuses it for the session. Set `LLMOPS_REQUIRE_API_KEY=true`
+> on the router to require a bearer token (the admin token, or an API key minted
+> on the **API 金鑰** page) for all `/v1/*` inference. Both default to off for
+> local dev.
+
+> **Run all three services for full functionality**: the Dashboard Backend (`:5000`), the LLM Router (`:8887`), and the model instances the backend launches on demand. The backend and router both merge the dynamic-model overlay at startup, so models added from the UI survive restarts.
 
 ### Manual / development run
 
