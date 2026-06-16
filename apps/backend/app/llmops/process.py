@@ -150,3 +150,17 @@ def read_log_lines(log_path: str, n: int = 200) -> Optional[str]:
             return "".join(f.readlines()[-n:])
     except OSError:
         return None
+
+
+def read_log_head(log_path: str, max_bytes: int = 65536) -> Optional[str]:
+    """Return the first ~max_bytes of a log file, or None if it doesn't exist.
+
+    vLLM's startup capacity/memory/compile metrics are all printed near the top,
+    so this avoids slurping a multi-MB serving log just to parse them."""
+    if not log_path or not os.path.exists(log_path):
+        return None
+    try:
+        with open(log_path, "rb") as f:
+            return f.read(max_bytes).decode("utf-8", errors="replace")
+    except OSError:
+        return None

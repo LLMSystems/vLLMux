@@ -64,6 +64,31 @@ def test_model_logs_404_when_no_file(client):
     assert client.get(f"/api/models/{KEY}/logs").status_code == 404
 
 
+def test_model_metrics_only_when_ready(client, tmp_path):
+    inst = client.app.state.registry.get(KEY)
+    log = tmp_path / "qwen.log"
+    log.write_text(
+        "GPU KV cache size: 60,623 tokens\n"
+        "Maximum concurrency for 5,000 tokens per request: 12.12x\n",
+        encoding="utf-8",
+    )
+    inst.log_path = str(log)
+
+    inst.set_state(ModelState.STOPPED)
+    body = client.get(f"/api/models/{KEY}/metrics").json()
+    assert body == {"ready": False, "has_any": False}  # not parsed until ready
+
+    inst.set_state(ModelState.READY)
+    body = client.get(f"/api/models/{KEY}/metrics").json()
+    assert body["ready"] is True and body["has_any"] is True
+    assert body["capacity"]["kv_cache_tokens"] == 60623
+    assert body["capacity"]["max_concurrency"] == 12.12
+
+
+def test_model_metrics_unknown_is_404(client):
+    assert client.get("/api/models/ghost::x/metrics").status_code == 404
+
+
 def test_healthz(client):
     resp = client.get("/healthz")
     assert resp.status_code == 200

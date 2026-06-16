@@ -15,7 +15,9 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import get_manager
 from app.api.schemas import ModelView
 from app.llmops.manager import ModelManager, ModelNotFound
-from app.llmops.process import read_log_lines
+from app.llmops.process import read_log_head, read_log_lines
+from app.llmops.state import ModelState
+from app.services.vllm_metrics import parse_startup_metrics
 
 router = APIRouter(tags=["observability"])
 
@@ -84,6 +86,24 @@ async def model_logs(
     if content is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no log file for {key}")
     return {"key": key, "log_path": inst.log_path, "content": content}
+
+
+@router.get("/models/{key}/metrics")
+async def model_metrics(key: str, manager: ModelManager = Depends(get_manager)):
+    """vLLM startup capacity/memory/compile metrics parsed from the engine log.
+
+    Only meaningful once the instance is READY (the metrics are printed at the end
+    of model loading); returns {ready: false} otherwise so the UI hides the panel."""
+    try:
+        inst = await manager.get(key)
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    if inst.state != ModelState.READY:
+        return {"ready": False, "has_any": False}
+    head = read_log_head(inst.log_path)
+    if head is None:
+        return {"ready": True, "has_any": False}
+    return {"ready": True, **parse_startup_metrics(head)}
 
 
 async def model_snapshot_stream(registry, interval: float = 1.0, heartbeat_every: float = 15.0):

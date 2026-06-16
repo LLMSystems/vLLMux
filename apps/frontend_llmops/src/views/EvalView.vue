@@ -57,7 +57,9 @@ function baseGroupOf(v: string): string {
 // Direct-to-instance only makes sense for a single model; its instances.
 const singleModel = computed(() => (selectedModels.value.size === 1 ? [...selectedModels.value][0]! : ''))
 const instanceOptions = computed(() =>
-  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(singleModel.value)).map((m) => m.key),
+  models.llms
+    .filter((m) => m.key.split('::')[0] === baseGroupOf(singleModel.value))
+    .map((m) => ({ key: m.key, ready: m.state === 'ready', state: m.state })),
 )
 watch(groups, (g) => {
   if (!selectedModels.value.size && g.length) {
@@ -68,7 +70,7 @@ watch(groups, (g) => {
 // Instance target needs exactly one model; fall back to router otherwise.
 watch(selectedModels, () => {
   if (selectedModels.value.size !== 1 && target.value === 'instance') target.value = 'router'
-  instanceKey.value = instanceOptions.value[0] ?? ''
+  instanceKey.value = instanceOptions.value.find((o) => o.ready)?.key ?? ''
 })
 
 // ---- dataset catalog (grouped by tier) + cached state ----
@@ -301,6 +303,10 @@ async function launch() {
     toast.error('直連實例僅支援單一模型')
     return
   }
+  if (target.value === 'instance' && !instanceOptions.value.find((o) => o.key === instanceKey.value)?.ready) {
+    toast.error('該實例尚未就緒，無法直連')
+    return
+  }
   if (judgeEnabled.value && !judgeModel.value) {
     toast.error('請設定裁判模型')
     return
@@ -454,7 +460,8 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
 
     <div class="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
       <!-- Config -->
-      <Card class="space-y-4 p-5">
+      <Card class="h-fit space-y-4 p-5 text-sm">
+        <p class="flex items-center gap-2 text-sm font-semibold"><ClipboardCheck class="size-4" />評測設定</p>
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-xs font-medium text-muted-foreground">模型</label>
@@ -508,9 +515,14 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           <select
             v-if="target === 'instance'"
             v-model="instanceKey"
-            class="mt-1.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            class="mt-1.5 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
           >
-            <option v-for="k in instanceOptions" :key="k" :value="k">{{ k }}</option>
+            <option
+              v-for="o in instanceOptions"
+              :key="o.key"
+              :value="o.key"
+              :disabled="!o.ready"
+            >{{ o.key }}{{ o.ready ? '' : `（${o.state}・未就緒）` }}</option>
           </select>
         </div>
 
@@ -621,7 +633,7 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
           <select
             v-if="judgeTarget === 'internal'"
             v-model="judgeModel"
-            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            class="h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
           >
             <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : ' · 離線' }}</option>
           </select>

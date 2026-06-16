@@ -63,8 +63,9 @@ _DEFAULT_MAX_LORAS = 4
 def build_vllm_cli_args(model_cfg: dict) -> list[str]:
     """dict -> ``vllm serve`` CLI args. Ported verbatim from the old launcher.
 
-    bool flags are presence-only; lists are JSON-encoded; None is skipped;
-    keys are kebab-cased. `model_tag` is the positional model argument.
+    bool True -> ``--flag``; bool False -> ``--no-flag`` (vLLM's
+    BooleanOptionalAction); lists are JSON-encoded; None is skipped; keys are
+    kebab-cased. `model_tag` is the positional model argument.
 
     Two LoRA special cases: ``lora_modules`` (list of {name, path, …}) becomes the
     multi-value ``--lora-modules <json> <json> …`` form vLLM expects (the generic
@@ -99,8 +100,11 @@ def build_vllm_cli_args(model_cfg: dict) -> list[str]:
             # vLLM accepts several values after a single --lora-modules.
             cli_args.extend(json.dumps(m, ensure_ascii=False) for m in modules)
         elif isinstance(value, bool):
-            if value:
-                cli_args.append(key_flag)
+            # vLLM bool engine args are BooleanOptionalAction: emit --no-<flag> for
+            # an explicit False so a feature that's on by default (e.g. prefix
+            # caching / chunked prefill in V1) can actually be turned off, rather
+            # than silently omitted (which would leave the default in place).
+            cli_args.append(key_flag if value else "--no-" + key.replace("_", "-"))
         elif isinstance(value, list):
             cli_args.append(key_flag)
             cli_args.append(json.dumps(value))

@@ -10,3 +10,7 @@ huggingface_hub
 # for the IFEval accuracy benchmark. Targeted extras only — NOT [all] (that pulls
 # multi-GB opencompass/vlmeval backends we don't use).
 evalscope[perf,ifeval]
+# On-the-fly weight quantization for the vLLM subprocess: `--quantization
+# bitsandbytes` loads any unquantized model in 4-bit (NF4) / 8-bit. 0.49.2+ builds
+# support the CUDA 13 base image; verified working on Ampere (RTX 3060 Ti).
+bitsandbytes>=0.49.2

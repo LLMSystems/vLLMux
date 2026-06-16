@@ -4,6 +4,27 @@ export type ModelKind = 'llm' | 'embedding'
 export type ModelState = 'stopped' | 'starting' | 'ready' | 'failed' | 'stopping'
 export type DesiredState = 'running' | 'stopped'
 
+// vLLM startup capacity/memory/compile metrics parsed from the engine log.
+// Fields are individually nullable (a missing log line yields null).
+export interface ModelStartupMetrics {
+  ready: boolean
+  has_any: boolean
+  capacity?: {
+    kv_cache_tokens: number | null
+    max_concurrency: number | null
+    concurrency_req_tokens: number | null
+    kv_cache_gib: number | null
+  }
+  memory?: { model_gib: number | null; cudagraph_gib: number | null; kv_cache_gib: number | null }
+  startup?: {
+    weights_load_s: number | null
+    model_load_s: number | null
+    compile_s: number | null
+    warmup_s: number | null
+  }
+  gpu_mem_util?: { current: number | null; effective: number | null; suggested: number | null }
+}
+
 export interface ModelView {
   key: string
   kind: ModelKind

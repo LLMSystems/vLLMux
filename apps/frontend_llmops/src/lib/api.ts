@@ -20,6 +20,7 @@ import type {
   LogResponse,
   LoraDownloadJob,
   LoraLibraryInfo,
+  ModelStartupMetrics,
   ModelView,
   OpenAIModelList,
   ParsedModel,
@@ -164,6 +165,8 @@ export const api = {
   },
   getLogs: (key: string, tail = 200) =>
     request<LogResponse>(API_BASE, `/api/models/${enc(key)}/logs?tail=${tail}`),
+  getModelMetrics: (key: string) =>
+    request<ModelStartupMetrics>(API_BASE, `/api/models/${enc(key)}/metrics`),
   getTimeseries: (opts: { window?: number; bucket?: number; modelKey?: string } = {}) => {
     const params = new URLSearchParams()
     params.set('window', String(opts.window ?? 3600))

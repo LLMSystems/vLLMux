@@ -117,7 +117,9 @@ function baseGroupOf(v: string): string {
   return loraOptions.value.find((l) => l.value === v)?.group ?? v
 }
 const instanceOptions = computed(() =>
-  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(model.value)).map((m) => m.key),
+  models.llms
+    .filter((m) => m.key.split('::')[0] === baseGroupOf(model.value))
+    .map((m) => ({ key: m.key, ready: m.state === 'ready', state: m.state })),
 )
 const parallel = computed(() =>
   parallelInput.value.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0),
@@ -129,7 +131,7 @@ const rates = computed(() =>
 watch(groups, (g) => {
   if (!model.value && g.length) model.value = g.find(groupReady) ?? g[0]!
 }, { immediate: true })
-watch(model, () => { instanceKey.value = instanceOptions.value[0] ?? '' })
+watch(model, () => { instanceKey.value = instanceOptions.value.find((o) => o.ready)?.key ?? '' })
 
 // ---- runs ----
 const runs = ref<PerfRun[]>([])
@@ -195,11 +197,20 @@ async function loadLog() {
   }
 }
 
+// Direct-to-instance only makes sense against a ready instance.
+function instanceTargetInvalid(): boolean {
+  if (target.value !== 'instance') return false
+  if (instanceOptions.value.find((o) => o.key === instanceKey.value)?.ready) return false
+  toast.error('該實例尚未就緒，無法直連')
+  return true
+}
+
 async function launch() {
   if (launching.value) return
   if (isEmbedMode.value) return launchEmbedding()
   if (mode.value === 'speed') return launchSpeed()
   if (!model.value) return
+  if (instanceTargetInvalid()) return
   const common = {
     model: model.value,
     name: name.value || undefined,
@@ -301,6 +312,7 @@ async function launchSpeed() {
     toast.error('請選擇一個模型')
     return
   }
+  if (instanceTargetInvalid()) return
   const req: PerfRequest = {
     model: model.value,
     name: name.value || undefined,
@@ -522,7 +534,12 @@ const statusColor: Record<string, string> = {
         <label v-if="target === 'instance' && !isEmbedMode" class="block">
           <span class="text-xs text-muted-foreground">實例</span>
           <select v-model="instanceKey" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
-            <option v-for="k in instanceOptions" :key="k" :value="k">{{ k.split('::')[1] }}</option>
+            <option
+              v-for="o in instanceOptions"
+              :key="o.key"
+              :value="o.key"
+              :disabled="!o.ready"
+            >{{ o.key.split('::')[1] }}{{ o.ready ? '' : `（${o.state}・未就緒）` }}</option>
           </select>
         </label>
         <!-- Multi-turn / embedding / speed use their own dataset + endpoint. -->

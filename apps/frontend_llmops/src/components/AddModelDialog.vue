@@ -284,6 +284,80 @@ function applyToolPreset(parser: string, reasoning: string) {
   if (reasoning) setParam('reasoning_parser', reasoning)
 }
 
+// ---- vLLM acceleration presets (see docs/vllm_推理加速參數整理.md) ----
+// All ten are plain model_config keys, edited through the same `params` list so
+// they coexist with the raw editor. An empty value clears the key -> vLLM default.
+const showAccel = ref(false)
+function getParam(key: string): string {
+  return params.value.find((p) => p.key === key)?.value ?? ''
+}
+function clearParam(key: string) {
+  const i = params.value.findIndex((p) => p.key === key)
+  if (i >= 0) params.value.splice(i, 1)
+}
+function setParamOrClear(key: string, value: string) {
+  if (value === '') clearParam(key)
+  else setParam(key, value)
+}
+// gpu_memory_utilization is intentionally NOT here: it's the model's deliberate
+// memory setting, so "清除 / 套模板" must preserve the existing value, not wipe it.
+const ACCEL_KEYS = [
+  'performance_mode', 'optimization_level', 'max_num_batched_tokens', 'max_num_seqs',
+  'enable_prefix_caching', 'enable_chunked_prefill',
+  'kv_cache_dtype', 'async_scheduling', 'stream_interval', 'quantization',
+  // advanced (tier 2)
+  'speculative_config', 'prefix_caching_hash_algo', 'max_num_partial_prefills',
+  'max_long_partial_prefills', 'long_prefill_token_threshold', 'cpu_offload_gb',
+]
+function clearAccel() {
+  for (const k of ACCEL_KEYS) clearParam(k)
+}
+
+// ---- Advanced (tier 2) ----
+const showAdvanced = ref(false)
+// N-gram speculative decoding is configured as a JSON object; we store it as a
+// JSON *string* in params (coerce keeps strings as-is, and the launcher passes it
+// straight through to --speculative-config). params stays the single source.
+function specCfg(): Record<string, unknown> {
+  try {
+    return JSON.parse(getParam('speculative_config') || '{}')
+  } catch {
+    return {}
+  }
+}
+function writeSpec(tokens: number) {
+  setParam(
+    'speculative_config',
+    JSON.stringify({ method: 'ngram', num_speculative_tokens: tokens, prompt_lookup_min: 2, prompt_lookup_max: 5 }),
+  )
+}
+const specEnabled = computed({
+  get: () => specCfg().method === 'ngram',
+  set: (on: boolean) => (on ? writeSpec(Number(specTokens.value) || 4) : clearParam('speculative_config')),
+})
+const specTokens = computed({
+  get: () => Number(specCfg().num_speculative_tokens ?? 4),
+  set: (n: number) => {
+    if (specEnabled.value) writeSpec(Number(n) || 4)
+  },
+})
+// Starting-point combos; values tuned conservatively for a single small GPU.
+const ACCEL_PRESETS: Record<string, Record<string, string>> = {
+  latency: {
+    performance_mode: 'interactivity', max_num_batched_tokens: '2048',
+    max_num_seqs: '64', enable_prefix_caching: 'true', stream_interval: '1',
+  },
+  throughput: {
+    performance_mode: 'throughput', max_num_batched_tokens: '8192',
+    max_num_seqs: '128', enable_prefix_caching: 'true', async_scheduling: 'true',
+  },
+}
+function applyAccelPreset(name: 'latency' | 'throughput') {
+  clearAccel()
+  for (const [k, v] of Object.entries(ACCEL_PRESETS[name]!)) setParam(k, v)
+  showAccel.value = true
+}
+
 async function submit() {
   if (!canSubmit.value || creating.value) return
   creating.value = true
@@ -463,6 +537,182 @@ async function submit() {
               <Download class="size-3.5" />先下載
             </Button>
           </template>
+        </div>
+
+        <!-- Acceleration presets (curated subset of model_config) -->
+        <div class="rounded-md border border-border/60 bg-muted/20">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between px-3 py-2 text-left"
+            @click="showAccel = !showAccel"
+          >
+            <span class="text-xs font-medium">⚡ 加速設定（vLLM 推理參數）</span>
+            <span class="text-xs text-muted-foreground">{{ showAccel ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="showAccel" class="space-y-3 border-t border-border/60 p-3">
+            <!-- Scenario templates -->
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] text-muted-foreground">情境模板：</span>
+              <Button size="sm" variant="outline" @click="applyAccelPreset('latency')">低延遲（聊天 / agent）</Button>
+              <Button size="sm" variant="outline" @click="applyAccelPreset('throughput')">高吞吐（多併發）</Button>
+              <Button size="sm" variant="ghost" @click="clearAccel">清除（回預設）</Button>
+            </div>
+
+            <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <!-- performance_mode -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">performance_mode <span class="font-normal">(預設 balanced)</span></span>
+                <select :value="getParam('performance_mode')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('performance_mode', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（balanced）</option>
+                  <option value="interactivity">interactivity（低延遲）</option>
+                  <option value="throughput">throughput（高吞吐）</option>
+                </select>
+              </label>
+              <!-- optimization_level -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">optimization_level <span class="font-normal">(預設 2)</span></span>
+                <select :value="getParam('optimization_level')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('optimization_level', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（2）</option>
+                  <option value="0">0（最快啟動）</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3（最激進）</option>
+                </select>
+              </label>
+              <!-- max_num_batched_tokens -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">max_num_batched_tokens <span class="font-normal">(預設 自動)</span></span>
+                <Input :model-value="getParam('max_num_batched_tokens')" type="number" min="1" placeholder="自動" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_batched_tokens', String($event))" />
+              </label>
+              <!-- max_num_seqs -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">max_num_seqs <span class="font-normal">(預設 自動)</span></span>
+                <Input :model-value="getParam('max_num_seqs')" type="number" min="1" placeholder="自動" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_seqs', String($event))" />
+              </label>
+              <!-- gpu_memory_utilization (keep the model's existing value; don't impose a default) -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">gpu_memory_utilization <span class="font-normal">(沿用現值；留空＝vLLM 預設)</span></span>
+                <Input :model-value="getParam('gpu_memory_utilization')" type="number" min="0.1" max="0.98" step="0.01" placeholder="未設定" class="h-8 text-xs" @update:model-value="setParamOrClear('gpu_memory_utilization', String($event))" />
+              </label>
+              <!-- kv_cache_dtype -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">kv_cache_dtype <span class="font-normal">(預設 auto)</span></span>
+                <select :value="getParam('kv_cache_dtype')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('kv_cache_dtype', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（auto，不量化）</option>
+                  <option value="fp8">fp8</option>
+                  <option value="fp8_e4m3">fp8_e4m3</option>
+                  <option value="fp8_e5m2">fp8_e5m2</option>
+                </select>
+              </label>
+              <!-- enable_prefix_caching -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">enable_prefix_caching <span class="font-normal">(預設 開)</span></span>
+                <select :value="getParam('enable_prefix_caching')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('enable_prefix_caching', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（開）</option>
+                  <option value="true">強制開</option>
+                  <option value="false">關</option>
+                </select>
+              </label>
+              <!-- enable_chunked_prefill -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">enable_chunked_prefill <span class="font-normal">(預設 開)</span></span>
+                <select :value="getParam('enable_chunked_prefill')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('enable_chunked_prefill', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（開）</option>
+                  <option value="true">強制開</option>
+                  <option value="false">關</option>
+                </select>
+              </label>
+              <!-- async_scheduling -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">async_scheduling <span class="font-normal">(預設 關)</span></span>
+                <select :value="getParam('async_scheduling')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('async_scheduling', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（關）</option>
+                  <option value="true">開（實驗性）</option>
+                  <option value="false">關</option>
+                </select>
+              </label>
+              <!-- stream_interval -->
+              <label class="space-y-1">
+                <span class="text-[11px] font-medium text-muted-foreground">stream_interval <span class="font-normal">(預設 1)</span></span>
+                <Input :model-value="getParam('stream_interval')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('stream_interval', String($event))" />
+              </label>
+              <!-- quantization (online) -->
+              <label class="space-y-1 sm:col-span-2">
+                <span class="text-[11px] font-medium text-muted-foreground">quantization <span class="font-normal">(預設 不量化 / 自動偵測)</span></span>
+                <select :value="getParam('quantization')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('quantization', ($event.target as HTMLSelectElement).value)">
+                  <option value="">預設（不量化，或載入量化版自動偵測）</option>
+                  <option value="bitsandbytes">bitsandbytes（4-bit NF4，任何模型線上量化）</option>
+                  <option value="fp8_per_tensor">fp8_per_tensor（8-bit；Ampere 退 W8A16）</option>
+                  <option value="fp8_per_block">fp8_per_block（8-bit；Ampere 退 W8A16）</option>
+                  <option value="int8_per_channel_weight_only">int8_per_channel_weight_only（8-bit INT8）</option>
+                </select>
+                <span class="text-[10px] text-muted-foreground">預量化模型（AWQ / GPTQ）直接把 model_tag 換成量化版即可，vLLM 會自動偵測，不用設此欄。</span>
+              </label>
+            </div>
+
+            <!-- Advanced (tier 2) -->
+            <div class="rounded-md border border-border/60">
+              <button type="button" class="flex w-full items-center justify-between px-2.5 py-1.5 text-left" @click="showAdvanced = !showAdvanced">
+                <span class="text-[11px] font-medium text-muted-foreground">進階（推測解碼 / prefix hash / chunked prefill / offload）</span>
+                <span class="text-[11px] text-muted-foreground">{{ showAdvanced ? '▾' : '▸' }}</span>
+              </button>
+              <div v-if="showAdvanced" class="space-y-3 border-t border-border/60 p-3">
+                <!-- speculative decoding (ngram) -->
+                <div class="space-y-1.5">
+                  <label class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                    <input v-model="specEnabled" type="checkbox" class="size-3.5 accent-[var(--chart-1)]" />
+                    N-gram 推測解碼（低 QPS 降單請求延遲）
+                  </label>
+                  <label v-if="specEnabled" class="flex items-center gap-2 pl-5 text-[11px] text-muted-foreground">
+                    num_speculative_tokens
+                    <Input v-model.number="specTokens" type="number" min="1" max="10" class="h-7 w-20 text-xs" />
+                    <span class="text-[10px]">(預設 4)</span>
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                  <!-- prefix_caching_hash_algo -->
+                  <label class="space-y-1">
+                    <span class="text-[11px] font-medium text-muted-foreground">prefix_caching_hash_algo <span class="font-normal">(預設 sha256)</span></span>
+                    <select :value="getParam('prefix_caching_hash_algo')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('prefix_caching_hash_algo', ($event.target as HTMLSelectElement).value)">
+                      <option value="">預設（sha256）</option>
+                      <option value="sha256">sha256（最穩）</option>
+                      <option value="xxhash">xxhash（較快，非密碼安全）</option>
+                      <option value="sha256_cbor">sha256_cbor</option>
+                      <option value="xxhash_cbor">xxhash_cbor</option>
+                    </select>
+                  </label>
+                  <!-- cpu_offload_gb -->
+                  <label class="space-y-1">
+                    <span class="text-[11px] font-medium text-muted-foreground">cpu_offload_gb <span class="font-normal">(預設 0)</span></span>
+                    <Input :model-value="getParam('cpu_offload_gb')" type="number" min="0" placeholder="0" class="h-8 text-xs" @update:model-value="setParamOrClear('cpu_offload_gb', String($event))" />
+                    <span class="text-[10px] text-muted-foreground">把權重 offload 到 CPU RAM 換「跑得起來」(會變慢)，非加速。</span>
+                  </label>
+                  <!-- max_num_partial_prefills -->
+                  <label class="space-y-1">
+                    <span class="text-[11px] font-medium text-muted-foreground">max_num_partial_prefills <span class="font-normal">(預設 1)</span></span>
+                    <Input :model-value="getParam('max_num_partial_prefills')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_partial_prefills', String($event))" />
+                  </label>
+                  <!-- max_long_partial_prefills -->
+                  <label class="space-y-1">
+                    <span class="text-[11px] font-medium text-muted-foreground">max_long_partial_prefills <span class="font-normal">(預設 1)</span></span>
+                    <Input :model-value="getParam('max_long_partial_prefills')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('max_long_partial_prefills', String($event))" />
+                  </label>
+                  <!-- long_prefill_token_threshold -->
+                  <label class="space-y-1 sm:col-span-2">
+                    <span class="text-[11px] font-medium text-muted-foreground">long_prefill_token_threshold <span class="font-normal">(預設 0=自動)</span></span>
+                    <Input :model-value="getParam('long_prefill_token_threshold')" type="number" min="0" placeholder="0" class="h-8 text-xs" @update:model-value="setParamOrClear('long_prefill_token_threshold', String($event))" />
+                    <span class="text-[10px] text-muted-foreground">同時有短問題＋長 prompt 時：把 partial 設 &gt;1 且 long 設小，短請求可插隊不被長的卡住。</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <p class="text-[10px] text-muted-foreground">
+              空白＝用 vLLM 預設。改了需重啟模型生效。組合才有感（見
+              <span class="font-mono">docs/vllm_推理加速參數整理.md</span>）。
+            </p>
+          </div>
         </div>
 
         <!-- vLLM params -->

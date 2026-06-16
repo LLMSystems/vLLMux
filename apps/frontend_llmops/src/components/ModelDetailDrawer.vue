@@ -18,7 +18,7 @@ import { useAuth } from '@/composables/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { toast } from '@/lib/toast'
 import { formatDuration, formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
-import type { EmbeddingModelParams, LoraAdapter, StateEvent } from '@/types/api'
+import type { EmbeddingModelParams, LoraAdapter, ModelStartupMetrics, StateEvent } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ modelKey: string | null }>()
@@ -223,6 +223,22 @@ async function loadLogs() {
   }
 }
 
+// vLLM startup capacity/memory metrics — only fetched for a READY instance.
+const startupMetrics = ref<ModelStartupMetrics | null>(null)
+async function loadStartupMetrics() {
+  startupMetrics.value = null
+  if (!props.modelKey || model.value?.state !== 'ready') return
+  try {
+    const m = await api.getModelMetrics(props.modelKey)
+    startupMetrics.value = m.has_any ? m : null
+  } catch {
+    startupMetrics.value = null
+  }
+}
+function fmt(v: number | null | undefined, digits = 1, suffix = '') {
+  return v == null ? '—' : v.toFixed(digits) + suffix
+}
+
 watch(
   () => [open.value, props.modelKey] as const,
   ([isOpen]) => {
@@ -231,9 +247,19 @@ watch(
       void loadEvents()
       void loadLogs()
       void loadLoraLibrary()
+      void loadStartupMetrics()
     }
   },
   { immediate: true },
+)
+// Re-fetch capacity once the model actually reaches READY (its log only has the
+// metrics after loading finishes).
+watch(
+  () => model.value?.state,
+  (s) => {
+    if (open.value && s === 'ready') void loadStartupMetrics()
+    else if (s !== 'ready') startupMetrics.value = null
+  },
 )
 
 const eventColor: Record<string, string> = {
@@ -337,6 +363,76 @@ const eventColor: Record<string, string> = {
               <p class="text-xs text-muted-foreground">自動重啟次數</p>
               <p class="mt-0.5 text-sm tabular" :class="model.restart_count ? 'text-status-starting' : ''">
                 {{ model.restart_count ?? 0 }}
+              </p>
+            </div>
+          </div>
+
+          <!-- vLLM startup capacity snapshot (READY instances only) -->
+          <div v-if="startupMetrics" class="space-y-2.5">
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">啟動容量快照</p>
+
+            <!-- Capacity headline -->
+            <div
+              v-if="startupMetrics.capacity?.kv_cache_tokens != null || startupMetrics.capacity?.max_concurrency != null"
+              class="rounded-lg border border-[var(--chart-1)]/30 bg-[var(--chart-1)]/5 p-3"
+            >
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <p class="text-xs text-muted-foreground">KV cache 容量</p>
+                  <p class="text-lg font-semibold tabular">
+                    {{ startupMetrics.capacity?.kv_cache_tokens != null ? formatNumber(startupMetrics.capacity.kv_cache_tokens) : '—' }}
+                    <span class="text-xs font-normal text-muted-foreground">tokens</span>
+                  </p>
+                </div>
+                <div>
+                  <p class="text-xs text-muted-foreground">
+                    最大並發（{{ startupMetrics.capacity?.concurrency_req_tokens != null ? formatNumber(startupMetrics.capacity.concurrency_req_tokens) : '?' }} tok/req）
+                  </p>
+                  <p class="text-lg font-semibold tabular">{{ fmt(startupMetrics.capacity?.max_concurrency, 1, '×') }}</p>
+                </div>
+              </div>
+              <p v-if="startupMetrics.capacity?.max_concurrency != null" class="mt-1 text-[11px] text-muted-foreground">
+                ≈ 可同時服務 {{ Math.floor(startupMetrics.capacity.max_concurrency) }} 個請求
+              </p>
+            </div>
+
+            <!-- Memory breakdown -->
+            <div v-if="startupMetrics.memory" class="grid grid-cols-3 gap-2 text-xs">
+              <div class="rounded-md border border-border/60 p-2">
+                <p class="text-muted-foreground">權重</p>
+                <p class="tabular">{{ fmt(startupMetrics.memory.model_gib, 2, ' GiB') }}</p>
+              </div>
+              <div class="rounded-md border border-border/60 p-2">
+                <p class="text-muted-foreground">CUDA graph</p>
+                <p class="tabular">{{ fmt(startupMetrics.memory.cudagraph_gib, 2, ' GiB') }}</p>
+              </div>
+              <div class="rounded-md border border-border/60 p-2">
+                <p class="text-muted-foreground">KV cache</p>
+                <p class="tabular">{{ fmt(startupMetrics.memory.kv_cache_gib, 2, ' GiB') }}</p>
+              </div>
+            </div>
+
+            <!-- Startup timing -->
+            <div v-if="startupMetrics.startup" class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+              <span>載權重 {{ fmt(startupMetrics.startup.weights_load_s, 2, 's') }}</span>
+              <span>模型載入 {{ fmt(startupMetrics.startup.model_load_s, 1, 's') }}</span>
+              <span>torch.compile {{ fmt(startupMetrics.startup.compile_s, 1, 's') }}</span>
+              <span>warmup {{ fmt(startupMetrics.startup.warmup_s, 2, 's') }}</span>
+            </div>
+
+            <!-- gpu_memory_utilization advisory -->
+            <div
+              v-if="startupMetrics.gpu_mem_util?.suggested != null && startupMetrics.gpu_mem_util.suggested !== startupMetrics.gpu_mem_util.current"
+              class="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-[11px]"
+            >
+              <p class="text-amber-600">⚙ 關於 gpu_memory_utilization</p>
+              <p class="mt-0.5 leading-relaxed text-muted-foreground">
+                新版 vLLM 把 CUDA graph 記憶體也算進這個額度。你設
+                <span class="font-mono">{{ fmt(startupMetrics.gpu_mem_util.current, 2) }}</span>,扣掉後實際給 KV cache 的空間只等於舊版的
+                <span class="font-mono">{{ fmt(startupMetrics.gpu_mem_util.effective, 2) }}</span>。
+                想要更大 KV cache（更高並發 / 更長 context）可在停止後於「編輯參數」提到
+                <span class="font-mono font-semibold">{{ fmt(startupMetrics.gpu_mem_util.suggested, 2) }}</span>，
+                但顯存餘裕會變小、OOM 風險上升（小顯卡尤其要保守）。
               </p>
             </div>
           </div>

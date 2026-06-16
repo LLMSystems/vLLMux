@@ -63,7 +63,8 @@ def test_build_vllm_cli_args_flag_formatting():
     assert args[:2] == ["serve", "org/m"]
     assert "--dtype" in args and args[args.index("--dtype") + 1] == "float16"
     assert "--trust-remote-code" in args        # bool True -> presence only
-    assert "--disabled-flag" not in args        # bool False -> omitted
+    assert "--disabled-flag" not in args        # bool False -> --no- variant
+    assert "--no-disabled-flag" in args         # explicit off (BooleanOptionalAction)
     assert "--skip-me" not in args              # None -> omitted
     assert "--mid-tokens" in args and args[args.index("--mid-tokens") + 1] == "[1, 2]"
 
