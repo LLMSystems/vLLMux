@@ -447,8 +447,17 @@ const statusColor: Record<string, string> = {
 </script>
 
 <template>
-  <div class="grid gap-4 p-6 lg:grid-cols-[20rem_1fr]">
-    <!-- Config -->
+  <div class="space-y-4 p-6">
+    <div>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Gauge class="size-5" />壓測</h1>
+      <p class="mt-0.5 text-sm text-muted-foreground">
+        評測模型的「速度」（吞吐 / 延遲，與評測的答對率不同）。支援並發 sweep、速率 open-loop、多輪對話、SLA 自動調優，以及 embedding / rerank 吞吐與單請求速度基準。部分模式可先在
+        <RouterLink to="/datasets" class="text-[var(--chart-1)] underline">資料集庫</RouterLink>
+        下載資料集。
+      </p>
+    </div>
+    <div class="grid gap-4 lg:grid-cols-[20rem_1fr]">
+      <!-- Config -->
     <Card class="h-fit p-5">
       <p class="mb-4 flex items-center gap-2 text-sm font-semibold"><Gauge class="size-4" />壓測設定</p>
       <div class="space-y-3 text-sm">
@@ -908,6 +917,7 @@ const statusColor: Record<string, string> = {
           <pre class="max-h-64 overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">{{ log || '（等待輸出…）' }}</pre>
         </Card>
       </template>
+    </div>
     </div>
   </div>
 </template>

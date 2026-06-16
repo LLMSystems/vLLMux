@@ -336,7 +336,7 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
     <div>
       <h1 class="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck class="size-5" />模型評測</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        用 evalscope 量模型的「答對率 / 品質」（與壓測的速度不同）。先在
+        評測模型的「答對率 / 品質」（與壓測的速度不同）。先在
         <RouterLink to="/datasets" class="text-[var(--chart-1)] underline">資料集庫</RouterLink>
         下載資料集，跑評測就不必等。小模型分數偏低屬正常，重點是換模型 / 調參時的比較。
       </p>
