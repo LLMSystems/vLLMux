@@ -48,15 +48,31 @@ class EvalManager:
     def busy(self) -> bool:
         return self._current is not None
 
+    def _lora_lookup(self, name: str):
+        """Find a base group exposing a LoRA served as `name`. Returns
+        (group_key, engine) or None."""
+        for key, engine in self.manager.config.LLM_engines.items():
+            for mod in (getattr(engine.settings, "lora_modules", None) or []):
+                if getattr(mod, "name", None) == name:
+                    return key, engine
+        return None
+
     def _resolve(self, group: str, target: str, instance_key: str | None):
         """Return (model_field, openai_base_url) for the eval.
 
-        Router target addresses the model by its group key; hitting a vLLM
-        instance directly addresses it by the served model_tag.
+        `group` may be a base model group or a LoRA served name. Router target
+        addresses the model by that name as-is (the router routes LoRAs over the
+        base group); hitting a vLLM instance directly addresses a base model by
+        its model_tag, or a LoRA by its served name (vLLM serves it under it).
         """
         engine = self.manager.config.LLM_engines.get(group)
+        is_lora = False
         if engine is None:
-            raise EvalError(f"unknown model group: {group}")
+            found = self._lora_lookup(group)
+            if found is None:
+                raise EvalError(f"unknown model group: {group}")
+            _, engine = found
+            is_lora = True
         model_tag = engine.settings.model_tag
 
         if target == "instance":
@@ -65,7 +81,8 @@ class EvalManager:
             if inst is None:
                 raise EvalError(f"unknown instance: {instance_key}")
             base = f"http://127.0.0.1:{inst.port}"
-            model_field = model_tag
+            # A LoRA is served by the instance under its served name, not the tag.
+            model_field = group if is_lora else model_tag
         else:
             base = self.router_url
             model_field = group

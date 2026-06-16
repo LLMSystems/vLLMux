@@ -13,6 +13,8 @@ import type {
   GpuProcess,
   HealthZ,
   LogResponse,
+  LoraDownloadJob,
+  LoraLibraryInfo,
   ModelView,
   OpenAIModelList,
   ParsedModel,
@@ -207,6 +209,31 @@ export const api = {
     request<DownloadJob>(API_BASE, '/api/downloads', {
       method: 'POST',
       body: JSON.stringify({ repo_id: repoId }),
+    }),
+
+  // ---- Runtime (hot) LoRA load / unload on a running model ------------------
+  loadLora: (key: string, body: { name: string; path: string; base_model_name?: string }) =>
+    request<{ group: string; name: string; instances: string[] }>(
+      API_BASE,
+      `/api/models/${key}/lora`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  unloadLora: (key: string, name: string) =>
+    request<{ group: string; name: string; instances: string[]; errors: string[] }>(
+      API_BASE,
+      `/api/models/${key}/lora/${name}`,
+      { method: 'DELETE' },
+    ),
+
+  // ---- LoRA adapter library -------------------------------------------------
+  listLora: () => request<LoraLibraryInfo>(API_BASE, '/api/lora'),
+  deleteLora: (name: string) =>
+    request<null>(API_BASE, `/api/lora/${name}`, { method: 'DELETE' }),
+  listLoraDownloads: () => request<LoraDownloadJob[]>(API_BASE, '/api/lora/downloads'),
+  startLoraDownload: (repoId: string, name?: string) =>
+    request<LoraDownloadJob>(API_BASE, '/api/lora/downloads', {
+      method: 'POST',
+      body: JSON.stringify({ repo_id: repoId, name }),
     }),
 
   // ---- Benchmark datasets (ModelScope cache) --------------------------------

@@ -1,12 +1,34 @@
+import json
+
 import pytest
 
 from app.llmops.launchers import (EMBEDDING_KEY, EmbeddingLauncher,
                                   VllmLauncher, _write_effective_config,
                                   build_vllm_cli_args)
 from app.llmops.state import ModelKind
+from schema import RootConfig
 from tests.conftest import FAKE_CONFIG
 
 pytestmark = pytest.mark.unit
+
+
+def _lora_config() -> RootConfig:
+    return RootConfig.model_validate(
+        {
+            "server": {"host": "0.0.0.0", "port": 8887},
+            "LLM_engines": {
+                "Llama": {
+                    "instances": [{"id": "a", "host": "localhost", "port": 8000, "cuda_device": 0}],
+                    "model_config": {
+                        "model_tag": "meta-llama/Llama-3.2-3B-Instruct",
+                        "enable_lora": True,
+                        "allow_runtime_lora": True,
+                        "lora_modules": [{"name": "sql", "path": "repo/sql"}],
+                    },
+                }
+            },
+        }
+    )
 
 
 def test_effective_config_round_trips_through_schema():
@@ -49,6 +71,52 @@ def test_build_vllm_cli_args_flag_formatting():
 def test_build_vllm_cli_args_requires_model_tag():
     with pytest.raises(ValueError):
         build_vllm_cli_args({"dtype": "float16"})
+
+
+def test_build_vllm_cli_args_lora_modules_multi_value():
+    args = build_vllm_cli_args(
+        {
+            "model_tag": "org/m",
+            "enable_lora": True,
+            "max_lora_rank": 16,
+            "allow_runtime_lora": True,  # env, not a CLI flag
+            "lora_modules": [
+                {"name": "sql", "path": "repo/sql"},
+                {"name": "fin", "path": "/models/fin", "base_model_name": "org/m"},
+            ],
+        }
+    )
+    assert "--enable-lora" in args
+    assert args[args.index("--max-lora-rank") + 1] == "16"
+    # allow_runtime_lora must NOT leak into the CLI (handled as env).
+    assert "--allow-runtime-lora" not in args
+    # --lora-modules followed by one JSON value per adapter.
+    i = args.index("--lora-modules")
+    assert json.loads(args[i + 1]) == {"name": "sql", "path": "repo/sql"}
+    assert json.loads(args[i + 2])["base_model_name"] == "org/m"
+
+
+def test_enable_lora_injects_default_max_loras():
+    args = build_vllm_cli_args({"model_tag": "org/m", "enable_lora": True})
+    assert "--max-loras" in args and args[args.index("--max-loras") + 1] == "4"
+
+
+def test_explicit_max_loras_wins_over_default():
+    args = build_vllm_cli_args({"model_tag": "org/m", "enable_lora": True, "max_loras": 8})
+    assert args[args.index("--max-loras") + 1] == "8"
+
+
+def test_no_max_loras_when_lora_disabled():
+    args = build_vllm_cli_args({"model_tag": "org/m"})
+    assert "--max-loras" not in args
+
+
+def test_vllm_launcher_sets_runtime_lora_env():
+    spec = VllmLauncher().build_spec(_lora_config(), "config.yaml", "Llama::a")
+    assert spec.env.get("VLLM_ALLOW_RUNTIME_LORA_UPDATING") == "True"
+    assert "--enable-lora" in spec.command
+    i = spec.command.index("--lora-modules")
+    assert json.loads(spec.command[i + 1])["name"] == "sql"
 
 
 def test_vllm_launcher_keys_enumerates_instances():

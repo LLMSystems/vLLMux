@@ -18,7 +18,7 @@ import { useAuth } from '@/composables/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { toast } from '@/lib/toast'
 import { formatDuration, formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
-import type { EmbeddingModelParams, StateEvent } from '@/types/api'
+import type { EmbeddingModelParams, LoraAdapter, StateEvent } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ modelKey: string | null }>()
@@ -65,9 +65,64 @@ const busy = computed(() => (props.modelKey ? models.pending.has(props.modelKey)
 
 // Every vLLM parameter from model_config, shown generically (model_tag is
 // already surfaced in the header, so it's filtered out here).
-const vllmParams = computed(() =>
-  Object.entries(engine.value?.settings ?? {}).filter(([k]) => k !== 'model_tag'),
+const vllmParams = computed(
+  () =>
+    Object.entries(engine.value?.settings ?? {}).filter(
+      ([k]) => k !== 'model_tag' && k !== 'lora_modules',
+    ) as [string, string | number | boolean | null][],
 )
+// LoRA adapters mounted on this group (rendered apart from the scalar params).
+const loras = computed(() => engine.value?.settings?.lora_modules ?? [])
+// Runtime (hot) LoRA load/unload is only possible when the model is running and
+// was launched with allow_runtime_lora (the VLLM_ALLOW_RUNTIME_LORA env toggle).
+const canHotLora = computed(
+  () => model.value?.state === 'ready' && !!engine.value?.settings?.allow_runtime_lora,
+)
+const loraLibrary = ref<LoraAdapter[]>([])
+const pickLoraPath = ref('')
+const hotLoraBusy = ref(false)
+async function loadLoraLibrary() {
+  try {
+    loraLibrary.value = (await api.listLora()).adapters
+  } catch {
+    loraLibrary.value = []
+  }
+}
+async function hotLoadLora() {
+  const key = props.modelKey
+  const a = loraLibrary.value.find((x) => x.path === pickLoraPath.value)
+  if (!key || !a || hotLoraBusy.value) return
+  if (!(await ensureUnlocked())) return
+  hotLoraBusy.value = true
+  try {
+    await api.loadLora(key, { name: a.name, path: a.path, base_model_name: a.base_model ?? undefined })
+    await api.routerReload() // make the new adapter routable now
+    await models.loadConfig() // refresh the mounted list
+    pickLoraPath.value = ''
+    toast.success(`已熱載入 ${a.name}`, { description: '已套用到所有就緒實例並更新路由。' })
+  } catch (e) {
+    toast.error('熱載入失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+  } finally {
+    hotLoraBusy.value = false
+  }
+}
+async function hotUnloadLora(name: string) {
+  const key = props.modelKey
+  if (!key || hotLoraBusy.value) return
+  if (!(await ensureUnlocked())) return
+  if (!confirm(`卸載 LoRA「${name}」？會從所有就緒實例移除並停止路由。`)) return
+  hotLoraBusy.value = true
+  try {
+    await api.unloadLora(key, name)
+    await api.routerReload()
+    await models.loadConfig()
+    toast.success(`已卸載 ${name}`)
+  } catch (e) {
+    toast.error('卸載失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+  } finally {
+    hotLoraBusy.value = false
+  }
+}
 // Embedding server hosts several models; list them since it has no model_config.
 const servedModels = computed(() => {
   const e = models.config?.embedding_server
@@ -168,6 +223,7 @@ watch(
       tab.value = 'overview'
       void loadEvents()
       void loadLogs()
+      void loadLoraLibrary()
     }
   },
   { immediate: true },
@@ -325,6 +381,65 @@ const eventColor: Record<string, string> = {
                 <span class="truncate font-mono text-sm tabular" :title="fmtParam(v)">{{ fmtParam(v) }}</span>
               </div>
             </div>
+          </div>
+
+          <!-- LoRA adapters -->
+          <div v-if="loras.length || canHotLora">
+            <p class="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              LoRA Adapters
+              <Badge v-if="canHotLora" variant="outline" class="text-[10px] normal-case">熱加載已啟用</Badge>
+            </p>
+            <div v-if="loras.length" class="overflow-hidden rounded-lg border border-border/60">
+              <div
+                v-for="(l, i) in loras"
+                :key="l.name"
+                class="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                :class="i % 2 ? 'bg-background/20' : 'bg-background/40'"
+              >
+                <span class="shrink-0 font-mono text-xs">{{ l.name }}</span>
+                <span class="min-w-0 flex-1 truncate text-right font-mono text-xs text-muted-foreground" :title="l.path">{{ l.path }}</span>
+                <Button
+                  v-if="canHotLora"
+                  size="icon-sm"
+                  variant="ghost"
+                  :disabled="hotLoraBusy"
+                  title="熱卸載"
+                  @click="hotUnloadLora(l.name)"
+                >
+                  <Trash2 class="size-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <!-- Hot-load a new adapter from the library -->
+            <div v-if="canHotLora" class="mt-2 flex items-center gap-2">
+              <select
+                v-model="pickLoraPath"
+                class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background/40 px-2 font-mono text-xs"
+              >
+                <option value="">— 從 LoRA 庫選 adapter 熱載入 —</option>
+                <option v-for="a in loraLibrary" :key="a.path" :value="a.path">
+                  {{ a.name }}{{ a.rank != null ? ` (r${a.rank})` : '' }}{{ a.base_model ? ` · ${a.base_model}` : '' }}
+                </option>
+              </select>
+              <Button size="sm" :disabled="!pickLoraPath || hotLoraBusy" @click="hotLoadLora">
+                <Loader2 v-if="hotLoraBusy" class="size-3.5 animate-spin" /><Download v-else class="size-3.5" />載入
+              </Button>
+            </div>
+
+            <p class="mt-1 text-[11px] text-muted-foreground/80">
+              <template v-if="canHotLora">熱載入會套用到所有就緒實例並更新路由，且寫入 overlay（重啟後仍在）。</template>
+              <template v-else>推論時把 served name 填進 <span class="font-mono">model</span> 欄位即可（Playground / 評測 / 壓測皆可選）。</template>
+            </p>
+          </div>
+          <!-- Running but hot-load not enabled: tell the user how to turn it on -->
+          <div
+            v-else-if="model?.state === 'ready' && !engine?.settings?.allow_runtime_lora"
+            class="rounded-lg border border-border/60 bg-muted/20 p-3 text-[11px] text-muted-foreground"
+          >
+            要在不重啟下熱加載 LoRA：編輯本模型、勾選
+            <span class="font-mono">enable_lora</span> +
+            <span class="font-mono">allow_runtime_lora</span>，重啟後即可在此熱載入 / 卸載。
           </div>
 
           <!-- Live router metrics -->

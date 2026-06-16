@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ClipboardCheck, ExternalLink, Loader2, Play, Square, Trash2 } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
+import { lorasOfGroup } from '@/composables/useModelOptions'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
 import { formatTime } from '@/lib/utils'
@@ -24,8 +25,21 @@ const model = ref('')
 const name = ref('')
 const target = ref<'router' | 'instance'>('router')
 const instanceKey = ref('')
+// LoRA adapters mounted on ready base groups — selectable as an eval target
+// (router routes them over the base group's instances).
+const loraOptions = computed(() => {
+  const out: { value: string; group: string }[] = []
+  for (const g of groups.value) {
+    if (!groupReady(g)) continue
+    for (const l of lorasOfGroup(models, g)) out.push({ value: l.name, group: g })
+  }
+  return out
+})
+function baseGroupOf(v: string): string {
+  return loraOptions.value.find((l) => l.value === v)?.group ?? v
+}
 const instanceOptions = computed(() =>
-  models.llms.filter((m) => m.key.split('::')[0] === model.value).map((m) => m.key),
+  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(model.value)).map((m) => m.key),
 )
 watch(groups, (g) => {
   if (!model.value && g.length) model.value = g.find(groupReady) ?? g[0]!
@@ -341,6 +355,11 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
             <option v-for="g in groups" :key="g" :value="g">
               {{ g }}{{ groupReady(g) ? '' : ' · 離線' }}
             </option>
+            <optgroup v-if="loraOptions.length" label="LoRA">
+              <option v-for="l in loraOptions" :key="l.value" :value="l.value">
+                {{ l.group }} / {{ l.value }}
+              </option>
+            </optgroup>
           </select>
         </div>
 

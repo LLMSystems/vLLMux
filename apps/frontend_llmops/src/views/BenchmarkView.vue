@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, ChevronDown, ExternalLink, Gauge, Loader2, Play, Plus, Square, Trash2, X } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
+import { lorasOfGroup } from '@/composables/useModelOptions'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
 import { formatLatency, formatNumber, formatTime } from '@/lib/utils'
@@ -103,8 +104,20 @@ function removeCondition(i: number) {
   slaConditions.value.splice(i, 1)
 }
 
+// LoRA adapters mounted on ready base groups — selectable as a benchmark target.
+const loraOptions = computed(() => {
+  const out: { value: string; group: string }[] = []
+  for (const g of groups.value) {
+    if (!groupReady(g)) continue
+    for (const l of lorasOfGroup(models, g)) out.push({ value: l.name, group: g })
+  }
+  return out
+})
+function baseGroupOf(v: string): string {
+  return loraOptions.value.find((l) => l.value === v)?.group ?? v
+}
 const instanceOptions = computed(() =>
-  models.llms.filter((m) => m.key.split('::')[0] === model.value).map((m) => m.key),
+  models.llms.filter((m) => m.key.split('::')[0] === baseGroupOf(model.value)).map((m) => m.key),
 )
 const parallel = computed(() =>
   parallelInput.value.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0),
@@ -443,6 +456,9 @@ const statusColor: Record<string, string> = {
           <span class="text-xs text-muted-foreground">模型</span>
           <select v-model="model" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
             <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : '（未啟動）' }}</option>
+            <optgroup v-if="loraOptions.length" label="LoRA">
+              <option v-for="l in loraOptions" :key="l.value" :value="l.value">{{ l.group }} / {{ l.value }}</option>
+            </optgroup>
           </select>
         </label>
         <label v-else class="block">

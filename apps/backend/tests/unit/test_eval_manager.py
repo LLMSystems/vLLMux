@@ -124,3 +124,29 @@ def test_resolve_unknown_instance_raises(tmp_path):
     em = _manager(tmp_path)
     with pytest.raises(EvalError):
         em._resolve("Qwen2.5-0.5B", "instance", "Qwen2.5-0.5B::nope")
+
+
+def _lora_manager(tmp_path):
+    engine = SimpleNamespace(
+        settings=SimpleNamespace(
+            model_tag="meta-llama/Llama-3.2-3B-Instruct",
+            lora_modules=[SimpleNamespace(name="sql-lora", path="repo/sql")],
+        ),
+        instances=[SimpleNamespace(id="a", port=8000)],
+    )
+    fake_mgr = SimpleNamespace(config=SimpleNamespace(LLM_engines={"Llama": engine}))
+    return EvalManager(None, fake_mgr, BackendSettings(admin_token="adm"), str(tmp_path), "http://127.0.0.1:8887")
+
+
+def test_resolve_lora_via_router_keeps_served_name(tmp_path):
+    em = _lora_manager(tmp_path)
+    model_field, url = em._resolve("sql-lora", "router", None)
+    assert model_field == "sql-lora"  # router routes LoRAs by served name
+    assert url == "http://127.0.0.1:8887/v1"
+
+
+def test_resolve_lora_on_instance_uses_served_name_not_tag(tmp_path):
+    em = _lora_manager(tmp_path)
+    model_field, url = em._resolve("sql-lora", "instance", "Llama::a")
+    assert model_field == "sql-lora"  # vLLM serves the adapter under its name
+    assert url == "http://127.0.0.1:8000/v1"

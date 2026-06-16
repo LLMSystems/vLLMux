@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
-import { ArrowDownUp, Boxes, Brain, Clock, Download, Files, HardDrive, Loader2, Package, Trash2 } from '@lucide/vue'
-import type { Component } from 'vue'
+import { Boxes, Cpu, Download, HardDrive, Layers, Loader2, Trash2 } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
-import { formatBytes, timeAgo } from '@/lib/utils'
-import type { CacheInfo, CachedModel, DownloadJob } from '@/types/api'
+import { formatBytes } from '@/lib/utils'
+import type { LoraDownloadJob, LoraLibraryInfo } from '@/types/api'
 import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
@@ -15,53 +14,40 @@ import StatCard from '@/components/StatCard.vue'
 
 const { ensureUnlocked } = useAuth()
 
-const cache = ref<CacheInfo | null>(null)
-const downloads = ref<DownloadJob[]>([])
+const lib = ref<LoraLibraryInfo | null>(null)
+const downloads = ref<LoraDownloadJob[]>([])
 const repoInput = ref('')
+const nameInput = ref('')
 const starting = ref(false)
 let poll: ReturnType<typeof setInterval> | null = null
 
 const diskPct = computed(() => {
-  const d = cache.value?.disk
+  const d = lib.value?.disk
   return d && d.total ? (d.used / d.total) * 100 : 0
 })
 const activeDownloads = computed(() =>
   downloads.value.filter((d) => d.state === 'pending' || d.state === 'downloading'),
 )
-const totalSize = computed(() => (cache.value?.models ?? []).reduce((s, m) => s + m.size_on_disk, 0))
+const totalSize = computed(() => (lib.value?.adapters ?? []).reduce((s, a) => s + a.size_on_disk, 0))
 
-/** Best-effort model family from the repo id, for the card icon + tag. */
-function kindMeta(repoId: string): { label: string; icon: Component; color: string } {
-  const r = repoId.toLowerCase()
-  if (/rerank/.test(r)) return { label: '重排序', icon: ArrowDownUp, color: 'var(--chart-4)' }
-  if (/embed|bge|m3e|gte|e5|sentence/.test(r)) return { label: '嵌入', icon: Boxes, color: 'var(--chart-2)' }
-  return { label: 'LLM', icon: Brain, color: 'var(--chart-1)' }
-}
-function repoLeaf(repoId: string) {
-  return repoId.split('/').pop() ?? repoId
-}
-function repoOrg(repoId: string) {
-  return repoId.includes('/') ? repoId.split('/')[0] : ''
-}
-
-function pct(job: DownloadJob): number | null {
+function pct(job: LoraDownloadJob): number | null {
   if (!job.total_bytes) return null
   return Math.min(100, (job.downloaded_bytes / job.total_bytes) * 100)
 }
 
-async function loadCache() {
+async function loadLib() {
   try {
-    cache.value = await api.getCache()
+    lib.value = await api.listLora()
   } catch (e) {
-    toast.error('無法讀取快取', { description: String(e) })
+    toast.error('無法讀取 LoRA 庫', { description: String(e) })
   }
 }
 
 async function loadDownloads() {
   try {
     const prevActive = activeDownloads.value.length
-    downloads.value = await api.listDownloads()
-    if (prevActive > 0 && activeDownloads.value.length < prevActive) await loadCache()
+    downloads.value = await api.listLoraDownloads()
+    if (prevActive > 0 && activeDownloads.value.length < prevActive) await loadLib()
   } catch {
     /* transient — keep last good state */
   }
@@ -73,8 +59,9 @@ async function startDownload() {
   if (!(await ensureUnlocked())) return
   starting.value = true
   try {
-    await api.startDownload(repo)
+    await api.startLoraDownload(repo, nameInput.value.trim() || undefined)
     repoInput.value = ''
+    nameInput.value = ''
     toast.success(`開始下載 ${repo}`, { description: '可離開此頁，下載會在背景繼續。' })
     await loadDownloads()
   } catch (e) {
@@ -84,20 +71,20 @@ async function startDownload() {
   }
 }
 
-async function remove(model: CachedModel) {
+async function remove(name: string) {
   if (!(await ensureUnlocked())) return
-  if (!confirm(`確定刪除已快取的 ${model.repo_id}？此操作會釋放磁碟空間。`)) return
+  if (!confirm(`確定刪除 LoRA「${name}」？此操作會移除磁碟上的 adapter 檔案。`)) return
   try {
-    await api.deleteCache(model.repo_id)
-    toast.success(`已刪除 ${model.repo_id}`)
-    await loadCache()
+    await api.deleteLora(name)
+    toast.success(`已刪除 ${name}`)
+    await loadLib()
   } catch (e) {
     toast.error('刪除失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
   }
 }
 
 onMounted(() => {
-  void loadCache()
+  void loadLib()
   void loadDownloads()
   poll = setInterval(loadDownloads, 1500)
 })
@@ -109,36 +96,46 @@ onBeforeUnmount(() => {
 <template>
   <div class="space-y-6 p-6">
     <div>
-      <h1 class="flex items-center gap-2 text-lg font-semibold"><Package class="size-5" />模型庫</h1>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Layers class="size-5" />LoRA 庫</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        預先下載 Hugging Face 權重到共用快取，啟動模型時就不必等待。Gated 模型需在後端設定
-        <span class="font-mono">HF_TOKEN</span>。
+        管理本地 LoRA adapter。從 Hugging Face 下載、或把 adapter 資料夾直接放進
+        <span class="font-mono">{{ lib?.root ?? 'LoRA 目錄' }}</span> 也會出現在這。
+        新增 / 編輯模型時可在「LoRA Adapters」區從這裡挑選掛載。
       </p>
     </div>
 
     <!-- Stats -->
-    <div v-if="cache" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard :icon="Package" label="已快取模型" :value="String(cache.models.length)" />
+    <div v-if="lib" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <StatCard :icon="Layers" label="Adapters" :value="String(lib.adapters.length)" />
       <StatCard :icon="HardDrive" label="佔用空間" :value="formatBytes(totalSize)" />
       <StatCard :icon="Download" label="下載中" :value="String(activeDownloads.length)" />
       <StatCard
         :icon="HardDrive"
         label="磁碟剩餘"
-        :value="formatBytes(cache.disk.free)"
-        :hint="`已用 ${Math.round(diskPct)}% / ${formatBytes(cache.disk.total)}`"
+        :value="formatBytes(lib.disk.free)"
+        :hint="`已用 ${Math.round(diskPct)}% / ${formatBytes(lib.disk.total)}`"
         color="var(--chart-1)"
       />
     </div>
 
     <!-- Download -->
     <Card class="p-5">
-      <p class="mb-3 text-sm font-semibold">下載新模型</p>
+      <p class="mb-3 text-sm font-semibold">下載 adapter</p>
       <div class="flex items-end gap-2">
         <label class="flex-1">
           <span class="text-xs text-muted-foreground">Hugging Face repo id</span>
           <Input
             v-model="repoInput"
-            placeholder="例如：Qwen/Qwen3-0.6B"
+            placeholder="例如：jeeejeee/llama32-3b-text2sql-spider"
+            class="mt-1 font-mono"
+            @keydown.enter="startDownload"
+          />
+        </label>
+        <label class="w-44">
+          <span class="text-xs text-muted-foreground">本地名稱（選填）</span>
+          <Input
+            v-model="nameInput"
+            placeholder="預設取 repo 結尾"
             class="mt-1 font-mono"
             @keydown.enter="startDownload"
           />
@@ -150,9 +147,9 @@ onBeforeUnmount(() => {
 
       <!-- Active progress -->
       <div v-if="downloads.length" class="mt-4 grid gap-3 sm:grid-cols-2">
-        <div v-for="job in downloads" :key="job.repo_id" class="rounded-lg border border-border/60 bg-background/40 p-3">
+        <div v-for="job in downloads" :key="job.name" class="rounded-lg border border-border/60 bg-background/40 p-3">
           <div class="flex items-center justify-between gap-3 text-sm">
-            <span class="truncate font-mono text-xs">{{ job.repo_id }}</span>
+            <span class="truncate font-mono text-xs">{{ job.name }} <span class="text-muted-foreground">← {{ job.repo_id }}</span></span>
             <span class="flex shrink-0 items-center gap-2">
               <Badge v-if="job.state === 'completed'" variant="ready">完成</Badge>
               <Badge v-else-if="job.state === 'failed'" variant="failed">失敗</Badge>
@@ -179,52 +176,60 @@ onBeforeUnmount(() => {
       </div>
     </Card>
 
-    <!-- Cached models — card grid -->
+    <!-- Adapters — card grid -->
     <div>
-      <p class="mb-2 text-sm font-semibold">已快取模型</p>
-      <div v-if="cache?.models.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <p class="mb-2 text-sm font-semibold">本地 adapters</p>
+      <div v-if="lib?.adapters.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div
-          v-for="m in cache.models"
-          :key="m.repo_id"
+          v-for="a in lib.adapters"
+          :key="a.name"
           class="group relative rounded-xl border border-border/60 bg-card p-4 transition hover:border-border hover:shadow-sm"
         >
           <div class="flex items-start gap-3">
-            <div class="grid size-10 shrink-0 place-items-center rounded-lg bg-muted" :style="{ color: kindMeta(m.repo_id).color }">
-              <component :is="kindMeta(m.repo_id).icon" class="size-5" />
+            <div class="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-[var(--chart-3)]">
+              <Layers class="size-5" />
             </div>
             <div class="min-w-0 flex-1">
-              <p class="truncate font-medium" :title="m.repo_id">{{ repoLeaf(m.repo_id) }}</p>
-              <p v-if="repoOrg(m.repo_id)" class="truncate font-mono text-xs text-muted-foreground">{{ repoOrg(m.repo_id) }}</p>
+              <p class="truncate font-medium" :title="a.name">{{ a.name }}</p>
+              <p class="flex items-center gap-1 truncate font-mono text-xs text-muted-foreground" :title="a.base_model ?? ''">
+                <Cpu class="size-3 shrink-0" />{{ a.base_model ?? '未知 base' }}
+              </p>
             </div>
             <Button
               size="icon-sm"
               variant="ghost"
               class="opacity-0 transition group-hover:opacity-100"
-              title="刪除快取"
-              @click="remove(m)"
+              title="刪除 adapter"
+              @click="remove(a.name)"
             >
               <Trash2 class="size-4" />
             </Button>
           </div>
 
           <div class="mt-3 flex flex-wrap gap-1.5">
-            <Badge variant="outline" class="text-[10px]">{{ kindMeta(m.repo_id).label }}</Badge>
-            <Badge variant="muted" class="text-[10px]"><Files class="size-3" />{{ m.nb_files }} 檔</Badge>
+            <Badge v-if="a.rank != null" variant="outline" class="text-[10px]">rank {{ a.rank }}</Badge>
+            <Badge v-if="a.alpha != null" variant="muted" class="text-[10px]">α {{ a.alpha }}</Badge>
+            <Badge v-for="t in a.target_modules.slice(0, 3)" :key="t" variant="muted" class="font-mono text-[10px]">
+              <Boxes class="size-3" />{{ t }}
+            </Badge>
+            <Badge v-if="a.target_modules.length > 3" variant="muted" class="text-[10px]">+{{ a.target_modules.length - 3 }}</Badge>
           </div>
 
           <dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <div>
               <dt class="text-muted-foreground">大小</dt>
-              <dd class="tabular font-medium">{{ formatBytes(m.size_on_disk) }}</dd>
+              <dd class="tabular font-medium">{{ formatBytes(a.size_on_disk) }}</dd>
             </div>
-            <div>
-              <dt class="flex items-center gap-1 text-muted-foreground"><Clock class="size-3" />更新</dt>
-              <dd class="font-medium">{{ timeAgo(m.last_modified) }}</dd>
+            <div class="min-w-0">
+              <dt class="text-muted-foreground">路徑</dt>
+              <dd class="truncate font-mono" :title="a.path">{{ a.path }}</dd>
             </div>
           </dl>
         </div>
       </div>
-      <Card v-else class="p-10 text-center text-sm text-muted-foreground">快取中尚無模型。</Card>
+      <Card v-else class="p-10 text-center text-sm text-muted-foreground">
+        庫中尚無 adapter。從上方下載，或把資料夾放進 <span class="font-mono">{{ lib?.root }}</span>。
+      </Card>
     </div>
   </div>
 </template>

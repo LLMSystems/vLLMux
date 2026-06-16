@@ -51,22 +51,54 @@ EMBEDDING_KEY = "embedding::default"
 LOG_DIR = "./logs"
 
 
+# Keys consumed as env vars / handled specially, not emitted as CLI flags.
+_LORA_RUNTIME_KEY = "allow_runtime_lora"
+
+# vLLM's --max-loras defaults to 1 (only one distinct adapter per batch, which
+# serialises mixed-LoRA traffic and leaves no headroom for hot-loading more).
+# Whenever LoRA is enabled we inject this instead, unless the config sets its own.
+_DEFAULT_MAX_LORAS = 4
+
+
 def build_vllm_cli_args(model_cfg: dict) -> list[str]:
     """dict -> ``vllm serve`` CLI args. Ported verbatim from the old launcher.
 
     bool flags are presence-only; lists are JSON-encoded; None is skipped;
     keys are kebab-cased. `model_tag` is the positional model argument.
+
+    Two LoRA special cases: ``lora_modules`` (list of {name, path, …}) becomes the
+    multi-value ``--lora-modules <json> <json> …`` form vLLM expects (the generic
+    list path would collapse it into one wrong arg); ``allow_runtime_lora`` is an
+    env toggle (see VllmLauncher), not a CLI flag, so it is skipped here.
+
+    When ``enable_lora`` is set, ``max_loras`` is forced to a sensible default
+    (instead of vLLM's 1) unless the config specifies it explicitly.
     """
     model_tag = model_cfg.get("model_tag")
     if not model_tag:
         raise ValueError("model_config must provide 'model_tag'")
 
+    # LoRA headroom: never leave max_loras at vLLM's default of 1 when LoRA is on.
+    if model_cfg.get("enable_lora") and "max_loras" not in model_cfg:
+        model_cfg = {**model_cfg, "max_loras": _DEFAULT_MAX_LORAS}
+
     cli_args = ["serve", model_tag]
     for key, value in model_cfg.items():
-        if key == "model_tag" or value is None:
+        if key == "model_tag" or key == _LORA_RUNTIME_KEY or value is None:
             continue
         key_flag = "--" + key.replace("_", "-")
-        if isinstance(value, bool):
+        if key == "lora_modules":
+            # Drop None-valued keys (model_dump emits base_model_name: null) so the
+            # JSON vLLM sees is clean.
+            modules = [{k: v for k, v in m.items() if v is not None} for m in value if m]
+            modules = [m for m in modules if m.get("name")]
+            if not modules:
+                continue
+            cli_args.append(key_flag)
+            # JSON form per module so base_model_name (and any extra keys) survive;
+            # vLLM accepts several values after a single --lora-modules.
+            cli_args.extend(json.dumps(m, ensure_ascii=False) for m in modules)
+        elif isinstance(value, bool):
             if value:
                 cli_args.append(key_flag)
         elif isinstance(value, list):
@@ -121,6 +153,11 @@ class VllmLauncher:
             if cuda_device is not None:
                 env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
         merged.pop("id", None)
+
+        # Runtime LoRA load/unload requires this env in addition to --enable-lora
+        # (kept out of the CLI args; see build_vllm_cli_args).
+        if merged.get(_LORA_RUNTIME_KEY):
+            env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
         command = ["vllm"] + build_vllm_cli_args(merged)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")

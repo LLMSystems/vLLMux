@@ -45,11 +45,28 @@ class PerfManager:
     def busy(self) -> bool:
         return self._current is not None
 
+    def _lora_lookup(self, name: str):
+        """Find a base group exposing a LoRA served as `name`. Returns
+        (group_key, engine) or None."""
+        for key, engine in self.manager.config.LLM_engines.items():
+            for mod in (getattr(engine.settings, "lora_modules", None) or []):
+                if getattr(mod, "name", None) == name:
+                    return key, engine
+        return None
+
     def _resolve(self, group: str, target: str, instance_key: str | None):
-        """Return (model_field, url) for the benchmark, plus the tokenizer tag."""
+        """Return (model_field, url) for the benchmark, plus the tokenizer tag.
+
+        `group` may be a base model group or a LoRA served name (routed over its
+        base group's instances). The tokenizer always uses the base model_tag."""
         engine = self.manager.config.LLM_engines.get(group)
+        is_lora = False
         if engine is None:
-            raise PerfError(f"unknown model group: {group}")
+            found = self._lora_lookup(group)
+            if found is None:
+                raise PerfError(f"unknown model group: {group}")
+            _, engine = found
+            is_lora = True
         model_tag = engine.settings.model_tag
 
         if target == "instance":
@@ -58,10 +75,11 @@ class PerfManager:
             if inst is None:
                 raise PerfError(f"unknown instance: {instance_key}")
             base = f"http://127.0.0.1:{inst.port}"
-            model_field = model_tag  # hitting vLLM directly: address by served tag
+            # vLLM serves a LoRA under its served name; a base model by its tag.
+            model_field = group if is_lora else model_tag
         else:
             base = self.router_url
-            model_field = group  # router routes by group key
+            model_field = group  # router routes by group key or LoRA served name
         return model_field, base, model_tag
 
     def _resolve_embedding(self, name: str, mode: str, target: str):

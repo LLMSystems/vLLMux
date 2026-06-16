@@ -35,16 +35,30 @@ def load_overlay(path: str | None = None) -> dict:
 
 def merge_into(base: dict, overlay: dict) -> dict:
     """Layer overlay LLM_engines onto a config dict (new dict; base untouched)."""
+    # Mirrors the backend's app/services/overlay.py merge_into so router and
+    # backend resolve the *same* merged config. For an existing (config.yaml)
+    # group the overlay is an override: model_config keys merge on top, and an
+    # instance overrides by id (else appends). Without the model_config merge the
+    # router would miss UI edits to a config.yaml model — e.g. an added LoRA
+    # adapter — and 404 requests the backend-launched vLLM can actually serve.
     merged = copy.deepcopy(base)
     engines = merged.setdefault("LLM_engines", {})
     for group, entry in overlay.get("LLM_engines", {}).items():
-        if group in engines:
-            existing = {i.get("id") for i in engines[group].get("instances", [])}
-            for inst in entry.get("instances", []):
-                if inst.get("id") not in existing:
-                    engines[group].setdefault("instances", []).append(inst)
-        else:
+        if group not in engines:
             engines[group] = copy.deepcopy(entry)
+            continue
+        base_group = engines[group]
+        ov_cfg = entry.get("model_config")
+        if ov_cfg:
+            base_group.setdefault("model_config", {}).update(copy.deepcopy(ov_cfg))
+        base_instances = base_group.setdefault("instances", [])
+        idx_by_id = {i.get("id"): n for n, i in enumerate(base_instances)}
+        for inst in entry.get("instances", []):
+            iid = inst.get("id")
+            if iid in idx_by_id:
+                base_instances[idx_by_id[iid]] = copy.deepcopy(inst)
+            else:
+                base_instances.append(copy.deepcopy(inst))
     return merged
 
 

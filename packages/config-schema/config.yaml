@@ -35,6 +35,24 @@ LLM_engines:
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"
       reasoning_parser: "qwen3"
+      # LoRA test adapter (tiny, untrained) so the dashboard's LoRA picker has
+      # something to select in Playground / Eval / Benchmark. Generate it with:
+      #   scripts/make_test_lora.sh Qwen/Qwen3-0.6B
+      # The served name `qwen3-test-lora` is what you put in the request `model`.
+      # Path is the IN-CONTAINER path: docker-compose bind-mounts the host
+      # ~/.cache/lora_adapters dir to /lora (override with LORA_ADAPTERS_DIR).
+      enable_lora: true
+      max_lora_rank: 8
+      # max distinct LoRAs per batch (vLLM default 1). The launcher would inject 4
+      # when enable_lora is set; pinned here for headroom + visibility.
+      max_loras: 4
+      # Allow runtime (hot) load/unload from the dashboard — sets
+      # VLLM_ALLOW_RUNTIME_LORA_UPDATING. Without it the LoRA set is fixed at launch.
+      allow_runtime_lora: true
+      lora_modules:
+        - name: "qwen3-test-lora"
+          path: "/lora/qwen3-test-lora"
+          base_model_name: "Qwen/Qwen3-0.6B"
 
   # --- Single-instance group ---
   Qwen2.5-0.5B-Instruct:

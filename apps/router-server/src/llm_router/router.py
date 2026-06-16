@@ -12,6 +12,7 @@ from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
                                                   mark_backend_success)
 from src.llm_router.auth import authenticate
 from src.llm_router.backend_selector import select_instance_least_load
+from src.llm_router.lora import iter_models, resolve_model
 from src.llm_router.overlay import load_config_with_overlay
 
 logger = logging.getLogger(__name__)
@@ -124,17 +125,19 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
     try:
         config = request.app.state.config
         request_json = await request.json()
-        model_key = request_json.get("model")
-        if not model_key:
+        requested = request_json.get("model")
+        if not requested:
             raise HTTPException(status_code=400, detail="Missing 'model' field in request body")
 
-        model_cfg = config.get("LLM_engines", {}).get(model_key)
-        if not model_cfg:
-            raise HTTPException(status_code=404, detail=f"Model '{model_key}' not found.")
-
-        # The client addresses the engine by its group key; the backend vLLM is
-        # served under its model_tag, so rewrite before forwarding.
-        request_json["model"] = model_cfg["model_config"]["model_tag"]
+        # Resolve the requested name to a routable group. A base group rewrites to
+        # its model_tag; a LoRA served name keeps its name (so vLLM selects the
+        # adapter) but routes over the base group's instances + metrics.
+        resolved = resolve_model(config, requested)
+        if not resolved:
+            raise HTTPException(status_code=404, detail=f"Model '{requested}' not found.")
+        model_key = resolved["route_key"]
+        model_cfg = resolved["model_cfg"]
+        request_json["model"] = resolved["forward_name"]
 
         # For streaming, ask the backend to emit a final usage chunk so token
         # counts can be logged (otherwise streamed requests log no tokens).
@@ -312,17 +315,10 @@ async def proxy_chat_completion(request: Request):
 @router.get("/v1/models")
 async def list_models(request: Request):
     config = request.app.state.config
-    engines = config.get("LLM_engines", {})
-
-    model_list = [
-        {"id": model_key, "object": "model"}
-        for model_key in engines.keys()
-    ]
-
     return JSONResponse(
         content={
             "object": "list",
-            "data": model_list
+            "data": iter_models(config),
         }
     )
 

@@ -12,7 +12,7 @@ import { ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
 import { formatBytes } from '@/lib/utils'
-import type { CachedModel, DownloadJob, SettingValue } from '@/types/api'
+import type { CachedModel, DownloadJob, LoraAdapter, LoraModule, SettingValue } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ mode?: 'create' | 'edit'; editKey?: string | null }>()
@@ -37,6 +37,29 @@ const port = ref<number>(8000)
 const cudaDevice = ref<number | null>(null)
 const modelTag = ref('')
 const params = ref<{ key: string; value: string }[]>([])
+// LoRA adapters mounted at serve time; edited apart from the flat param list
+// because each is a {name, path, base_model_name} object, not a scalar flag.
+const loras = ref<LoraModule[]>([])
+// Adapters available in the local LoRA library (for the path picker).
+const loraLibrary = ref<LoraAdapter[]>([])
+async function loadLoraLibrary() {
+  try {
+    loraLibrary.value = (await api.listLora()).adapters
+  } catch {
+    loraLibrary.value = [] // best-effort; the path field still accepts free text
+  }
+}
+function adapterByPath(path: string): LoraAdapter | undefined {
+  return loraLibrary.value.find((a) => a.path === path)
+}
+/** Base-model mismatch warning for a mounted adapter, or '' if fine/unknown. */
+function loraBaseWarning(l: LoraModule): string {
+  const a = adapterByPath(l.path)
+  if (!a || !a.base_model) return ''
+  return a.base_model === modelTag.value
+    ? ''
+    : `此 adapter 的 base 是 ${a.base_model}，與本模型 ${modelTag.value || '(未填)'} 不符`
+}
 
 const gpuOptions = computed(() => resources.resources?.gpus.map((g) => g.index) ?? [])
 
@@ -118,6 +141,26 @@ function reset() {
   cudaDevice.value = null
   modelTag.value = ''
   params.value = []
+  loras.value = []
+}
+
+/** Pull `lora_modules` out of a settings/model_config object into the LoRA
+ *  editor, returning the remaining flat [key, value] entries for the param list. */
+function extractLoras(entries: [string, unknown][]): [string, unknown][] {
+  loras.value = []
+  const rest: [string, unknown][] = []
+  for (const [k, v] of entries) {
+    if (k === 'lora_modules' && Array.isArray(v)) {
+      loras.value = (v as LoraModule[]).map((m) => ({
+        name: m.name ?? '',
+        path: m.path ?? '',
+        base_model_name: m.base_model_name ?? '',
+      }))
+    } else {
+      rest.push([k, v])
+    }
+  }
+  return rest
 }
 
 /** Prefill the form from the live config for the model being edited. */
@@ -132,9 +175,9 @@ function prefillForEdit() {
   port.value = cfg.port
   cudaDevice.value = cfg.cuda_device ?? null
   modelTag.value = String(cfg.settings.model_tag ?? '')
-  params.value = Object.entries(cfg.settings)
-    .filter(([k2]) => k2 !== 'model_tag')
-    .map(([k2, v]) => ({ key: k2, value: v === null ? '' : String(v) }))
+  params.value = extractLoras(
+    Object.entries(cfg.settings).filter(([k2]) => k2 !== 'model_tag'),
+  ).map(([k2, v]) => ({ key: k2, value: v === null ? '' : String(v) }))
   warnings.value = []
   parsed.value = true // skip the paste/parse step
 }
@@ -151,6 +194,7 @@ watch(open, (v) => {
   if (isEdit.value) prefillForEdit()
   void loadCache()
   void loadDownloads()
+  void loadLoraLibrary()
   downloadPoll = setInterval(loadDownloads, 1500) // reflect background progress
 })
 
@@ -165,9 +209,9 @@ async function parse() {
     port.value = p.instance.port
     cudaDevice.value = p.instance.cuda_device
     modelTag.value = String(p.model_config.model_tag ?? '')
-    params.value = Object.entries(p.model_config)
-      .filter(([k]) => k !== 'model_tag')
-      .map(([k, v]) => ({ key: k, value: String(v) }))
+    params.value = extractLoras(
+      Object.entries(p.model_config).filter(([k]) => k !== 'model_tag'),
+    ).map(([k, v]) => ({ key: k, value: String(v) }))
     warnings.value = p.warnings
     parsed.value = true
   } catch (e) {
@@ -190,6 +234,30 @@ function addParam() {
 }
 function removeParam(i: number) {
   params.value.splice(i, 1)
+}
+
+// ---- LoRA adapters ----
+function addLora() {
+  loras.value.push({ name: '', path: '', base_model_name: '' })
+}
+function removeLora(i: number) {
+  loras.value.splice(i, 1)
+}
+/** Add --enable-lora as a flag when the first adapter is mounted (vLLM needs it). */
+function ensureEnableLora() {
+  if (!params.value.some((p) => p.key === 'enable_lora')) setParam('enable_lora', 'true')
+}
+/** Picked an adapter from the library: default served name, base, and bump
+ *  max_lora_rank to cover every mounted adapter's rank. */
+function onPickLora(l: LoraModule) {
+  ensureEnableLora()
+  const a = adapterByPath(l.path)
+  if (!a) return
+  if (!l.name.trim()) l.name = a.name
+  if (a.base_model && !l.base_model_name) l.base_model_name = a.base_model
+  const ranks = loras.value.map((m) => adapterByPath(m.path)?.rank ?? 0)
+  const maxRank = Math.max(0, ...ranks)
+  if (maxRank > 0) setParam('max_lora_rank', String(maxRank))
 }
 
 // ---- Tool-calling presets (see docs/vllm_auto_tool_整理.md) ----
@@ -219,10 +287,21 @@ function applyToolPreset(parser: string, reasoning: string) {
 async function submit() {
   if (!canSubmit.value || creating.value) return
   creating.value = true
-  const settings: Record<string, SettingValue> = { model_tag: modelTag.value }
+  const settings: Record<string, SettingValue> & { lora_modules?: LoraModule[] } = {
+    model_tag: modelTag.value,
+  }
   for (const { key: k, value } of params.value) {
     if (k.trim()) settings[k.trim()] = coerce(value)
   }
+  // Mounted adapters: keep only filled rows; drop the empty base_model_name field.
+  const cleanLoras = loras.value
+    .filter((l) => l.name.trim() && l.path.trim())
+    .map((l) => ({
+      name: l.name.trim(),
+      path: l.path.trim(),
+      ...(l.base_model_name?.trim() ? { base_model_name: l.base_model_name.trim() } : {}),
+    }))
+  if (cleanLoras.length) settings.lora_modules = cleanLoras
   const payload = {
     group: group.value,
     instance: { id: instanceId.value, host: host.value, port: port.value, cuda_device: cudaDevice.value },
@@ -437,6 +516,53 @@ async function submit() {
                 沒有對應 parser 的模型（如 SmolLM2 / TinyLlama / Phi-3.5）請勿亂加。
               </p>
             </div>
+          </div>
+        </div>
+
+        <!-- LoRA adapters (static mount at serve time) -->
+        <div>
+          <div class="mb-1.5 flex items-center justify-between">
+            <span class="text-xs font-medium text-muted-foreground">LoRA Adapters</span>
+            <Button size="sm" variant="ghost" @click="addLora"><Plus class="size-3.5" />新增</Button>
+          </div>
+          <div class="space-y-1.5">
+            <div v-for="(l, i) in loras" :key="i" class="space-y-1">
+              <div class="flex items-center gap-2">
+                <Input
+                  v-model="l.name"
+                  placeholder="served name（如 sql-lora）"
+                  class="flex-1 font-mono text-xs"
+                  @update:model-value="ensureEnableLora"
+                />
+                <!-- Pick from the LoRA library, or keep a free-typed path. -->
+                <select
+                  v-model="l.path"
+                  class="h-9 flex-[1.4] rounded-md border border-input bg-background/40 px-2 font-mono text-xs"
+                  @change="onPickLora(l)"
+                >
+                  <option value="">— 選 adapter / 自填 path —</option>
+                  <option v-for="a in loraLibrary" :key="a.path" :value="a.path">
+                    {{ a.name }}{{ a.rank != null ? ` (r${a.rank})` : '' }}
+                  </option>
+                  <option v-if="l.path && !loraLibrary.some((a) => a.path === l.path)" :value="l.path">
+                    {{ l.path }}（自填）
+                  </option>
+                </select>
+                <Button size="icon-sm" variant="ghost" @click="removeLora(i)"><Trash2 class="size-3.5" /></Button>
+              </div>
+              <p v-if="loraBaseWarning(l)" class="flex items-center gap-1 text-[11px] text-status-failed">
+                <AlertTriangle class="size-3" />{{ loraBaseWarning(l) }}
+              </p>
+            </div>
+            <p v-if="!loras.length" class="text-xs text-muted-foreground">
+              無 LoRA。新增一列會自動補上 <span class="font-mono">enable_lora=true</span>；
+              served name 即推論時 <span class="font-mono">model</span> 欄位要填的名稱。adapter 從
+              <span class="font-mono">LoRA 庫</span>挑選，或自填 path。
+            </p>
+            <p v-else class="text-[11px] text-muted-foreground/80">
+              從庫選 adapter 會自動帶入 base 並把 <span class="font-mono">max_lora_rank</span> 設到對齊的 rank。
+              Base model 須支援 LoRA（vLLM <span class="font-mono">SupportsLoRA</span>）。
+            </p>
           </div>
         </div>
 

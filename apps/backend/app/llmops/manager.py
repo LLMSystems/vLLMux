@@ -42,6 +42,10 @@ class GpuUnavailable(RuntimeError):
     """The pinned cuda_device doesn't exist on this host (pre-flight guard)."""
 
 
+class LoraRuntimeError(RuntimeError):
+    """A runtime LoRA load/unload against a vLLM instance failed."""
+
+
 def build_registry(config, config_path: str, launchers: list[Launcher]) -> ModelRegistry:
     """Enumerate every instance every launcher defines, all STOPPED initially."""
     registry = ModelRegistry()
@@ -388,6 +392,112 @@ class ModelManager:
         await self._record(inst, None, inst.state, "edited via dashboard")
         logger.info("Updated model %s", key)
         return inst
+
+    # ---- Runtime (hot) LoRA load / unload -------------------------------------
+
+    async def _ready_lora_targets(self, group: str) -> list[ModelInstance]:
+        """Ready LLM instances of a group — the ones to fan a LoRA op out to."""
+        snap = await self.registry.snapshot()
+        return [
+            i for i in snap
+            if i.key.split("::")[0] == group
+            and i.kind == ModelKind.LLM
+            and i.state == ModelState.READY
+        ]
+
+    async def _post_lora(self, inst: ModelInstance, action: str, payload: dict) -> None:
+        """POST /v1/{load,unload}_lora_adapter to one instance; raise on failure."""
+        url = f"http://{inst.host}:{inst.port}/v1/{action}_lora_adapter"
+        resp = await self.http_client.post(url, json=payload, timeout=120.0)
+        if resp.status_code >= 400:
+            try:
+                detail = resp.text
+            except Exception:
+                detail = ""
+            raise LoraRuntimeError(f"{inst.key}: {resp.status_code} {detail[:200]}")
+
+    def _persist_lora(self, group: str, name: str, path: str | None,
+                      base_model_name: str | None, *, remove: bool) -> None:
+        """Add/remove a lora_modules entry in the overlay's model_config for the
+        group, then rebuild self.config. Mirrors update_overlay_model's persistence
+        so the change survives a restart (re-mounted statically) and a router
+        /reload makes it routable."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+
+        engine = self.config.LLM_engines[group]
+        model_config = engine.settings.model_dump()
+        loras = [dict(m) for m in (model_config.get("lora_modules") or [])]
+        loras = [m for m in loras if m.get("name") != name]  # drop any same-name first
+        if not remove:
+            entry = {"name": name, "path": path}
+            if base_model_name:
+                entry["base_model_name"] = base_model_name
+            loras.append(entry)
+        model_config["lora_modules"] = loras
+
+        overlay = load_overlay(self.overlay_path)
+        group_entry = overlay.setdefault("LLM_engines", {}).setdefault(group, {})
+        group_entry["model_config"] = model_config  # keep any existing instances
+        new_config = build_merged_config(self.config_path, overlay)
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+
+    async def load_lora(self, group: str, name: str, path: str,
+                        base_model_name: str | None = None) -> dict:
+        """Hot-load a LoRA into every ready instance of a group, then persist it.
+
+        All-or-nothing across instances: if any instance fails, the ones that
+        already loaded are rolled back so the group never ends up inconsistent
+        (which would make the load-balancer 404 on some requests)."""
+        engine = self.config.LLM_engines.get(group)
+        if engine is None:
+            raise ModelNotFound(group)
+        if not getattr(engine.settings, "allow_runtime_lora", False):
+            raise ModelConflict(
+                f"{group} was not started with runtime LoRA updating — enable "
+                "allow_runtime_lora (+ enable_lora) on the model and restart it first"
+            )
+        if not name or not path:
+            raise ModelConflict("lora name and path are required")
+        targets = await self._ready_lora_targets(group)
+        if not targets:
+            raise ModelConflict(f"no running instance for {group} — start it first")
+
+        payload = {"lora_name": name, "lora_path": path}
+        done: list[ModelInstance] = []
+        try:
+            for inst in targets:
+                await self._post_lora(inst, "load", payload)
+                done.append(inst)
+        except LoraRuntimeError:
+            for inst in done:  # roll back to keep the group consistent
+                try:
+                    await self._post_lora(inst, "unload", {"lora_name": name})
+                except Exception:
+                    logger.warning("LoRA rollback unload failed on %s", inst.key)
+            raise
+
+        self._persist_lora(group, name, path, base_model_name, remove=False)
+        logger.info("Hot-loaded LoRA %s onto %s (%d instances)", name, group, len(targets))
+        return {"group": group, "name": name, "instances": [i.key for i in targets]}
+
+    async def unload_lora(self, group: str, name: str) -> dict:
+        """Hot-unload a LoRA from every ready instance and drop it from the
+        overlay. Best-effort across instances — a missing adapter on one isn't
+        fatal, since the goal is for it to be gone everywhere."""
+        engine = self.config.LLM_engines.get(group)
+        if engine is None:
+            raise ModelNotFound(group)
+        targets = await self._ready_lora_targets(group)
+        errors: list[str] = []
+        for inst in targets:
+            try:
+                await self._post_lora(inst, "unload", {"lora_name": name})
+            except Exception as e:
+                errors.append(str(e))
+        self._persist_lora(group, name, None, None, remove=True)
+        logger.info("Hot-unloaded LoRA %s from %s", name, group)
+        return {"group": group, "name": name, "instances": [i.key for i in targets], "errors": errors}
 
     async def update_embedding_model(self, model_type: str, name: str, settings: dict) -> str:
         """Edit an embedding/reranking model's params, persisted as an overlay

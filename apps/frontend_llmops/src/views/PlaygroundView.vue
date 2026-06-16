@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Bot, Loader2, Send, Square, Trash2, User, X } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
+import { useModelOptions } from '@/composables/useModelOptions'
 import Card from '@/components/ui/Card.vue'
 import Tabs from '@/components/ui/Tabs.vue'
 import TabsList from '@/components/ui/TabsList.vue'
@@ -18,13 +19,9 @@ import { formatLatency } from '@/lib/utils'
 const models = useModelsStore()
 const tab = ref('chat')
 
-// Only ready models are routable — list the groups with at least one ready
-// instance, kept reactive so options appear/disappear as models start/stop.
-const modelOptions = computed(() => [
-  ...new Set(
-    models.llms.filter((m) => m.state === 'ready').map((m) => m.key.split('::')[0] ?? m.key),
-  ),
-])
+// Only ready models are routable — each ready group plus the LoRA adapters
+// mounted on it, kept reactive so options appear/disappear as models start/stop.
+const { options: modelOptions } = useModelOptions()
 const model = ref('')
 const maxTokens = ref(256)
 const temperature = ref(0.7)
@@ -34,7 +31,7 @@ const stream = ref(true)
 watch(
   modelOptions,
   (opts) => {
-    if (!opts.includes(model.value)) model.value = opts[0] ?? ''
+    if (!opts.some((o) => o.value === model.value)) model.value = opts[0]?.value ?? ''
   },
   { immediate: true },
 )
@@ -530,7 +527,9 @@ watch(
                   v-model="model"
                   class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
                 >
-                  <option v-for="o in modelOptions" :key="o" :value="o">{{ o }}</option>
+                  <option v-for="o in modelOptions" :key="o.value" :value="o.value">
+                    {{ o.isLora ? `${o.label}  (LoRA)` : o.label }}
+                  </option>
                 </select>
                 <p v-else class="mt-1 text-xs text-muted-foreground">目前沒有已啟動的模型，請先至「模型」頁啟動。</p>
               </label>
@@ -541,16 +540,17 @@ watch(
                 <div class="mt-1 max-h-48 space-y-1 overflow-y-auto rounded-md border border-input bg-background/40 p-2">
                   <label
                     v-for="o in modelOptions"
-                    :key="o"
+                    :key="o.value"
                     class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 hover:bg-muted/50"
                   >
                     <input
                       type="checkbox"
-                      :checked="isSelected(o)"
+                      :checked="isSelected(o.value)"
                       class="size-3.5 accent-[var(--chart-1)]"
-                      @change="toggleLane(o)"
+                      @change="toggleLane(o.value)"
                     />
-                    <span class="truncate font-mono text-xs">{{ o }}</span>
+                    <span class="truncate font-mono text-xs">{{ o.label }}</span>
+                    <Badge v-if="o.isLora" variant="outline" class="shrink-0 text-[10px]">LoRA</Badge>
                   </label>
                   <p v-if="!modelOptions.length" class="px-1 text-xs text-muted-foreground">目前沒有已啟動的模型。</p>
                 </div>

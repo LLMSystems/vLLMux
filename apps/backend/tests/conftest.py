@@ -271,6 +271,8 @@ def app(monkeypatch):
     application.state.download_manager = DownloadManager()
     from app.services.dataset_downloads import DatasetDownloadManager
     application.state.dataset_download_manager = DatasetDownloadManager()
+    from app.services.lora_downloads import LoraDownloadManager
+    application.state.lora_download_manager = LoraDownloadManager()
     application.state.perf_manager = PerfManager(
         store, application.state.manager, settings, str(BACKEND_ROOT), "http://127.0.0.1:8887"
     )

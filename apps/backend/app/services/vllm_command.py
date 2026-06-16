@@ -11,6 +11,7 @@ Pure string→dict; no IO, so it is trivially unit-testable.
 """
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from typing import Any
@@ -18,6 +19,26 @@ from typing import Any
 # Flags that describe the instance/endpoint, not the model itself.
 _INSTANCE_FLAGS = {"port", "host"}
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _parse_lora_module(value: str) -> dict[str, Any]:
+    """One `--lora-modules` value -> {name, path, …}.
+
+    Accepts both vLLM forms: the JSON object (`{"name": .., "path": ..}`) and the
+    short `name=path`. Unrecognised input is kept as a name-only stub so nothing
+    is silently dropped."""
+    text = value.strip()
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict) and obj.get("name"):
+                return obj
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if "=" in text:
+        name, _, path = text.partition("=")
+        return {"name": name.strip(), "path": path.strip()}
+    return {"name": text, "path": ""}
 
 
 def _coerce(value: str) -> Any:
@@ -76,6 +97,19 @@ def parse_vllm_command(command: str) -> dict[str, Any]:
         tok = rest[i]
         if tok.startswith("--"):
             name = tok[2:]
+            if name in ("lora-modules", "lora_modules"):
+                # nargs='+': consume every following value until the next --flag.
+                values: list[str] = []
+                if "=" in name:  # --lora-modules=... (rare) — treat RHS as one value
+                    _, _, v = name.partition("=")
+                    values.append(v)
+                j = i + 1
+                while j < len(rest) and not rest[j].startswith("--"):
+                    values.append(rest[j])
+                    j += 1
+                flags["lora_modules"] = [_parse_lora_module(v) for v in values]
+                i = j
+                continue
             if "=" in name:
                 k, _, v = name.partition("=")
                 flags[k] = _coerce(v)

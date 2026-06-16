@@ -8,13 +8,14 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_manager
 from app.api.schemas import ModelView
 from app.core.auth import require_admin
 from app.llmops.manager import (
     GpuUnavailable,
+    LoraRuntimeError,
     ModelAlreadyRunning,
     ModelConflict,
     ModelManager,
@@ -111,6 +112,43 @@ async def delete_model(key: str, manager: ModelManager = Depends(get_manager)):
     """Remove a dynamically-added model (must be overlay-owned and stopped)."""
     try:
         await manager.delete_overlay_model(key)
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+
+
+class LoadLoraRequest(BaseModel):
+    name: str = Field(min_length=1)  # served name (request `model` field)
+    path: str = Field(min_length=1)  # in-container adapter path, e.g. /lora/<name>
+    base_model_name: Optional[str] = None
+
+
+def _group_of(key: str) -> str:
+    """Hot-LoRA ops are group-level; accept a model key or a bare group."""
+    return key.split("::")[0]
+
+
+@router.post("/{key}/lora", dependencies=[Depends(require_admin)])
+async def load_lora(key: str, body: LoadLoraRequest, manager: ModelManager = Depends(get_manager)):
+    """Hot-load a LoRA into every ready instance of the group + persist it to the
+    overlay. Call POST /v1/reload on the router afterwards so it routes the new
+    adapter (the frontend does this)."""
+    try:
+        return await manager.load_lora(_group_of(key), body.name, body.path, body.base_model_name)
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except LoraRuntimeError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"LoRA load failed (rolled back): {e}")
+
+
+@router.delete("/{key}/lora/{name}", dependencies=[Depends(require_admin)])
+async def unload_lora(key: str, name: str, manager: ModelManager = Depends(get_manager)):
+    """Hot-unload a LoRA from every ready instance + drop it from the overlay."""
+    try:
+        return await manager.unload_lora(_group_of(key), name)
     except ModelNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
     except ModelConflict as e:

@@ -31,6 +31,9 @@ services:
       - HF_HOME=/hf
       # evalscope perf datasets (ShareGPT, openqa…) cache here, not in HF_HOME.
       - MODELSCOPE_CACHE=/modelscope/hub
+      # LoRA library scans this dir (bind-mounted below); adapter paths in
+      # config.yaml's lora_modules use the same /lora prefix.
+      - LLMOPS_LORA_DIR=/lora
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
     volumes:
       # Edit models without rebuilding: the canonical config is bind-mounted.
@@ -42,6 +45,10 @@ services:
       # ModelScope cache (benchmark datasets). MODELSCOPE_CACHE=/modelscope/hub
       # -> /modelscope/hub/datasets == <dir>/hub/datasets, mirroring the host layout.
       - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
+      # LoRA adapters: config.yaml lora_modules paths point at /lora/<name>, so the
+      # backend-spawned vLLM can mount them. (Router doesn't launch vLLM; only the
+      # backend needs this.)
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
       - /etc/localtime:/etc/localtime:ro
     ports:
       # Host ports are configurable to avoid collisions; container ports are

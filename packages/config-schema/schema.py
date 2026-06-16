@@ -36,6 +36,18 @@ class InstanceConfig(BaseModel):
     cuda_device: Optional[int] = None
 
 
+class LoraModule(BaseModel):
+    """One LoRA adapter statically mounted on a base model at `vllm serve` time.
+
+    Mirrors vLLM's `--lora-modules` JSON form. `name` is the served name clients
+    put in the request `model` field; `path` is a local dir or HF repo id;
+    `base_model_name` (optional) enriches the `/v1/models` lineage."""
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+    name: str
+    path: str
+    base_model_name: Optional[str] = None
+
+
 class EngineModelConfig(BaseModel):
     # extra="allow" so any vLLM flag can be passed through; protected_namespaces
     # silences the spurious "model_" field warnings.
@@ -45,6 +57,10 @@ class EngineModelConfig(BaseModel):
     max_model_len: Optional[int] = None
     gpu_memory_utilization: Optional[float] = None
     tensor_parallel_size: int = 1
+    # LoRA: `enable_lora`/`max_lora_rank`/… flow through extra="allow" as plain
+    # vLLM flags; `lora_modules` is typed so the dashboard can render + manage the
+    # adapters and the launcher can emit the multi-arg `--lora-modules` form.
+    lora_modules: Optional[list[LoraModule]] = None
 
 
 class LLMEngine(BaseModel):

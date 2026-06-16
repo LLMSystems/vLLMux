@@ -122,7 +122,9 @@ export interface ConfigSummary {
       gpu_memory_utilization: number
       tool_parser: string
       /** Full vLLM model_config: declared fields + any extra flags. */
-      settings: Record<string, string | number | boolean | null>
+      settings: Record<string, string | number | boolean | null> & {
+        lora_modules?: LoraModule[]
+      }
     }
   >
   embedding_server: {
@@ -160,7 +162,43 @@ export type RouterMetrics = Record<string, Record<string, InstanceMetrics>>
 
 export interface OpenAIModelList {
   object: string
-  data: { id: string; object: string }[]
+  // `parent` is present only for LoRA adapters (points at the base group).
+  data: { id: string; object: string; parent?: string }[]
+}
+
+/** A LoRA adapter statically mounted on a base model group. */
+export interface LoraModule {
+  name: string
+  path: string
+  base_model_name?: string
+}
+
+/** An adapter folder in the local LoRA library (scanned from LLMOPS_LORA_DIR). */
+export interface LoraAdapter {
+  name: string
+  path: string
+  base_model: string | null
+  rank: number | null
+  alpha: number | null
+  target_modules: string[]
+  size_on_disk: number
+}
+
+export interface LoraLibraryInfo {
+  disk: DiskUsage
+  root: string
+  adapters: LoraAdapter[]
+}
+
+export interface LoraDownloadJob {
+  name: string
+  repo_id: string
+  state: DownloadState
+  total_bytes: number | null
+  downloaded_bytes: number
+  error: string | null
+  started_at: number
+  updated_at: number
 }
 
 export interface ApiKey {
@@ -442,5 +480,5 @@ export interface ParsedModel {
 export interface CreateModelPayload {
   group: string
   instance: { id: string; host: string; port: number; cuda_device: number | null }
-  settings: Record<string, SettingValue>
+  settings: Record<string, SettingValue> & { lora_modules?: LoraModule[] }
 }
