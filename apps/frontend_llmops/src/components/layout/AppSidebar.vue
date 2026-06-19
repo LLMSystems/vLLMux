@@ -74,11 +74,7 @@ const nav = [
   >
     <!-- Brand -->
     <div class="flex items-center gap-2.5 px-5 py-5">
-      <div
-        class="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--chart-1)] to-[var(--chart-4)] text-white shadow-sm"
-      >
-        <Server class="size-4.5" />
-      </div>
+      <img src="/icon2_rb.png" alt="vLLMux" class="size-11 object-contain" />
       <div class="leading-tight">
         <p class="text-sm font-semibold">vLLMux</p>
         <p class="text-[10px] uppercase tracking-widest text-muted-foreground">控制台</p>
