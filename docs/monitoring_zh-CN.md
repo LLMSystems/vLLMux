@@ -5,7 +5,7 @@
 整套內建完整的 **Prometheus → Grafana** 流程，免手動設定。
 
 - **後端**寫出 Prometheus file-based service-discovery 檔（`LLMOPS_PROMETHEUS_SD_PATH`），
-  列出每個 *ready* 的 vLLM 實例，並隨模型啟停刷新——所以動態艦隊免改設定即被抓取。
+  列出每個 *ready* 的 vLLM 實例，並隨模型啟停刷新——所以動態集群免改設定即被抓取。
 - **Prometheus**（`:9090`）抓取這些實例的 `/metrics`，外加 `dcgm-exporter`（GPU）與
   `node-exporter`（主機）。
 - **Grafana** 以單一來源服務於 **`http://localhost:8884/grafana`**（匿名唯讀；以

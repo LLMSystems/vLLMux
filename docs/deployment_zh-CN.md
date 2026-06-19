@@ -22,7 +22,7 @@ make up                              # docker compose -f deploy/docker-compose.y
 |------------------|------------------------|-------|------|
 | `backend`        | `llmops-engine`（GPU） | 5000  | Dashboard API；在 `:800x` 拉起 vLLM 子進程 |
 | `router`         | `llmops-engine`        | 8887  | OpenAI 相容路由；**共用後端的 network namespace**，才打得到那些 localhost vLLM 端口 |
-| `prometheus`     | `prom/prometheus`      | 9090  | 透過 file-based SD 抓取 vLLM 艦隊的 `/metrics`；**同樣共用後端 netns**，`localhost:800x` 才解析得到那些實例 |
+| `prometheus`     | `prom/prometheus`      | 9090  | 透過 file-based SD 抓取 vLLM 集群的 `/metrics`；**同樣共用後端 netns**，`localhost:800x` 才解析得到那些實例 |
 | `grafana`        | `grafana/grafana`      | （代理）| Dashboards 與告警；經前端 nginx 以單一來源代理在 `/grafana` |
 | `dcgm-exporter`  | `nvcr.io/.../dcgm-exporter`（GPU） | 9400 | NVIDIA GPU 遙測（利用率、顯存、溫度、功耗） |
 | `node-exporter`  | `prom/node-exporter`   | 9100  | 主機指標（CPU、RAM、磁碟、網路） |
