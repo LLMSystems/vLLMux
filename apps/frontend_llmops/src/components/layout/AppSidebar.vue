@@ -80,7 +80,7 @@ const nav = [
         <Server class="size-4.5" />
       </div>
       <div class="leading-tight">
-        <p class="text-sm font-semibold">LLMOps</p>
+        <p class="text-sm font-semibold">vLLMux</p>
         <p class="text-[10px] uppercase tracking-widest text-muted-foreground">控制台</p>
       </div>
     </div>

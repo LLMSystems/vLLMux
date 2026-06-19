@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="LLM Router Dashboard Backend", lifespan=lifespan)
+    app = FastAPI(title="vLLMux Backend", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

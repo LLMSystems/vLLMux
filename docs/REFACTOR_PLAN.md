@@ -1,4 +1,4 @@
-# LLM-Router-Server-Dashboard 重構方案（Monorepo）
+# vLLMux 重構方案（Monorepo）
 
 > 狀態：**已執行（Phase 0–4 完成）**。三個子專案已整理成 `apps/` + `packages/` + `deploy/` 的正式 Monorepo。
 > 後端已分層並收斂 config、前端已建立 services/stores/router/views、共用 config-schema 已上線，
