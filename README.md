@@ -1,6 +1,8 @@
 <div align="center">
 
-# vLLMux
+<p align="center">
+  <img src="assets/icon.png" width="500px" style="vertical-align:middle;">
+</p>
 
 **One-stop platform to deploy, route, monitor & evaluate your vLLM cluster**
 

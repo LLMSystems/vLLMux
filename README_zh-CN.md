@@ -1,6 +1,8 @@
 <div align="center">
 
-# vLLMux
+<p align="center">
+  <img src="assets/icon.png" width="500px" style="vertical-align:middle;">
+</p>
 
 **一站式部署、路由、監控與評測你的 vLLM 集群**
 
