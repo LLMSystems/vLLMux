@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Activity, Cpu, ExternalLink, Gauge, Server, TrendingUp } from '@lucide/vue'
+import { Activity, Cpu, ExternalLink, Gauge, LayoutDashboard, Server, TrendingUp } from '@lucide/vue'
 import { useTheme } from '@/composables/useTheme'
 
 // Grafana is served same-origin under /grafana (nginx reverse proxy), so these
@@ -9,6 +9,7 @@ import { useTheme } from '@/composables/useTheme'
 const BASE = '/grafana/d'
 
 const dashboards = [
+  { id: 'overview', label: '總覽', icon: LayoutDashboard, path: `${BASE}/vllm-overview/vllm-overview` },
   { id: 'capacity', label: 'vLLM 容量', icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
   { id: 'perf', label: 'vLLM 效能', icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
   { id: 'query', label: 'vLLM 請求', icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
@@ -23,7 +24,7 @@ const ranges = [
   { label: '24h', from: 'now-24h' },
 ] as const
 
-const active = ref<(typeof dashboards)[number]['id']>('capacity')
+const active = ref<(typeof dashboards)[number]['id']>('overview')
 const range = ref<(typeof ranges)[number]['from']>('now-1h')
 const { isDark } = useTheme()
 
