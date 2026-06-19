@@ -45,13 +45,18 @@ async def test_starting_becomes_ready_when_health_ok():
 
 
 class _ReloadSpyManager:
-    """Minimal manager stub capturing router-reload nudges."""
+    """Minimal manager stub capturing router-reload + Prometheus SD nudges."""
 
     def __init__(self):
         self.reloads = 0
+        self.sd_writes = 0
 
     async def trigger_router_reload(self):
         self.reloads += 1
+        return True
+
+    async def write_prometheus_targets(self):
+        self.sd_writes += 1
         return True
 
 
@@ -67,13 +72,31 @@ async def test_ready_transition_nudges_router_reload():
     await reconcile_once(reg, FakeHTTPClient(healthy_ports={8002}), _settings(), manager=mgr)
     assert inst.state == ModelState.READY
     assert mgr.reloads == 1
+    assert mgr.sd_writes == 1  # joining the ready pool refreshes scrape targets
 
 
 async def test_no_ready_transition_does_not_reload():
-    # Steady-state pass (nothing turns READY) must not spam the router.
+    # Steady-state pass (nothing turns READY) must not spam the router or rewrite SD.
     reg = _registry()
     mgr = _ReloadSpyManager()
     await reconcile_once(reg, FakeHTTPClient(healthy_ports=set()), _settings(), manager=mgr)
+    assert mgr.reloads == 0
+    assert mgr.sd_writes == 0
+
+
+async def test_ready_to_failed_refreshes_sd_but_not_router():
+    # A ready vLLM dying leaves the pool: SD must be rewritten (drop the target),
+    # but the router reload only fires on instances *joining* the pool.
+    reg = _registry()
+    inst = reg.get(HEALTHY)
+    inst.state = ModelState.READY
+    inst.managed = True
+    inst.proc = FakeProc(returncode=139)  # crashed
+
+    mgr = _ReloadSpyManager()
+    await reconcile_once(reg, FakeHTTPClient(healthy_ports={8002}), _settings(), manager=mgr)
+    assert inst.state == ModelState.FAILED
+    assert mgr.sd_writes == 1
     assert mgr.reloads == 0
 
 

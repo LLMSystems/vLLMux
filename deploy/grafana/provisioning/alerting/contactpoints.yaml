@@ -1,0 +1,29 @@
+# Provisioned alerting destination + routing for the vLLM alert rules.
+#
+# A single generic-webhook contact point whose URL comes from the
+# GRAFANA_ALERT_WEBHOOK environment variable (set in deploy/.env; defaults to a
+# placeholder so provisioning never fails on an empty value). The root
+# notification policy routes every alert to it.
+#
+# To switch to Slack/Discord formatting, change `type` to `slack`/`discord` and
+# the corresponding `settings` (Grafana has dedicated integrations for both).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: vllm-webhook
+    receivers:
+      - uid: vllm-webhook
+        type: webhook
+        settings:
+          url: $GRAFANA_ALERT_WEBHOOK
+          httpMethod: POST
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: vllm-webhook
+    group_by: ["grafana_folder", "alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h

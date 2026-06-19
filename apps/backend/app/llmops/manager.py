@@ -144,6 +144,25 @@ class ModelManager:
             logger.warning("Router reload POST failed (%s/reload)", self.router_url)
             return False
 
+    async def write_prometheus_targets(self) -> bool:
+        """Best-effort: refresh the Prometheus file_sd targets file to reflect the
+        currently-ready vLLM instances. No-op unless prometheus_sd_path is set.
+        Write-if-changed and never raises — monitoring discovery must never break
+        the model state machine. The (blocking) file IO runs in the executor."""
+        path = self.settings.prometheus_sd_path
+        if not path:
+            return False
+        from app.services.prometheus_targets import build_targets, write_targets_file
+
+        instances = await self.registry.snapshot()
+        targets = build_targets(instances)
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, write_targets_file, path, targets)
+        except Exception:
+            logger.warning("Failed to write Prometheus SD file at %s", path)
+            return False
+
     async def list(self) -> list[ModelInstance]:
         return await self.registry.snapshot()
 

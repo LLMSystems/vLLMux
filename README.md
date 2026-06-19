@@ -48,7 +48,7 @@ This project combines a routing server (LLM-Router-Server) with an easy-to-use m
 - Real-time status via Server-Sent Events (no polling)
 - **System topology** (Vue Flow) — a live mission-control graph of Clients → Router → model groups / Embedding → GPUs, with animated traffic edges, GPU-placement edges, and a control plane; nodes are clickable drill-ins
 - **Router load-balancing view** — an animated fan showing each replica's real traffic share and the instance the router will pick next
-- **Trends** — time-series charts (requests, error rate, p95 latency, tokens) over 15m–24h, aggregated from the persisted request log
+- **Grafana monitoring** (bundled) — Prometheus auto-discovers every running vLLM instance (file-based service discovery written by the backend as models start/stop) and scrapes its `/metrics`, alongside GPU (DCGM) and host (node-exporter) metrics. Grafana dashboards — **Overview** (single pane: health, latency SLO, capacity, GPU/host), **Scheduling & Capacity**, vLLM Performance/Query, GPU, Host — are embedded in the **Monitoring** tab, with SLO threshold lines, model-lifecycle annotations, and alert rules. See [Monitoring (Grafana)](#monitoring-grafana)
 - Per-model usage (count, error rate, p50/p95 latency, tokens), request log, and a state-transition event timeline
 - GPU / CPU / memory monitoring plus a GPU-process inventory
 
@@ -103,24 +103,30 @@ make up                              # docker compose -f deploy/docker-compose.y
 
 **Topology** (see [`deploy/docker-compose.yaml`](deploy/docker-compose.yaml)):
 
-| Service    | Image                  | Port    | Role |
-|------------|------------------------|---------|------|
-| `backend`  | `llmops-engine` (GPU)  | 5000    | Dashboard API; spawns vLLM subprocesses on `:800x` |
-| `router`   | `llmops-engine`        | 8887    | OpenAI-compatible router; **shares the backend's network namespace** so it reaches those localhost vLLM ports |
-| `frontend` | `llmops-frontend`      | 8884    | nginx serving the SPA + reverse-proxying `/api` → backend and `/v1` → router |
+| Service          | Image                  | Port    | Role |
+|------------------|------------------------|---------|------|
+| `backend`        | `llmops-engine` (GPU)  | 5000    | Dashboard API; spawns vLLM subprocesses on `:800x` |
+| `router`         | `llmops-engine`        | 8887    | OpenAI-compatible router; **shares the backend's network namespace** so it reaches those localhost vLLM ports |
+| `prometheus`     | `prom/prometheus`      | 9090    | Scrapes the vLLM fleet's `/metrics` via file-based SD; **also shares the backend's netns** so `localhost:800x` resolves to the spawned instances |
+| `grafana`        | `grafana/grafana`      | (proxied) | Dashboards + alerting; served single-origin under `/grafana` via the frontend nginx |
+| `dcgm-exporter`  | `nvcr.io/.../dcgm-exporter` (GPU) | 9400 | NVIDIA GPU telemetry (util, memory, temperature, power) |
+| `node-exporter`  | `prom/node-exporter`   | 9100    | Host metrics (CPU, RAM, disk, network) |
+| `frontend`       | `llmops-frontend`      | 8884    | nginx serving the SPA + reverse-proxying `/api` → backend, `/v1` → router, `/grafana` → grafana |
 
-Why one image, two services: only the backend truly needs vLLM (it launches the
-subprocesses), and the router must see them on `localhost` — so a single
-[`engine.Dockerfile`](deploy/engine.Dockerfile) (based on the official
-`vllm/vllm-openai`) runs as two services joined by `network_mode: service:backend`.
+Why one image, multiple services on one netns: only the backend truly needs vLLM
+(it launches the subprocesses), and the router + Prometheus must see them on
+`localhost` — so a single [`engine.Dockerfile`](deploy/engine.Dockerfile) (based
+on the official `vllm/vllm-openai`) runs as `backend` + `router`, joined (with
+Prometheus) by `network_mode: service:backend`.
 
-The frontend reaches the backend and router through nginx on a single origin, so
-no host/port is baked into the build. SQLite + the dynamic-model overlay persist
-in the `llmops-data` named volume; downloaded model **weights** are bind-mounted
-from the host HF cache (`HF_CACHE_DIR`, default `~/.cache/huggingface`) so they're
-browsable locally and shared with host-side tools. The canonical
-`packages/config-schema/config.yaml` is bind-mounted too, so you can edit models
-without rebuilding.
+The frontend reaches the backend, router, and Grafana through nginx on a single
+origin, so no host/port is baked into the build. SQLite + the dynamic-model
+overlay persist in the `llmops-data` named volume (Prometheus TSDB and Grafana
+state in `prometheus-data` / `grafana-data`); downloaded model **weights** are
+bind-mounted from the host HF cache (`HF_CACHE_DIR`, default
+`~/.cache/huggingface`) so they're browsable locally and shared with host-side
+tools. The canonical `packages/config-schema/config.yaml` is bind-mounted too, so
+you can edit models without rebuilding.
 
 > **Model lifecycle**: the router only routes and load-balances — it never
 > launches models. vLLM instances (and the Embedding/Reranker server) are owned
@@ -133,6 +139,31 @@ without rebuilding.
 ```bash
 curl http://localhost:8887/v1/models     # router: configured model groups
 curl http://localhost:5000/api/models    # backend: lifecycle state of each instance
+```
+
+#### Monitoring (Grafana)
+
+The stack bundles a full **Prometheus → Grafana** pipeline, no manual setup:
+
+- The **backend** writes a Prometheus file-based service-discovery file
+  (`LLMOPS_PROMETHEUS_SD_PATH`) listing every *ready* vLLM instance, refreshed as
+  models start/stop — so a dynamic fleet is scraped with zero config edits.
+- **Prometheus** (`:9090`) scrapes those instances' `/metrics` plus
+  `dcgm-exporter` (GPU) and `node-exporter` (host).
+- **Grafana** is served single-origin at **`http://localhost:8884/grafana`**
+  (anonymous read-only; log in as `admin` / `GRAFANA_ADMIN_PASSWORD` to edit).
+  Datasource and dashboards are auto-provisioned from
+  [`deploy/grafana`](deploy/grafana): **Overview**, **vLLM Scheduling &
+  Capacity** (custom), **Performance**/**Query** (official), **GPU** (DCGM), and
+  **Host** (Node Exporter). The same dashboards are embedded in the dashboard's
+  **Monitoring** tab.
+- **Alerting**: provisioned vLLM alert rules (target down, TTFT p95, KV cache,
+  request queueing) route to a webhook contact point — set `GRAFANA_ALERT_WEBHOOK`
+  in `deploy/.env` (Slack/Discord/generic) and restart Grafana to receive them.
+
+```bash
+curl http://localhost:9090/api/v1/targets        # prometheus: scrape target health
+# open http://localhost:8884/grafana             # dashboards + alerts
 ```
 
 ### Frontend (Web Dashboard)

@@ -50,6 +50,10 @@ class BackendSettings:
     admin_token: str = ""
     # Optional webhook URL; a JSON alert is POSTed when a model enters FAILED.
     alert_webhook: str = ""
+    # Optional path for the Prometheus file_sd targets file. The backend rewrites
+    # it whenever the set of ready vLLM instances changes, so Prometheus can
+    # scrape a dynamic fleet without config edits. Empty -> feature disabled.
+    prometheus_sd_path: str = ""
     # Total concurrency budget shared across running evals (sum of their
     # eval_batch_size). Evals run in parallel as long as the sum stays within
     # this; the rest queue. Maps to vLLM's max-num-seqs pressure. Runtime-editable
@@ -65,6 +69,7 @@ class BackendSettings:
         return cls(
             admin_token=os.environ.get("LLMOPS_ADMIN_TOKEN", "").strip(),
             alert_webhook=os.environ.get("LLMOPS_ALERT_WEBHOOK", "").strip(),
+            prometheus_sd_path=os.environ.get("LLMOPS_PROMETHEUS_SD_PATH", "").strip(),
             poll_interval=_env_float("LLMOPS_POLL_INTERVAL", 2.0),
             start_timeout=_env_float("LLMOPS_START_TIMEOUT", 300.0),
             stop_timeout=_env_float("LLMOPS_STOP_TIMEOUT", 10.0),

@@ -12,11 +12,11 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  LineChart,
   Package,
   Receipt,
   Server,
   TerminalSquare,
-  TrendingUp,
 } from '@lucide/vue'
 import { useModelsStore } from '@/stores/models'
 import StatusDot from '@/components/StatusDot.vue'
@@ -53,8 +53,8 @@ const nav = [
   { to: '/', label: '總覽', icon: LayoutDashboard },
   { to: '/models', label: '模型', icon: Server },
   { to: '/traffic', label: '流量', icon: ArrowLeftRight },
-  { to: '/trends', label: '趨勢', icon: TrendingUp },
   { to: '/requests', label: '請求', icon: Receipt },
+  { to: '/monitoring', label: '監控', icon: LineChart },
   { to: '/playground', label: '測試台', icon: TerminalSquare },
   { to: '/benchmark', label: '壓測', icon: Gauge },
   { to: '/eval', label: '評測', icon: ClipboardCheck },

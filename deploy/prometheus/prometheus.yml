@@ -1,0 +1,40 @@
+# Prometheus scrape config for the LLM-Router dashboard stack.
+#
+# The vLLM fleet is dynamic: the backend spawns instances on demand on localhost
+# ports that come and go as models are added/removed/restarted. So instead of a
+# static target list, the backend writes a file_sd targets file
+# (LLMOPS_PROMETHEUS_SD_PATH -> /app/data/prometheus_targets.json, shared via the
+# llmops-data volume and mounted here read-only) listing every *ready* vLLM
+# instance. Prometheus joins the backend's network namespace
+# (network_mode: service:backend), so the localhost:<port> targets resolve to the
+# same processes the backend launched.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: vllm
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/prometheus_targets.json
+        refresh_interval: 5s
+    relabel_configs:
+      # Use the stable group::instance_id as the `instance` label instead of the
+      # volatile localhost:<port> address, so dashboards/series survive a model
+      # being restarted on a different port.
+      - source_labels: [group, instance_id]
+        separator: "::"
+        target_label: instance
+
+  # GPU telemetry (utilization, memory, temperature, power) from dcgm-exporter.
+  # Reachable by service name on the compose network (prometheus shares the
+  # backend's netns, which is attached to that network).
+  - job_name: dcgm
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]
+
+  # Host metrics (CPU, RAM, disk, network) from node-exporter.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]

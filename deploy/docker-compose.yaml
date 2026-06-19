@@ -28,6 +28,9 @@ services:
       - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
       - LLMOPS_DB_PATH=/app/data/llmops.db
       - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      # Prometheus file_sd targets file: backend rewrites it as the ready vLLM
+      # fleet changes; the prometheus service reads it (shared via llmops-data).
+      - LLMOPS_PROMETHEUS_SD_PATH=/app/data/prometheus_targets.json
       - HF_HOME=/hf
       # evalscope perf datasets (ShareGPT, openqa…) cache here, not in HF_HOME.
       - MODELSCOPE_CACHE=/modelscope/hub
@@ -55,6 +58,7 @@ services:
       # fixed (internal routing + nginx target them by name).
       - "${BACKEND_PORT:-5000}:5000"   # dashboard backend API
       - "${ROUTER_PORT:-8887}:8887"    # router (lives in this namespace, so mapped here)
+      - "${PROMETHEUS_PORT:-9090}:9090"  # prometheus (shares this namespace too)
     shm_size: "16gb"  # vLLM/torch need a large /dev/shm
     deploy:
       resources:
@@ -87,6 +91,89 @@ services:
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: llmops-prometheus
+    depends_on:
+      - backend
+    # Share the backend's network namespace so the file_sd targets
+    # (localhost:800x) resolve to the vLLM subprocesses the backend spawned —
+    # the same trick the router uses. (So it can't declare its own ports; 9090 is
+    # published on the backend service above.)
+    network_mode: "service:backend"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Read the backend-written file_sd targets (read-only); same named volume.
+      - llmops-data:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: llmops-grafana
+    depends_on:
+      - prometheus
+    environment:
+      # Served behind nginx under /grafana (single origin, like /api and /v1):
+      # serve_from_sub_path makes Grafana emit asset/links under that prefix.
+      # root_url must carry the external port, or Grafana's redirects (e.g. the
+      # no-trailing-slash /grafana -> /grafana/) drop it and bounce to :80.
+      - GF_SERVER_ROOT_URL=http://localhost:${FRONTEND_PORT:-8884}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Anonymous read-only access: the dashboard already gates control behind the
+      # admin token, and this lets panels embed in the SPA without a second login.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_USERS_DEFAULT_THEME=dark
+      # Admin login for editing (anonymous is view-only). Override in deploy/.env.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Destination for the provisioned alert webhook contact point. Defaults to
+      # an obvious placeholder (the .invalid TLD never resolves) so provisioning
+      # succeeds with no real URL; set a real webhook in deploy/.env to enable
+      # notifications, then restart grafana.
+      - GRAFANA_ALERT_WEBHOOK=${GRAFANA_ALERT_WEBHOOK:-http://example.invalid/replace-me}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  # GPU telemetry exporter (utilization, memory, temperature, power) on :9400.
+  # Needs the nvidia runtime with the `utility` capability (DCGM/NVML access).
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    container_name: llmops-dcgm-exporter
+    cap_add:
+      - SYS_ADMIN
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu, utility]
+    restart: unless-stopped
+
+  # Host metrics (CPU, RAM, disk, network) on :9100. Reads the host's /proc,/sys
+  # via pid:host + a read-only rootfs bind so it reports the host, not the
+  # container.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: llmops-node-exporter
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
   frontend:
     build:
       context: ..
@@ -95,9 +182,12 @@ services:
     container_name: llmops-frontend
     depends_on:
       - backend
+      - grafana   # nginx resolves the `grafana` upstream at startup
     ports:
       - "${FRONTEND_PORT:-8884}:80"
     restart: unless-stopped
 
 volumes:
   llmops-data:
+  prometheus-data:
+  grafana-data:

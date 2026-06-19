@@ -54,26 +54,6 @@ async def requests_log(request: Request, model_key: Optional[str] = None, limit:
     return await _store(request).recent_requests(model_key=model_key, limit=limit)
 
 
-@router.get("/metrics/timeseries")
-async def metrics_timeseries(
-    request: Request,
-    window: int = 3600,
-    bucket: int = 60,
-    model_key: Optional[str] = None,
-):
-    """Bucketed request metrics over the last `window` seconds (for trend charts).
-
-    `bucket` is the bucket width in seconds; `model_key` optionally scopes to one
-    model group. Each point: ts, count, error_count, avg/p95 latency, total_tokens.
-    """
-    import time
-
-    since = time.time() - max(60, window)
-    return await _store(request).timeseries(
-        since=since, bucket_seconds=bucket, model_key=model_key
-    )
-
-
 @router.get("/models/{key}/logs")
 async def model_logs(
     key: str, tail: int = 200, manager: ModelManager = Depends(get_manager)

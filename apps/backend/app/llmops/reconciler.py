@@ -209,6 +209,14 @@ async def reconcile_once(
         for inst, _frm, to, _detail in transitions
     ):
         await manager.trigger_router_reload()
+    # Keep the Prometheus scrape-target file in sync whenever a vLLM instance
+    # joins or leaves the ready pool (READY in either direction of a transition),
+    # so monitoring tracks the live fleet. Idempotent (write-if-changed).
+    if manager is not None and any(
+        inst.kind == ModelKind.LLM and ModelState.READY in (frm, to)
+        for inst, frm, to, _detail in transitions
+    ):
+        await manager.write_prometheus_targets()
     if manager is not None and settings.auto_restart:
         await _process_restarts(registry, settings, store, manager)
 

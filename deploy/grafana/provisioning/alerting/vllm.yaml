@@ -1,0 +1,187 @@
+# Provisioned Grafana alert rules for the vLLM fleet.
+#
+# Each rule follows Grafana's standard three-stage shape: A = a Prometheus range
+# query, B = reduce(last) to a single number, C = threshold (the alert
+# condition). Thresholds here are sensible starting points — tune them to your
+# models/SLA. Rules evaluate against the provisioned `prometheus` datasource and
+# surface in Alerting -> Alert rules; wire a contact point (Slack/webhook) under
+# Alerting -> Contact points to actually get notified.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: vLLM
+    folder: Alerts
+    interval: 1m
+    rules:
+      - uid: vllm-target-down
+        title: vLLM target down
+        condition: C
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A vLLM instance has stopped responding to Prometheus scrapes."
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'up{job="vllm"}'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+              refId: C
+
+      - uid: vllm-ttft-p95-high
+        title: vLLM TTFT p95 high
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Time-to-first-token p95 is above 2s — users are waiting too long for the first token."
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [2] }
+              refId: C
+
+      - uid: vllm-kv-cache-high
+        title: vLLM KV cache near full
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KV cache usage is above 90% — the engine is close to capacity and may start queueing/preempting."
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max(vllm:kv_cache_usage_perc)'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0.9] }
+              refId: C
+
+      - uid: vllm-requests-waiting
+        title: vLLM requests queueing
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests have been waiting in the queue for 10m — the fleet is under-provisioned for current load."
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(vllm:num_requests_waiting)'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C

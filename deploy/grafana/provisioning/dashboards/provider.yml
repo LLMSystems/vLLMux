@@ -1,0 +1,15 @@
+# Load the bundled dashboards (deploy/grafana/dashboards) from disk on startup.
+# foldersFromFilesStructure maps each subdirectory (vllm/, gpu/, host/) to a
+# Grafana folder. updateIntervalSeconds picks up edits without a restart.
+apiVersion: 1
+
+providers:
+  - name: dashboards
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true

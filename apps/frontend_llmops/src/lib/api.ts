@@ -31,7 +31,6 @@ import type {
   RouterMetrics,
   SettingValue,
   StateEvent,
-  TimeseriesPoint,
   UsageRow,
 } from '@/types/api'
 
@@ -167,13 +166,6 @@ export const api = {
     request<LogResponse>(API_BASE, `/api/models/${enc(key)}/logs?tail=${tail}`),
   getModelMetrics: (key: string) =>
     request<ModelStartupMetrics>(API_BASE, `/api/models/${enc(key)}/metrics`),
-  getTimeseries: (opts: { window?: number; bucket?: number; modelKey?: string } = {}) => {
-    const params = new URLSearchParams()
-    params.set('window', String(opts.window ?? 3600))
-    params.set('bucket', String(opts.bucket ?? 60))
-    if (opts.modelKey) params.set('model_key', opts.modelKey)
-    return request<TimeseriesPoint[]>(API_BASE, `/api/metrics/timeseries?${params.toString()}`)
-  },
   healthz: () => request<HealthZ>(API_BASE, '/healthz'),
 
   // ---- LLM Router -----------------------------------------------------------

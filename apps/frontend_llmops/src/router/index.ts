@@ -22,16 +22,16 @@ const router = createRouter({
       component: () => import('@/views/TrafficView.vue'),
     },
     {
-      path: '/trends',
-      name: 'trends',
-      meta: { title: 'Trends' },
-      component: () => import('@/views/TrendsView.vue'),
-    },
-    {
       path: '/requests',
       name: 'requests',
       meta: { title: 'Requests' },
       component: () => import('@/views/RequestsView.vue'),
+    },
+    {
+      path: '/monitoring',
+      name: 'monitoring',
+      meta: { title: 'Monitoring' },
+      component: () => import('@/views/MonitoringView.vue'),
     },
     {
       path: '/benchmark',

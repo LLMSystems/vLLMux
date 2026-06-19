@@ -42,15 +42,6 @@ export interface ModelView {
   restart_count?: number
 }
 
-export interface TimeseriesPoint {
-  ts: number
-  count: number
-  error_count: number
-  avg_latency_ms: number | null
-  p95_latency_ms: number | null
-  total_tokens: number
-}
-
 export interface MemoryInfo {
   total: number
   available: number

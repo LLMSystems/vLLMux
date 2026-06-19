@@ -1,0 +1,21 @@
+# Auto-provisioned Prometheus datasource.
+#
+# Prometheus runs in the backend's network namespace (network_mode:
+# service:backend) with 9090 published on the backend service, so on the compose
+# network it is reachable as `backend:9090` — the same way nginx reaches the
+# router at backend:8887.
+#
+# Set as default so the official vLLM dashboards' `DS_PROMETHEUS` datasource
+# variable resolves to it automatically (no manual import/selection needed).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://backend:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s

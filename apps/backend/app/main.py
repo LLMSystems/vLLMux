@@ -118,6 +118,10 @@ async def lifespan(app: FastAPI):
     # honest from the first response.
     await adopt_running(registry, http_client, settings, store)
 
+    # Seed the Prometheus file_sd targets file (covering adopted-ready instances)
+    # so monitoring has a valid file from t=0, before the first state transition.
+    await manager.write_prometheus_targets()
+
     tasks = [
         asyncio.create_task(reconcile_loop(registry, http_client, settings, store, manager)),
         asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
