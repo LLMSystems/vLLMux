@@ -20,13 +20,7 @@
 
 **vLLMux** is a self-hosted control plane for serving many LLMs on
 [vLLM](https://github.com/vllm-project/vllm). Paste a `vllm serve …` command and it
-becomes a routable model; the router load-balances across instances; a reconciler keeps
-the fleet converged to the desired state; and a bundled Prometheus + Grafana stack
-monitors everything — all behind one Vue dashboard.
-
-> One image, three roles (**backend** launches the models · **router** load-balances ·
-> **Prometheus** scrapes them, sharing one network namespace) plus a Vue **frontend** —
-> started by a single `docker compose`.
+becomes a routable model; the router load-balances across instances; and a bundled Prometheus + Grafana stack monitors everything — all behind one Vue dashboard.
 
 ## Highlights
 

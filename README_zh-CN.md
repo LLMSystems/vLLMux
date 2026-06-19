@@ -22,20 +22,18 @@
 [vLLM](https://github.com/vllm-project/vllm)。
 內建的 Prometheus + Grafana 監控——全都在同一個 Vue 控制台之後。
 
-> 一份映像、三種角色（**backend** 拉起模型 · **router** 負載平衡 · **Prometheus** 抓取
-> 指標，共用同一個 network namespace）加上 Vue **frontend** —— 由單一 `docker compose` 啟動。
 
 ## 功能亮點
 
-- **貼上 `vllm serve …` 即可新增模型** — 解析成表單、以動態 overlay 疊加；router 熱重載，免改 `config.yaml`。
-- **生命週期 + 自癒** — 每實例狀態機（`stopped → starting → ready → failed`）、VRAM 預檢防呆、GPU 自動擺放、崩潰指數退避自動重啟。
+- **貼上 `vllm serve …` 即可新增模型** — 解析成表單、以動態 overlay 疊加；router 熱重載。
+- **生命週期** — 每實例狀態機（`stopped → starting → ready → failed`）、VRAM 預檢防呆、GPU 自動擺放、崩潰指數退避自動重啟。
 - **負載感知路由** — 自動挑負載最低的副本（運行中／等待中請求 + KV 快取使用率）。
 - **即時觀測** — SSE 狀態、動畫系統拓撲圖與 router 負載平衡圖、每模型用量／延遲／錯誤統計。
 - **內建 Grafana 監控** — Prometheus 自動發現每個運行中的實例；總覽／容量／效能／GPU／主機 dashboards 嵌入應用內，含 SLO 門檻線與告警。
-- **Playground** — OpenAI 相容的 chat（串流）／completions／embeddings／reranking，含思考過程顯示。
-- **壓測與評測** — evalscope 壓測（並發、到達率、SLA 自動調優）＋ 30+ 個準確度資料集與 LLM-as-judge。
+- **Playground** — OpenAI 相容的 chat（串流）／completions／embeddings／reranking。
+- **壓測與評測** — LLM 壓測（並發、到達率、SLA 自動調優）＋ 30+ 個準確度資料集與 LLM-as-judge。
 - **資料庫** — 在 UI 瀏覽／預下載 HF 權重與資料集；工具調用 parser 助手；LoRA 支援。
-- **以設定保安全** — 管理員權杖控管操作，並可發行／撤銷帶 per-key 用量歸屬的 API 金鑰。
+- **安全性** — 管理員權杖控管操作，並可發行／撤銷帶 per-key 用量歸屬的 API 金鑰。
 
 完整說明見 [docs/features_zh-CN.md](docs/features_zh-CN.md)。
 
