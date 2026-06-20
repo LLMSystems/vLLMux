@@ -19,12 +19,20 @@ def make_app():
     backend_health, so we don't need a real FastAPI instance.
     """
 
-    def _make(metrics_cache=None, backend_inflight=None, backend_health=None):
+    def _make(
+        metrics_cache=None,
+        backend_inflight=None,
+        backend_health=None,
+        rr_counters=None,
+        routing_strategy="least_load",
+    ):
         return SimpleNamespace(
             state=SimpleNamespace(
                 metrics_cache=metrics_cache or {},
                 backend_inflight=backend_inflight or {},
                 backend_health=backend_health or {},
+                rr_counters=rr_counters if rr_counters is not None else {},
+                routing_strategy=routing_strategy,
             )
         )
 

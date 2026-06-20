@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.llm_router.overlay import load_config_with_overlay
 from src.llm_router.metrics_poller import poll_metrics_forever
 from src.llm_router.router import router
+from src.llm_router.routing_strategies import DEFAULT_STRATEGY
 from src.llm_router.store import LLMOpsStore
 from src.llm_router.vllm_metrics_client import VLLMMetricsClient
 
@@ -48,6 +49,10 @@ async def lifespan(app: FastAPI):
     app.state.metrics_cache = {}
     app.state.backend_inflight = {}
     app.state.backend_health = {}
+    # Routing policy: global default (per-group overrides ride model_config), plus
+    # the round-robin cursor map. See routing_strategies.py.
+    app.state.routing_strategy = os.environ.get("LLMOPS_ROUTING_STRATEGY", DEFAULT_STRATEGY)
+    app.state.rr_counters = {}
 
     # Shared telemetry DB (same file the dashboard backend reads). LLMOPS_DB_PATH
     # must match the backend; default resolves to <repo>/data/llmops.db.

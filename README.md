@@ -28,7 +28,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 
 - **Add a model by pasting `vllm serve …`** — parsed into a form and layered on as a dynamic overlay; the router hot-reloads, no `config.yaml` edits.
 - **Lifecycle + self-healing** — per-instance state machine (`stopped → starting → ready → failed`), VRAM pre-flight guard, GPU auto-placement, crash auto-restart with backoff.
-- **Load-aware routing** — picks the least-loaded replica (running/waiting requests + KV-cache usage).
+- **Pluggable routing strategies** — pick the load-balancing policy per model group or globally: `least_load` (default), `round_robin`, `random`, `least_inflight`, `p2c`, plus `session_affinity` / `prefix_affinity` for cache reuse on multi-turn chat & shared prompts. Switch it live from the dashboard; transparent failover + per-backend cooldown apply to every strategy.
 - **Live observability** — SSE status, animated system-topology & router-balancing graphs, per-model usage / latency / error stats.
 - **Bundled Grafana monitoring** — Prometheus auto-discovers every running instance; Overview / Capacity / Performance / GPU / Host dashboards embedded in-app, with SLO thresholds & alerts.
 - **Playground** — OpenAI-compatible chat (streaming) / completions / embeddings / reranking, with reasoning display.
@@ -106,6 +106,16 @@ share one network namespace so the spawned vLLM instances are reachable on `loca
 ## Requirements
 
 NVIDIA GPU (CUDA 13.1+ recommended) · 16GB+ RAM · 50GB+ disk.
+
+> **Tip — running multiple instances on limited RAM.** Each vLLM instance runs
+> `torch.compile` + CUDA-graph capture on startup, which is heavy on **system RAM**
+> (not VRAM). On a small box (e.g. WSL2 with ~8GB RAM), launching a second instance
+> of the same model can exhaust RAM and thrash swap, leaving the new instance stuck
+> in `starting`. Add **`--enforce-eager`** to the launch command to skip compilation:
+> startup drops from minutes to seconds and RAM/CPU pressure falls sharply, at a small
+> inference-latency cost. RAM — not VRAM — is usually the bottleneck for multi-instance,
+> so give WSL more memory (`.wslconfig` → `memory=12GB`, then `wsl --shutdown`) before
+> scaling out.
 
 ## License
 

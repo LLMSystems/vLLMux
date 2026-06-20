@@ -172,6 +172,13 @@ export interface InstanceMetrics {
 }
 export type RouterMetrics = Record<string, Record<string, InstanceMetrics>>
 
+/** Global load-balancing strategy state from the router's GET /routing. */
+export interface RoutingInfo {
+  strategy: string
+  available: string[]
+  default: string
+}
+
 export interface OpenAIModelList {
   object: string
   // `parent` is present only for LoRA adapters (points at the base group).

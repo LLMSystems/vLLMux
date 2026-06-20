@@ -18,6 +18,7 @@ import { useAuth } from '@/composables/useAuth'
 import { api, ApiError } from '@/lib/api'
 import { toast } from '@/lib/toast'
 import { formatDuration, formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
+import { routingStrategyLabel } from '@/lib/routingStrategies'
 import type { EmbeddingModelParams, LoraAdapter, ModelStartupMetrics, StateEvent } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
@@ -63,14 +64,20 @@ const gpu = computed(() =>
 )
 const busy = computed(() => (props.modelKey ? models.pending.has(props.modelKey) : false))
 
-// Every vLLM parameter from model_config, shown generically (model_tag is
-// already surfaced in the header, so it's filtered out here).
+// Every vLLM parameter from model_config, shown generically. model_tag is in the
+// header; lora_modules has its own section; routing_strategy is a router-only knob
+// (not a vLLM flag), surfaced separately below.
 const vllmParams = computed(
   () =>
     Object.entries(engine.value?.settings ?? {}).filter(
-      ([k]) => k !== 'model_tag' && k !== 'lora_modules',
+      ([k]) => k !== 'model_tag' && k !== 'lora_modules' && k !== 'routing_strategy',
     ) as [string, string | number | boolean | null][],
 )
+// Router load-balancing policy for the group (shown apart from vLLM flags).
+const routingStrategy = computed(() => {
+  const s = engine.value?.settings?.routing_strategy
+  return typeof s === 'string' && s ? s : null
+})
 // LoRA adapters mounted on this group (rendered apart from the scalar params).
 const loras = computed(() => engine.value?.settings?.lora_modules ?? [])
 // Runtime (hot) LoRA load/unload is only possible when the model is running and
@@ -466,6 +473,17 @@ const eventColor: Record<string, string> = {
                   <Pencil class="size-3.5" />
                 </Button>
               </div>
+            </div>
+          </div>
+
+          <!-- Routing policy (router-only, not a vLLM flag) -->
+          <div v-if="routingStrategy">
+            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              路由策略（負載平衡）
+            </p>
+            <div class="rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-sm">
+              {{ routingStrategyLabel(routingStrategy) }}
+              <span class="font-mono text-xs text-muted-foreground">（{{ routingStrategy }}）</span>
             </div>
           </div>
 
