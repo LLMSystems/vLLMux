@@ -42,6 +42,10 @@ services:
       # Edit models without rebuilding: the canonical config is bind-mounted.
       - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
       - llmops-data:/app/data          # shared SQLite + dynamic-model overlay
+      # Cross-instance KV-cache store: vLLM instances spawned by the backend share
+      # this dir as their OffloadingConnector root_dir so they can reuse each
+      # other's KV blocks. See docs/vllm-kv-cache-cross-instance-design.md.
+      - llmops-kv-cache:/kv_cache
       # HF cache bind-mounted to a host dir so weights are browsable locally and
       # shared with a host-side HF cache. HF_HOME=/hf -> /hf/hub == <dir>/hub.
       - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
@@ -189,5 +193,6 @@ services:
 
 volumes:
   llmops-data:
+  llmops-kv-cache:
   prometheus-data:
   grafana-data:

@@ -61,6 +61,11 @@ class EngineModelConfig(BaseModel):
     # vLLM flags; `lora_modules` is typed so the dashboard can render + manage the
     # adapters and the launcher can emit the multi-arg `--lora-modules` form.
     lora_modules: Optional[list[LoraModule]] = None
+    # Cross-instance KV-cache sharing. A vLLM `--kv-transfer-config` payload
+    # (e.g. OffloadingConnector over a shared root_dir); typed so it's discoverable
+    # and the launcher emits it as one JSON arg + sets PYTHONHASHSEED=0. Free-form
+    # dict because the connector schema varies. See docs/vllm-kv-cache-cross-instance-design.md.
+    kv_transfer_config: Optional[dict] = None
 
 
 class LLMEngine(BaseModel):

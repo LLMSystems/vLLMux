@@ -29,6 +29,10 @@ LLM_engines:
       max_model_len: 500
       gpu_memory_utilization: 0.35
       tensor_parallel_size: 1
+      # Cross-instance KV-cache sharing is controlled per-group from the model
+      # editor UI (writes a kv_transfer_config OffloadingConnector preset into the
+      # overlay), not pinned here — so the toggle can turn it off again.
+      # See docs/vllm-kv-cache-cross-instance-design.md.
       # Tool calling: Qwen3 dense uses the Hermes-style tool format. It's a
       # reasoning ("thinking") model, so also split <think> via the qwen3
       # reasoning parser (tool calls are parsed from content, not reasoning).

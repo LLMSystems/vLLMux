@@ -114,6 +114,12 @@ def build_vllm_cli_args(model_cfg: dict) -> list[str]:
         elif isinstance(value, list):
             cli_args.append(key_flag)
             cli_args.append(json.dumps(value))
+        elif isinstance(value, dict):
+            # Nested-JSON engine args (e.g. --kv-transfer-config for cross-instance
+            # KV sharing) need a single JSON value; str(dict) emits Python single
+            # quotes that vLLM's JSON parse rejects.
+            cli_args.append(key_flag)
+            cli_args.append(json.dumps(value, ensure_ascii=False))
         else:
             cli_args.append(key_flag)
             cli_args.append(str(value))
@@ -168,6 +174,12 @@ class VllmLauncher:
         # (kept out of the CLI args; see build_vllm_cli_args).
         if merged.get(_LORA_RUNTIME_KEY):
             env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
+
+        # Cross-instance KV sharing: every process sharing the same KV store must
+        # use an identical hash seed, otherwise the same content yields different
+        # block hashes per process and cross-process prefix hits never land.
+        if merged.get("kv_transfer_config"):
+            env.setdefault("PYTHONHASHSEED", "0")
 
         command = ["vllm"] + build_vllm_cli_args(merged)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")

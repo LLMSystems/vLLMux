@@ -74,6 +74,46 @@ def test_build_vllm_cli_args_requires_model_tag():
         build_vllm_cli_args({"dtype": "float16"})
 
 
+def test_kv_transfer_config_emitted_as_single_json_arg():
+    # Nested-dict engine args (e.g. --kv-transfer-config) must become one valid
+    # JSON value, not Python's str(dict) (single quotes vLLM can't parse).
+    cfg = {
+        "kv_connector": "OffloadingConnector",
+        "kv_role": "kv_both",
+        "kv_connector_extra_config": {"spec_name": "TieringOffloadingSpec"},
+    }
+    args = build_vllm_cli_args({"model_tag": "org/m", "kv_transfer_config": cfg})
+    assert "--kv-transfer-config" in args
+    payload = args[args.index("--kv-transfer-config") + 1]
+    assert json.loads(payload) == cfg          # valid JSON, round-trips
+    assert "'" not in payload                  # not a Python repr
+
+
+def test_kv_transfer_config_sets_pythonhashseed():
+    # Cross-instance KV sharing needs an identical hash seed on every process.
+    cfg = RootConfig.model_validate(
+        {
+            "server": {"host": "0.0.0.0", "port": 8887},
+            "LLM_engines": {
+                "M": {
+                    "instances": [{"id": "a", "host": "localhost", "port": 8000, "cuda_device": 0}],
+                    "model_config": {
+                        "model_tag": "org/m",
+                        "kv_transfer_config": {"kv_connector": "OffloadingConnector"},
+                    },
+                }
+            },
+        }
+    )
+    spec = VllmLauncher().build_spec(cfg, "config.yaml", "M::a")
+    assert spec.env.get("PYTHONHASHSEED") == "0"
+
+
+def test_no_pythonhashseed_without_kv_transfer():
+    spec = VllmLauncher().build_spec(FAKE_CONFIG, "config.yaml", "Qwen3-0.6B::qwen3")
+    assert "PYTHONHASHSEED" not in spec.env
+
+
 def test_routing_strategy_not_passed_to_vllm():
     # routing_strategy is a router-only knob riding the shared model_config; it
     # must never reach `vllm serve` (vLLM errors on the unknown arg).
