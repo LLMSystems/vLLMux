@@ -11,7 +11,8 @@ from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
                                                   mark_backend_failure,
                                                   mark_backend_success)
 from src.llm_router.auth import authenticate
-from src.llm_router.backend_selector import select_instance_least_load
+from src.llm_router.routing_strategies import (DEFAULT_STRATEGY, STRATEGIES,
+                                               select_instance)
 from src.llm_router.lora import iter_models, resolve_model
 from src.llm_router.overlay import load_config_with_overlay
 
@@ -32,6 +33,35 @@ async def reload_config(request: Request):
     groups = list(request.app.state.config.get("LLM_engines", {}).keys())
     logger.info("Config reloaded via /reload: %d groups", len(groups))
     return {"status": "reloaded", "groups": groups}
+
+
+@router.get("/routing")
+async def get_routing(request: Request):
+    """Current global routing strategy + the selectable catalogue.
+
+    Note: a per-group `model_config.routing_strategy` still overrides this global
+    value for that group; this endpoint reads/sets the global default only."""
+    return {
+        "strategy": getattr(request.app.state, "routing_strategy", DEFAULT_STRATEGY),
+        "available": sorted(STRATEGIES),
+        "default": DEFAULT_STRATEGY,
+    }
+
+
+@router.post("/routing")
+async def set_routing(request: Request):
+    """Hot-swap the global routing strategy (takes effect on the next request, no
+    reload). Not persisted — restarts fall back to LLMOPS_ROUTING_STRATEGY."""
+    body = await request.json()
+    name = body.get("strategy")
+    if name not in STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown strategy {name!r}; valid: {sorted(STRATEGIES)}",
+        )
+    request.app.state.routing_strategy = name
+    logger.info("Routing strategy set to %s via /routing", name)
+    return {"strategy": name}
 
 
 def _usage_from_body(body) -> dict | None:
@@ -72,6 +102,70 @@ def _scan_sse_for_usage(buffer: bytes, captured: dict) -> bytes:
             if isinstance(obj, dict) and obj.get("usage"):
                 captured["usage"] = obj["usage"]
     return buffer
+
+
+def _resolve_strategy(app, model_cfg: dict) -> str:
+    """Pick the routing strategy: per-group override > global env > default.
+
+    The per-group override rides the group's `model_config` (EngineModelConfig is
+    `extra="allow"`, so `routing_strategy` passes through with no schema change).
+    The global default is read once into app.state.routing_strategy at startup.
+    """
+    mc = model_cfg.get("model_config") or {}
+    return (
+        mc.get("routing_strategy")
+        or getattr(app.state, "routing_strategy", None)
+        or DEFAULT_STRATEGY
+    )
+
+
+def _session_key(request: Request, body: dict) -> str | None:
+    """Affinity key for session_affinity: X-Session-Id header, else OpenAI `user`."""
+    sid = request.headers.get("x-session-id")
+    if sid:
+        return sid
+    user = body.get("user")
+    return user if isinstance(user, str) and user else None
+
+
+def _content_text(content) -> str:
+    """Flatten an OpenAI message `content` (str or multimodal parts) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            p.get("text", "")
+            for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return ""
+
+
+def _prompt_prefix(body: dict, limit: int = 512) -> str | None:
+    """Affinity key for prefix_affinity: the leading prompt text, bounded.
+
+    Chat: `role:content` of the first messages until `limit` chars. Completions:
+    the `prompt` (or its first element). Bounded so the hot path stays cheap.
+    """
+    msgs = body.get("messages")
+    if isinstance(msgs, list) and msgs:
+        out: list[str] = []
+        total = 0
+        for m in msgs:
+            if not isinstance(m, dict):
+                continue
+            piece = f"{m.get('role', '')}:{_content_text(m.get('content'))}"
+            out.append(piece)
+            total += len(piece)
+            if total >= limit:
+                break
+        return ("\n".join(out)[:limit]) or None
+    prompt = body.get("prompt")
+    if isinstance(prompt, str):
+        return prompt[:limit] or None
+    if isinstance(prompt, list) and prompt and isinstance(prompt[0], str):
+        return prompt[0][:limit] or None
+    return None
 
 
 async def _record_request(app, model_key, instance_id, path, status_code, started,
@@ -155,9 +249,17 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
         tried: set[str] = set()
         response = None
 
+        # Routing policy + the inputs the affinity strategies need (computed once;
+        # key extraction is skipped for strategies that don't use it).
+        strategy_name = _resolve_strategy(request.app, model_cfg)
+        session_key = _session_key(request, request_json) if strategy_name == "session_affinity" else None
+        prompt_prefix = _prompt_prefix(request_json) if strategy_name == "prefix_affinity" else None
+
         for attempt in range(max_attempts):
-            instance = await select_instance_least_load(
-                app=request.app, model_key=model_key, model_cfg=model_cfg, exclude=tried,
+            instance = await select_instance(
+                request.app, model_key, model_cfg,
+                strategy=strategy_name, exclude=tried,
+                session_key=session_key, prompt_prefix=prompt_prefix,
             )
             instance_id = instance["id"]
             tried.add(instance_id)

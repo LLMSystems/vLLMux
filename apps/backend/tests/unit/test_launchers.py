@@ -74,6 +74,17 @@ def test_build_vllm_cli_args_requires_model_tag():
         build_vllm_cli_args({"dtype": "float16"})
 
 
+def test_routing_strategy_not_passed_to_vllm():
+    # routing_strategy is a router-only knob riding the shared model_config; it
+    # must never reach `vllm serve` (vLLM errors on the unknown arg).
+    args = build_vllm_cli_args(
+        {"model_tag": "org/m", "dtype": "float16", "routing_strategy": "session_affinity"}
+    )
+    assert "--routing-strategy" not in args
+    assert "session_affinity" not in args
+    assert "--dtype" in args  # other flags still pass through
+
+
 def test_build_vllm_cli_args_lora_modules_multi_value():
     args = build_vllm_cli_args(
         {

@@ -29,6 +29,7 @@ import type {
   RequestRow,
   ResourcesView,
   RouterMetrics,
+  RoutingInfo,
   SettingValue,
   StateEvent,
   UsageRow,
@@ -171,6 +172,15 @@ export const api = {
   // ---- LLM Router -----------------------------------------------------------
   routerModels: () => request<OpenAIModelList>(ROUTER_BASE, '/v1/models'),
   routerMetrics: () => request<RouterMetrics>(ROUTER_BASE, '/metrics'),
+
+  /** Current global load-balancing strategy + the selectable catalogue. */
+  getRouting: () => request<RoutingInfo>(ROUTER_BASE, '/routing'),
+  /** Hot-swap the global strategy (effective next request; not persisted). */
+  setRouting: (strategy: string) =>
+    request<{ strategy: string }>(ROUTER_BASE, '/routing', {
+      method: 'POST',
+      body: JSON.stringify({ strategy }),
+    }),
 
   /** SSE endpoint URL for the live model snapshot stream. */
   modelStreamUrl: () => `${API_BASE}/api/stream/models`,

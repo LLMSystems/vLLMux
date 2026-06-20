@@ -29,6 +29,12 @@ LLM_engines:
       max_model_len: 500
       gpu_memory_utilization: 0.35
       tensor_parallel_size: 1
+      # Load-balancing policy for this group: session_affinity keeps a chat
+      # session on one replica (better multi-turn KV-cache reuse), falling back to
+      # least-load when there's no session key or the home replica is overloaded.
+      # See docs/routing-strategies.md. (No-op for single-instance groups below,
+      # which always route to their one instance; set for intent + future scaling.)
+      routing_strategy: "session_affinity"
       # Tool calling: Qwen3 dense uses the Hermes-style tool format. It's a
       # reasoning ("thinking") model, so also split <think> via the qwen3
       # reasoning parser (tool calls are parsed from content, not reasoning).
@@ -62,6 +68,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.30
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # Qwen2.5 tokenizer_config ships Hermes-style tool use — parser `hermes`.
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"
@@ -83,6 +90,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.45
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # Qwen2.5 tokenizer_config ships Hermes-style tool use — parser `hermes`.
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"
@@ -100,6 +108,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.85
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # Qwen2.5 tokenizer_config ships Hermes-style tool use — parser `hermes`.
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"
@@ -117,6 +126,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.50
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # No tool calling: SmolLM2 has no matching vLLM tool-call parser. Adding a
       # mismatched parser wouldn't produce tool_calls (see docs/vllm_auto_tool_整理.md).
 
@@ -137,6 +147,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.35
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # No tool calling: TinyLlama has no matching vLLM tool-call parser.
 
   # --- Single-instance group ---
@@ -152,6 +163,7 @@ LLM_engines:
       max_model_len: 2048
       gpu_memory_utilization: 0.90
       tensor_parallel_size: 1
+      routing_strategy: "session_affinity"
       # No tool calling: vLLM has no Phi-3.5 tool parser (phi4_mini_json is Phi-4 only).
 
 embedding_server:

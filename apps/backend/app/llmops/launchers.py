@@ -53,6 +53,12 @@ LOG_DIR = "./logs"
 
 # Keys consumed as env vars / handled specially, not emitted as CLI flags.
 _LORA_RUNTIME_KEY = "allow_runtime_lora"
+# Router-only knobs that ride the shared model_config (EngineModelConfig is
+# extra="allow") but belong to the router, not vLLM — never pass them to
+# `vllm serve` or it errors on an unknown argument.
+_ROUTER_ONLY_KEYS = frozenset({"routing_strategy"})
+# Everything build_vllm_cli_args must skip (model_tag is the positional arg).
+_SKIP_CLI_KEYS = frozenset({"model_tag", _LORA_RUNTIME_KEY}) | _ROUTER_ONLY_KEYS
 
 # vLLM's --max-loras defaults to 1 (only one distinct adapter per batch, which
 # serialises mixed-LoRA traffic and leaves no headroom for hot-loading more).
@@ -85,7 +91,7 @@ def build_vllm_cli_args(model_cfg: dict) -> list[str]:
 
     cli_args = ["serve", model_tag]
     for key, value in model_cfg.items():
-        if key == "model_tag" or key == _LORA_RUNTIME_KEY or value is None:
+        if key in _SKIP_CLI_KEYS or value is None:
             continue
         key_flag = "--" + key.replace("_", "-")
         if key == "lora_modules":

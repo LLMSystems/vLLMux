@@ -29,7 +29,7 @@
 
 - **貼上 `vllm serve …` 即可新增模型** — 解析成表單、以動態 overlay 疊加；router 熱重載。
 - **生命週期** — 每實例狀態機（`stopped → starting → ready → failed`）、VRAM 預檢防呆、GPU 自動擺放、崩潰指數退避自動重啟。
-- **負載感知路由** — 自動挑負載最低的副本（運行中／等待中請求 + KV 快取使用率）。
+- **可插拔路由策略** — 每個模型群組或全域各自選負載平衡策略：`least_load`（預設）、`round_robin`、`random`、`least_inflight`、`p2c`,以及 `session_affinity` / `prefix_affinity`(多輪對話與共用 prompt 的快取重用）。可在控制台即時切換;失效轉移與每後端冷卻對所有策略一體適用。
 - **即時觀測** — SSE 狀態、動畫系統拓撲圖與 router 負載平衡圖、每模型用量／延遲／錯誤統計。
 - **內建 Grafana 監控** — Prometheus 自動發現每個運行中的實例；總覽／容量／效能／GPU／主機 dashboards 嵌入應用內，含 SLO 門檻線與告警。
 - **Playground** — OpenAI 相容的 chat（串流）／completions／embeddings／reranking。
@@ -106,6 +106,14 @@ namespace，所以被拉起的 vLLM 實例可在 `localhost` 互相連到。
 ## 環境需求
 
 NVIDIA GPU（建議 CUDA 13.1+）· 16GB+ RAM · 50GB+ 磁碟。
+
+> **提示 — RAM 有限時跑多個 instance。** 每個 vLLM instance 啟動時都會做
+> `torch.compile` + CUDA-graph capture，這非常吃**系統 RAM**（不是 VRAM）。在小機器上
+> （例如 WSL2 只有 ~8GB RAM），對同一顆模型開第二個 instance 很容易把 RAM 吃光、swap
+> 抖動，讓新 instance 一直卡在 `starting`。在啟動指令加上 **`--enforce-eager`** 即可跳過
+> 編譯：啟動時間從數分鐘降到數秒、RAM/CPU 壓力大幅下降，代價只是推理延遲略增。多 instance
+> 的瓶頸通常是 **RAM 而非 VRAM**，擴展前先把 WSL 記憶體加大（`.wslconfig` →
+> `memory=12GB`，再 `wsl --shutdown`）。
 
 ## 授權
 

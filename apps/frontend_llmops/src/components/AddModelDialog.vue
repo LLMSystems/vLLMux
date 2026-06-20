@@ -12,6 +12,7 @@ import { ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
 import { formatBytes } from '@/lib/utils'
+import { ROUTING_STRATEGIES, routingStrategyLabel } from '@/lib/routingStrategies'
 import type { CachedModel, DownloadJob, LoraAdapter, LoraModule, SettingValue } from '@/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
@@ -37,6 +38,11 @@ const port = ref<number>(8000)
 const cudaDevice = ref<number | null>(null)
 const modelTag = ref('')
 const params = ref<{ key: string; value: string }[]>([])
+// Router-only load-balancing policy for the group. Lives in model_config but is
+// NOT a vLLM flag, so it's edited as its own field and kept out of the raw param
+// list (the launcher would otherwise reject it as an unknown `vllm serve` arg).
+// '' = inherit the global default.
+const routingStrategy = ref('')
 // LoRA adapters mounted at serve time; edited apart from the flat param list
 // because each is a {name, path, base_model_name} object, not a scalar flag.
 const loras = ref<LoraModule[]>([])
@@ -141,6 +147,7 @@ function reset() {
   cudaDevice.value = null
   modelTag.value = ''
   params.value = []
+  routingStrategy.value = ''
   loras.value = []
 }
 
@@ -150,12 +157,19 @@ function extractLoras(entries: [string, unknown][]): [string, unknown][] {
   loras.value = []
   const rest: [string, unknown][] = []
   for (const [k, v] of entries) {
-    if (k === 'lora_modules' && Array.isArray(v)) {
-      loras.value = (v as LoraModule[]).map((m) => ({
-        name: m.name ?? '',
-        path: m.path ?? '',
-        base_model_name: m.base_model_name ?? '',
-      }))
+    if (k === 'lora_modules') {
+      // `lora_modules` is always owned by the LoRA editor — never let it leak
+      // into the raw param list. The config endpoint reports `lora_modules: null`
+      // for models without adapters; if that fell through to `rest` it would be
+      // rendered as a param and re-submitted as the string "", which fails the
+      // backend's `Optional[list[LoraModule]]` validation.
+      loras.value = Array.isArray(v)
+        ? (v as LoraModule[]).map((m) => ({
+            name: m.name ?? '',
+            path: m.path ?? '',
+            base_model_name: m.base_model_name ?? '',
+          }))
+        : []
     } else {
       rest.push([k, v])
     }
@@ -175,8 +189,9 @@ function prefillForEdit() {
   port.value = cfg.port
   cudaDevice.value = cfg.cuda_device ?? null
   modelTag.value = String(cfg.settings.model_tag ?? '')
+  routingStrategy.value = String(cfg.settings.routing_strategy ?? '')
   params.value = extractLoras(
-    Object.entries(cfg.settings).filter(([k2]) => k2 !== 'model_tag'),
+    Object.entries(cfg.settings).filter(([k2]) => k2 !== 'model_tag' && k2 !== 'routing_strategy'),
   ).map(([k2, v]) => ({ key: k2, value: v === null ? '' : String(v) }))
   warnings.value = []
   parsed.value = true // skip the paste/parse step
@@ -209,8 +224,11 @@ async function parse() {
     port.value = p.instance.port
     cudaDevice.value = p.instance.cuda_device
     modelTag.value = String(p.model_config.model_tag ?? '')
+    routingStrategy.value = String(
+      (p.model_config as Record<string, unknown>).routing_strategy ?? '',
+    )
     params.value = extractLoras(
-      Object.entries(p.model_config).filter(([k]) => k !== 'model_tag'),
+      Object.entries(p.model_config).filter(([k]) => k !== 'model_tag' && k !== 'routing_strategy'),
     ).map(([k, v]) => ({ key: k, value: String(v) }))
     warnings.value = p.warnings
     parsed.value = true
@@ -365,8 +383,15 @@ async function submit() {
     model_tag: modelTag.value,
   }
   for (const { key: k, value } of params.value) {
-    if (k.trim()) settings[k.trim()] = coerce(value)
+    // `lora_modules` and `routing_strategy` have dedicated editors below — never
+    // let a raw param (e.g. a stray "" from a null, or a leaked router key) stomp
+    // them via the generic param list.
+    const kk = k.trim()
+    if (kk && kk !== 'lora_modules' && kk !== 'routing_strategy') settings[kk] = coerce(value)
   }
+  // Router-only load-balancing policy; '' inherits the global default, so only
+  // send it when explicitly chosen.
+  if (routingStrategy.value) settings.routing_strategy = routingStrategy.value
   // Mounted adapters: keep only filled rows; drop the empty base_model_name field.
   const cleanLoras = loras.value
     .filter((l) => l.name.trim() && l.path.trim())
@@ -493,6 +518,19 @@ async function submit() {
           <label class="block">
             <span class="text-xs text-muted-foreground">模型標籤 <span class="text-status-failed">*</span></span>
             <Input v-model="modelTag" class="mt-1 font-mono" placeholder="org/model" />
+          </label>
+          <label class="col-span-2 block">
+            <span class="text-xs text-muted-foreground">路由策略（負載平衡）</span>
+            <select
+              v-model="routingStrategy"
+              class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
+            >
+              <option value="">跟隨全域預設</option>
+              <option v-for="s in ROUTING_STRATEGIES" :key="s" :value="s">{{ routingStrategyLabel(s) }}</option>
+            </select>
+            <span class="mt-1 block text-[11px] text-muted-foreground">
+              此群組請求的分流方式;留空則跟隨全域設定（可在「流量」頁切換）。多副本才有效。
+            </span>
           </label>
         </div>
 
