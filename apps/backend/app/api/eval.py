@@ -1,6 +1,7 @@
 """Accuracy / quality evaluation (evalscope run_task) endpoints."""
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Literal, Optional
 
@@ -11,7 +12,9 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_admin
 from app.eval.manager import EvalError
 from app.services import eval_reports
-from app.services.dataset_service import EVAL_CATALOG
+from app.services.dataset_service import (EVAL_CATALOG, cached_size,
+                                          eval_dataset_meta,
+                                          eval_dataset_preview, get_entry)
 
 router = APIRouter(prefix="/eval", tags=["eval"])
 
@@ -63,8 +66,32 @@ class EvalRequest(BaseModel):
 
 @router.get("/datasets")
 async def list_eval_datasets():
-    """Curated evalscope benchmark catalog, grouped by capability tier."""
-    return {"datasets": EVAL_CATALOG}
+    """Curated evalscope benchmark catalog, grouped by capability tier. Each entry
+    is enriched with `meta` (subsets / metric / tags / few-shot / description) from
+    evalscope's registry so the UI can offer a subset picker + dataset details."""
+    def _build():
+        out = []
+        for d in EVAL_CATALOG:
+            meta = eval_dataset_meta(d["key"])
+            out.append({**d, "meta": meta} if meta else dict(d))
+        return out
+    return {"datasets": await asyncio.to_thread(_build)}
+
+
+@router.get("/datasets/{key}/preview")
+async def preview_eval_dataset(key: str, subset: Optional[str] = None, n: int = 20):
+    """First N rows of one subset, read straight from the ModelScope cache, so the
+    user can inspect real questions before spending compute. Only for downloaded
+    datasets (loading an uncached one would trigger a slow download)."""
+    entry = get_entry(key)
+    if entry is None or entry.get("category") != "eval":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown eval dataset: {key}")
+    if cached_size(entry) <= 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"dataset '{key}' is not downloaded yet")
+    try:
+        return await asyncio.to_thread(eval_dataset_preview, key, subset, n)
+    except Exception as e:  # adapter/parse errors -> 422 with the reason
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"preview failed: {e}")
 
 
 @router.get("")

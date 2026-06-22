@@ -183,6 +183,153 @@ def scan() -> list[dict[str, Any]]:
     return out
 
 
+# Catalog key -> evalscope registry name, only where they differ. The catalog
+# key is usually identical to the benchmark name; a few drop/realign separators.
+_REGISTRY_NAME = {"chinese_simple_qa": "chinese_simpleqa"}
+
+
+def _registry_name(key: str) -> str:
+    return _REGISTRY_NAME.get(key, key)
+
+
+def _json_safe(obj: Any, _depth: int = 0) -> Any:
+    """Coerce an arbitrary value to a JSON-safe primitive tree, bounding depth and
+    breadth. Evalscope Sample.metadata/target can hold nested or self-referential
+    objects that blow FastAPI's encoder stack (RecursionError) — this guarantees a
+    finite, serialisable result."""
+    if _depth >= 6:
+        return str(obj)
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v, _depth + 1) for k, v in list(obj.items())[:50]}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v, _depth + 1) for v in list(obj)[:50]]
+    return str(obj)
+
+
+def _metric_names(metric_list: Any) -> list[str]:
+    """evalscope metric_list is a list of str or {name: opts} dicts — flatten to names."""
+    out: list[str] = []
+    for m in metric_list or []:
+        if isinstance(m, str):
+            out.append(m)
+        elif isinstance(m, dict):
+            out.extend(m.keys())
+    return out
+
+
+def eval_dataset_meta(key: str) -> Optional[dict[str, Any]]:
+    """Per-benchmark detail from evalscope's registry: subsets, metric, tags,
+    few-shot, description. None when the key isn't a registered benchmark (the
+    catalog entry still works, just without an inspector). Cheap — no data load."""
+    try:
+        from evalscope.api.registry import BENCHMARK_REGISTRY
+    except Exception:
+        return None
+    meta = BENCHMARK_REGISTRY.get(_registry_name(key))
+    if meta is None:
+        return None
+    desc = (getattr(meta, "description", None) or "").strip()
+    return {
+        "subsets": list(getattr(meta, "subset_list", []) or []),
+        "default_subset": getattr(meta, "default_subset", "default"),
+        "few_shot_num": getattr(meta, "few_shot_num", 0),
+        "eval_split": getattr(meta, "eval_split", None),
+        "metric": _metric_names(getattr(meta, "metric_list", [])),
+        "tags": list(getattr(meta, "tags", []) or []),
+        "pretty_name": getattr(meta, "pretty_name", None),
+        "description": desc[:1200],
+        "paper_url": getattr(meta, "paper_url", None),
+    }
+
+
+def _sample_question(sample: Any) -> str:
+    """Best-effort plain-text prompt from an evalscope Sample.input (chat messages)."""
+    msgs = getattr(sample, "input", None)
+    if isinstance(msgs, str):
+        return msgs
+    if isinstance(msgs, list) and msgs:
+        # last user turn (few_shot_num=0 keeps it to just the question)
+        for m in reversed(msgs):
+            content = getattr(m, "content", None)
+            if content is None:
+                continue
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):  # multimodal parts
+                return " ".join(getattr(p, "text", "") or "" for p in content)
+    return str(msgs or "")
+
+
+def eval_dataset_preview(key: str, subset: Optional[str] = None, n: int = 20) -> dict[str, Any]:
+    """Load the first `n` rows of one subset straight from the ModelScope cache,
+    normalised for display. Blocking (disk IO + dataset parse) — call off-thread.
+
+    `few_shot_num=0` so the prompt is just the question (no in-context examples).
+    Returns the subset's full row count too (len of the loaded split)."""
+    import sys
+
+    from evalscope.api.registry import get_benchmark
+    from evalscope.config import TaskConfig
+
+    # Some benchmarks (e.g. tool_bench) build deeply-nested sample structures on a
+    # cold first load that legitimately exceed Python's default 1000-frame limit
+    # ("maximum recursion depth exceeded"). The structures are finite, so lift the
+    # cap for this worker call. Output is separately bounded by _json_safe.
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 8000))
+
+    meta = eval_dataset_meta(key) or {}
+    subsets = meta.get("subsets") or ["default"]
+    # default_subset may be a meta-subset ("all") that fans out to everything —
+    # never preview that; fall back to the first concrete subset.
+    if not subset:
+        d = meta.get("default_subset")
+        subset = d if d in subsets else subsets[0]
+    n = max(1, min(int(n), 50))
+    rname = _registry_name(key)
+
+    # `limit=n`: only build ~n samples instead of processing the whole subset, so a
+    # cold first preview is fast (the slow part is per-row sample construction, not
+    # the row count). Trade-off: we can't report the true total for subsets larger
+    # than n — `truncated` then signals "there are more" and `count` is the loaded
+    # size (which IS the true total for subsets that fit within n).
+    cfg = TaskConfig(
+        model="preview",
+        datasets=[rname],
+        limit=n,
+        dataset_args={rname: {"subset_list": [subset], "few_shot_num": 0}},
+    )
+    adapter = get_benchmark(rname, cfg)
+    dd = adapter.load_dataset()
+    keys = list(dd.keys())  # DatasetDict has no __contains__; check the key list
+    split_key = subset if subset in keys else keys[0]
+    ds = dd[split_key]
+    rows = []
+    for i in range(min(n, len(ds))):
+        s = ds[i]
+        rows.append({
+            "question": _sample_question(s)[:4000],
+            "choices": _json_safe(list(getattr(s, "choices", None) or [])),
+            "target": _json_safe(getattr(s, "target", None)),
+            "metadata": _json_safe(getattr(s, "metadata", None) or {}),
+        })
+    # len == n almost certainly means the limit clipped a larger subset.
+    truncated = len(ds) >= n
+    return {
+        "subset": split_key,
+        "count": len(ds),
+        "rows": rows,
+        "truncated": truncated,
+        # Intro shown alongside the rows in the library preview.
+        "pretty_name": meta.get("pretty_name"),
+        "description": meta.get("description"),
+        "tags": meta.get("tags", []),
+        "metric": meta.get("metric", []),
+        "subsets": meta.get("subsets", []),
+    }
+
+
 def delete(key: str) -> bool:
     """Remove a cached dataset. Single file for perf, whole repo dir for eval.
     False if it wasn't cached."""
