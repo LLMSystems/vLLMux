@@ -57,10 +57,10 @@ dev-backend:
 	cd apps/backend && $(abspath $(PY)) -m uvicorn main:app --reload --host 0.0.0.0 --port 5000
 
 dev-frontend:
-	cd apps/frontend && npm run dev
+	cd apps/frontend_llmops && npm run dev
 
 build-frontend:
-	cd apps/frontend && npm run build
+	cd apps/frontend_llmops && npm run build
 
 install-frontend:
-	cd apps/frontend && npm install
+	cd apps/frontend_llmops && npm install

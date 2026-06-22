@@ -62,6 +62,50 @@ curl http://localhost:8887/v1/models     # router: configured model groups
 curl http://localhost:5000/api/models    # backend: lifecycle state of each instance
 ```
 
+## Environment variables (`deploy/.env`)
+
+Copy [`deploy/.env.example`](../deploy/.env.example) to `deploy/.env` and adjust.
+Every key below is also documented inline in that file. All are optional except
+`HF_TOKEN` (only for gated/private weights) — the defaults give a working local
+deployment.
+
+**Host ports** — the browser only needs `FRONTEND_PORT`; the other three publish a
+service for *direct* API access and can be remapped if the default is already taken.
+(The container-internal ports are fixed; you only change the host side here.)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FRONTEND_PORT` | `8884` | Dashboard origin (SPA + `/api` + `/v1` + `/grafana` via nginx) |
+| `ROUTER_PORT` | `8887` | Direct access to the OpenAI-compatible router |
+| `BACKEND_PORT` | `5000` | Direct access to the dashboard backend API |
+| `PROMETHEUS_PORT` | `9090` | Prometheus UI / API |
+
+**Models & caches**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HF_TOKEN` | *(blank)* | HuggingFace token for gated/private weights (public models need none) |
+| `HF_CACHE_DIR` | `~/.cache/huggingface` | Host dir bind-mounted as the weight cache (absolute path only — no `~`/`${HOME}`) |
+| `MODELSCOPE_CACHE_DIR` | `~/.cache/modelscope` | Host dir for benchmark/eval datasets (same rule) |
+| `NVIDIA_VISIBLE_DEVICES` | `all` | GPUs the engine may use — `all` or a comma list e.g. `0,1` |
+
+**Authentication** (see [Authentication](#authentication) below)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLMOPS_ADMIN_TOKEN` | *(blank)* | Shared admin token gating all control ops; **blank = auth disabled (dev only)** |
+| `LLMOPS_REQUIRE_API_KEY` | `false` | When `true`, the router rejects `/v1/*` without a valid bearer token |
+
+**Alerting & monitoring**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLMOPS_ALERT_WEBHOOK` | *(blank)* | Webhook that receives a JSON POST when a model enters FAILED (Slack/Discord/any) |
+| `GRAFANA_ADMIN_PASSWORD` | `admin` | Login for Grafana's `admin` user (anonymous access stays read-only) — change for any non-local deploy |
+| `GRAFANA_ALERT_WEBHOOK` | *(placeholder)* | Webhook the provisioned vLLM alert rules notify; blank leaves a non-resolving placeholder |
+
+After editing `deploy/.env`, re-run `make up` to apply.
+
 ## Frontend (Web dashboard)
 
 The dashboard lives in **`apps/frontend_llmops`** — Vue 3 + Vite + TypeScript,

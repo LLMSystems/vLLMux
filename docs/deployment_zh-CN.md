@@ -56,6 +56,48 @@ curl http://localhost:8887/v1/models     # router：列出設定的模型群組
 curl http://localhost:5000/api/models    # 後端：每個實例的生命週期狀態
 ```
 
+## 環境變數（`deploy/.env`）
+
+把 [`deploy/.env.example`](../deploy/.env.example) 複製成 `deploy/.env` 再調整;以下每個變數
+在該檔案中都有逐行註解。除了 `HF_TOKEN`(只有 gated/私有權重才需要)之外全部可選 —— 預設值
+即可跑起一套本機部署。
+
+**對外 host port** —— 瀏覽器只需要 `FRONTEND_PORT`;另外三個是給「直接打 API」用的,埠號被占用
+時可改。(容器內部埠號是固定的,這裡只改 host 端。)
+
+| 變數 | 預設 | 用途 |
+|---|---|---|
+| `FRONTEND_PORT` | `8884` | 控制台入口(經 nginx 提供 SPA + `/api` + `/v1` + `/grafana`) |
+| `ROUTER_PORT` | `8887` | 直接存取 OpenAI 相容 router |
+| `BACKEND_PORT` | `5000` | 直接存取 Dashboard 後端 API |
+| `PROMETHEUS_PORT` | `9090` | Prometheus UI / API |
+
+**模型與快取**
+
+| 變數 | 預設 | 用途 |
+|---|---|---|
+| `HF_TOKEN` | *(空)* | 存取 gated/私有權重的 HuggingFace token(公開模型不需要) |
+| `HF_CACHE_DIR` | `~/.cache/huggingface` | 綁定掛載為權重快取的 host 目錄(只能用絕對路徑,`~`/`${HOME}` 不會展開) |
+| `MODELSCOPE_CACHE_DIR` | `~/.cache/modelscope` | 壓測/評測資料集的 host 目錄(規則同上) |
+| `NVIDIA_VISIBLE_DEVICES` | `all` | engine 可用的 GPU —— `all` 或逗號清單如 `0,1` |
+
+**驗證**(見下方[驗證機制](#驗證機制))
+
+| 變數 | 預設 | 用途 |
+|---|---|---|
+| `LLMOPS_ADMIN_TOKEN` | *(空)* | 控管所有操作的共享管理員權杖;**留空 = 關閉驗證(僅限開發)** |
+| `LLMOPS_REQUIRE_API_KEY` | `false` | 設為 `true` 時,router 會拒絕沒有有效 bearer token 的 `/v1/*` 請求 |
+
+**告警與監控**
+
+| 變數 | 預設 | 用途 |
+|---|---|---|
+| `LLMOPS_ALERT_WEBHOOK` | *(空)* | 模型進入 FAILED 時收到 JSON POST 的 webhook(Slack/Discord/任意端點) |
+| `GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana `admin` 使用者的登入密碼(匿名存取維持唯讀)—— 非本機部署請務必更換 |
+| `GRAFANA_ALERT_WEBHOOK` | *(佔位字串)* | 內建 vLLM 告警規則通知的 webhook;留空則保留一個不會解析的佔位 URL |
+
+改完 `deploy/.env` 後,重跑 `make up` 即可套用。
+
 ## 前端（Web 控制台）
 
 控制台位於 **`apps/frontend_llmops`** — Vue 3 + Vite + TypeScript、Tailwind CSS v4、

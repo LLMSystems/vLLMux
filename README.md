@@ -59,8 +59,33 @@ curl http://localhost:5000/api/models    # backend: lifecycle state of each inst
 # http://localhost:8884/grafana          # dashboards + alerts
 ```
 
-Full topology, the shared-netns rationale, volumes, and a manual run are in
+Every `deploy/.env` setting — host **ports** (`FRONTEND_PORT`/`ROUTER_PORT`/…), auth
+tokens, GPU selection, and cache locations — is documented inline in
+[deploy/.env.example](deploy/.env.example) and tabulated in
+[docs/deployment.md#environment-variables-deployenv](docs/deployment.md#environment-variables-deployenv).
+Full topology, the shared-netns rationale, volumes, and a manual run are in the same
 [docs/deployment.md](docs/deployment.md).
+
+## One endpoint for the whole fleet
+
+Every model is reachable through a single OpenAI-compatible origin — the router on
+`:8887` (or `/v1` via the dashboard's nginx). Pick the model by its `model` field and
+the router load-balances across that group's instances:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/chat/completions` | Chat — streaming supported; load-balanced across the model group |
+| `POST /v1/completions` | Text completion |
+| `POST /v1/embeddings` | Embeddings — and **reranking** when a `query` field is present (forwarded to the embedding/rerank server) |
+| `GET /v1/models` | List configured model groups |
+
+```bash
+curl http://localhost:8887/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "Qwen3-0.6B", "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+Request/response shapes and auth details are in [docs/API.md](docs/API.md).
 
 ## Architecture
 
