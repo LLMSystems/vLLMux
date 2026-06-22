@@ -39,7 +39,7 @@ const accent = computed(() => (props.entry.category === 'perf' ? 'var(--chart-2)
     </div>
 
     <div class="mt-2.5 flex flex-wrap gap-1.5">
-      <Badge v-if="entry.cached" variant="ready" class="text-[10px]">已快取</Badge>
+      <Badge v-if="entry.cached" variant="ready" class="text-[10px]">{{ $t('datasetCard.cached') }}</Badge>
       <Badge v-if="entry.tier" variant="outline" class="text-[10px]">{{ entry.tier }}</Badge>
       <Badge v-if="entry.metric" variant="muted" class="font-mono text-[10px]">{{ entry.metric }}</Badge>
       <Badge v-if="entry.note" variant="secondary" class="text-[10px]">{{ entry.note }}</Badge>
@@ -52,25 +52,25 @@ const accent = computed(() => (props.entry.category === 'perf' ? 'var(--chart-2)
           <Loader2 class="size-3.5 animate-spin" />
           <span class="tabular">{{ formatBytes(job!.downloaded_bytes) }}</span>
         </span>
-        <span v-else-if="warming" class="flex items-center gap-1.5 text-xs text-muted-foreground" title="正在建立快取，完成後預覽即可秒開">
-          <Loader2 class="size-3.5 animate-spin" />預熱中…
+        <span v-else-if="warming" class="flex items-center gap-1.5 text-xs text-muted-foreground" :title="$t('datasetCard.warmingHint')">
+          <Loader2 class="size-3.5 animate-spin" />{{ $t('datasetCard.warming') }}
         </span>
         <template v-else-if="entry.cached">
           <Button
             v-if="entry.category === 'eval'"
             size="icon-sm"
             variant="ghost"
-            title="預覽資料"
+            :title="$t('datasetCard.preview')"
             @click="$emit('preview')"
           >
             <Eye class="size-4" />
           </Button>
-          <Button size="icon-sm" variant="ghost" title="刪除快取" @click="$emit('remove')">
+          <Button size="icon-sm" variant="ghost" :title="$t('datasetCard.deleteCache')" @click="$emit('remove')">
             <Trash2 class="size-4" />
           </Button>
         </template>
         <Button v-else size="sm" variant="outline" @click="$emit('download')">
-          <Download class="size-3.5" />下載
+          <Download class="size-3.5" />{{ $t('common.download') }}
         </Button>
       </div>
     </div>

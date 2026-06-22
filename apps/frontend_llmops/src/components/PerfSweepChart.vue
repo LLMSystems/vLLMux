@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PerfPoint } from '@/types/api'
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -11,8 +14,9 @@ const props = withDefaults(
     format?: (v: number) => string
     xLabel?: string
   }>(),
-  { color: 'var(--chart-1)', format: (v: number) => `${Math.round(v)}`, xLabel: '並發' },
+  { color: 'var(--chart-1)', format: (v: number) => `${Math.round(v)}` },
 )
+const displayXLabel = computed(() => props.xLabel ?? t('benchmark.tableParallel'))
 
 // x = concurrency for closed-loop; for open-loop (concurrency = -1) fall back to rate.
 function xVal(p: PerfPoint): number | null {
@@ -73,7 +77,7 @@ const yTicks = computed(() => [0, 0.5, 1].map((f) => ({ v: yMax.value * f, y: py
         </text>
       </g>
       <text :x="(PAD_L + W - PAD_R) / 2" :y="H - 2" text-anchor="middle" class="fill-muted-foreground" style="font-size: 9px">
-        {{ xLabel }}
+        {{ displayXLabel }}
       </text>
     </svg>
   </div>

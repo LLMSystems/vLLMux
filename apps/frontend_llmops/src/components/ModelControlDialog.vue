@@ -31,25 +31,25 @@ async function confirm() {
 </script>
 
 <template>
-  <Dialog v-model:open="dialogOpen" title="管理員驗證" @update:open="(v) => !v && cancel()">
+  <Dialog v-model:open="dialogOpen" :title="$t('modelControl.title')" @update:open="(v) => !v && cancel()">
     <div class="space-y-4">
       <p class="flex items-center gap-2 text-sm text-muted-foreground">
         <Lock class="size-4" />
-        <span>此操作需要管理員權杖（後端 <span class="font-mono">LLMOPS_ADMIN_TOKEN</span>）。</span>
+        <span>{{ $t('modelControl.description') }}</span>
       </p>
       <div>
         <Input
           v-model="token"
           type="password"
-          placeholder="管理員權杖"
+          :placeholder="$t('modelControl.tokenPlaceholder')"
           :class="error ? 'border-status-failed focus-visible:ring-status-failed' : ''"
           @keydown.enter="confirm"
         />
-        <p v-if="error" class="mt-1.5 text-xs text-status-failed">權杖無效。</p>
+        <p v-if="error" class="mt-1.5 text-xs text-status-failed">{{ $t('modelControl.tokenInvalid') }}</p>
       </div>
       <div class="flex justify-end gap-2">
-        <Button variant="ghost" @click="cancel">取消</Button>
-        <Button :disabled="busy || !token" @click="confirm">確認</Button>
+        <Button variant="ghost" @click="cancel">{{ $t('common.cancel') }}</Button>
+        <Button :disabled="busy || !token" @click="confirm">{{ $t('modelControl.confirm') }}</Button>
       </div>
     </div>
   </Dialog>

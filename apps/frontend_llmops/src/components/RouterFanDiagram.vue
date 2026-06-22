@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { VueFlow, useVueFlow, Handle, Position, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
@@ -16,6 +17,7 @@ import type { InstanceMetrics, ModelState, ModelView } from '@/types/api'
 const props = defineProps<{ group: string }>()
 const traffic = useTrafficStore()
 const models = useModelsStore()
+const { t } = useI18n()
 
 const STEP = 196 // horizontal spacing between instance nodes
 const NODE_W = 150
@@ -189,28 +191,28 @@ watch(
   >
     <StatusDot state="stopped" />
     <span class="text-sm font-medium">{{ group }}</span>
-    <Badge variant="muted">{{ instances.length }} instances</Badge>
+    <Badge variant="muted">{{ $t('routerFan.instancesCount', { n: instances.length }) }}</Badge>
     <span
       class="flex items-center gap-1 text-[11px]"
       :class="kvShared ? 'text-[var(--chart-4)]' : 'text-muted-foreground/70'"
-      :title="kvShared ? '此群組各副本共用 KV cache（/kv_cache）' : '各副本各自獨立 KV cache'"
+      :title="kvShared ? $t('routerFan.kvSharedTooltip') : $t('routerFan.kvIndependentTooltip')"
     >
-      <component :is="kvShared ? Share2 : Unlink" class="size-3" />{{ kvShared ? '共用 KV' : '各自 KV' }}
+      <component :is="kvShared ? Share2 : Unlink" class="size-3" />{{ kvShared ? $t('routerFan.kvShared') : $t('routerFan.kvIndependent') }}
     </span>
-    <span class="ml-auto text-xs text-muted-foreground">idle — no instance running</span>
+    <span class="ml-auto text-xs text-muted-foreground">{{ $t('routerFan.idleHint') }}</span>
   </div>
 
   <!-- Live group: Vue Flow routing canvas. -->
   <div v-else class="rounded-lg border border-border/50 bg-background/20">
     <div class="flex items-center gap-2 px-3 pt-3">
       <span class="text-sm font-medium">{{ group }}</span>
-      <Badge variant="ready" class="tabular">{{ readyCount }}/{{ instances.length }} ready</Badge>
+      <Badge variant="ready" class="tabular">{{ $t('routerFan.readyCount', { ready: readyCount, total: instances.length }) }}</Badge>
       <span
         class="flex items-center gap-1 text-[11px]"
         :class="kvShared ? 'text-[var(--chart-4)]' : 'text-muted-foreground/70'"
-        :title="kvShared ? '此群組各副本共用 KV cache（/kv_cache）' : '各副本各自獨立 KV cache'"
+        :title="kvShared ? $t('routerFan.kvSharedTooltip') : $t('routerFan.kvIndependentTooltip')"
       >
-        <component :is="kvShared ? Share2 : Unlink" class="size-3" />{{ kvShared ? '共用 KV' : '各自 KV' }}
+        <component :is="kvShared ? Share2 : Unlink" class="size-3" />{{ kvShared ? $t('routerFan.kvShared') : $t('routerFan.kvIndependent') }}
       </span>
     </div>
     <div class="h-[260px] w-full">
@@ -264,14 +266,14 @@ watch(
             </div>
             <template v-if="data.serving && data.im">
               <p class="mt-1 text-[11px] text-muted-foreground tabular">
-                run {{ data.im.running }} · wait {{ data.im.waiting }}
+                {{ $t('common.running') }} {{ data.im.running }} · {{ $t('routerFan.waiting') }} {{ data.im.waiting }}
               </p>
               <p class="text-[11px] text-muted-foreground tabular">
                 kv {{ formatPercent(data.im.kv_cache_usage_perc * 100) }} · score
                 {{ data.score?.toFixed(0) }}
               </p>
               <p v-if="data.preferred" class="mt-0.5 text-[10px] font-medium text-[var(--chart-1)]">
-                ★ next pick
+                ★ {{ $t('routerFan.nextPick') }}
               </p>
             </template>
             <p v-else class="mt-1 text-[11px] capitalize text-muted-foreground/70">{{ data.state }}</p>
@@ -284,7 +286,7 @@ watch(
             class="flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--chart-4)]/60 bg-[var(--chart-4)]/5 px-3 py-1.5 text-[11px] font-medium text-[var(--chart-4)]"
           >
             <Handle type="target" :position="Position.Top" />
-            <Database class="size-3.5" />共用 KV Cache · /kv_cache
+            <Database class="size-3.5" />{{ $t('routerFan.kvStoreLabel') }}
           </div>
         </template>
       </VueFlow>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { VueFlow, useVueFlow, Handle, Position, type Edge, type Node, type NodeMouseEvent } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -23,6 +24,7 @@ const models = useModelsStore()
 const resources = useResourcesStore()
 const traffic = useTrafficStore()
 const router = useRouter()
+const { t } = useI18n()
 
 // Nodes act as drill-in entry points to the relevant page.
 function onNodeClick({ node }: NodeMouseEvent) {
@@ -357,20 +359,20 @@ function miniColor(node: Node) {
   <div class="rounded-xl border border-border/70 bg-card">
     <!-- Header + legend + plane toggles -->
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/60 px-5 py-3">
-      <h3 class="text-sm font-semibold">系統拓撲</h3>
-      <span class="hidden text-[11px] text-muted-foreground sm:inline">· 點擊節點可深入查看</span>
+      <h3 class="text-sm font-semibold">{{ $t('systemTopology.title') }}</h3>
+      <span class="hidden text-[11px] text-muted-foreground sm:inline">{{ $t('systemTopology.clickHint') }}</span>
       <div class="flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-1)]" />資料</span>
-        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-2)]" />部署</span>
-        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-4)]" />控制</span>
+        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-1)]" />{{ $t('systemTopology.dataPlane') }}</span>
+        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-2)]" />{{ $t('systemTopology.placementPlane') }}</span>
+        <span class="flex items-center gap-1"><span class="h-0.5 w-4 rounded bg-[var(--chart-4)]" />{{ $t('systemTopology.controlPlane') }}</span>
         <span class="flex items-center gap-1"><span class="w-4 border-t border-dashed border-[var(--chart-3)]" />LoRA</span>
       </div>
       <div class="ml-auto flex items-center gap-1.5">
         <button
           v-for="t in [
-            { k: 'data', label: '資料', model: showData },
-            { k: 'placement', label: '部署', model: showPlacement },
-            { k: 'control', label: '控制', model: showControl },
+            { k: 'data', label: $t('systemTopology.dataPlane'), model: showData },
+            { k: 'placement', label: $t('systemTopology.placementPlane'), model: showPlacement },
+            { k: 'control', label: $t('systemTopology.controlPlane'), model: showControl },
             { k: 'lora', label: 'LoRA', model: showLora },
           ]"
           :key="t.k"
@@ -414,8 +416,8 @@ function miniColor(node: Node) {
             <Handle type="source" :position="Position.Right" />
             <Users class="size-4 text-[var(--chart-1)]" />
             <div class="text-left">
-              <p class="text-[12px] font-semibold leading-tight">用戶端</p>
-              <p class="text-[10px] text-muted-foreground tabular">{{ formatNumber(data.total) }} 請求</p>
+              <p class="text-[12px] font-semibold leading-tight">{{ $t('systemTopology.client') }}</p>
+              <p class="text-[10px] text-muted-foreground tabular">{{ formatNumber(data.total) }} {{ $t('systemTopology.requests') }}</p>
             </div>
           </div>
         </template>
@@ -427,11 +429,11 @@ function miniColor(node: Node) {
             <Handle type="source" :position="Position.Right" />
             <div class="flex items-center gap-1.5">
               <Server class="size-4 text-[var(--chart-1)]" />
-              <span class="text-[12px] font-semibold">路由器</span>
+              <span class="text-[12px] font-semibold">{{ $t('systemTopology.router') }}</span>
               <span class="text-[10px] text-muted-foreground">:8887</span>
             </div>
             <p class="text-[10px] text-muted-foreground tabular">
-              {{ formatPercent(data.errorRate) }} 錯誤
+              {{ formatPercent(data.errorRate) }} {{ $t('systemTopology.errors') }}
             </p>
           </div>
         </template>
@@ -443,10 +445,10 @@ function miniColor(node: Node) {
             <Handle type="source" :position="Position.Right" />
             <div class="flex items-center gap-1.5">
               <Settings2 class="size-4 text-[var(--chart-4)]" />
-              <span class="text-[12px] font-semibold">後端</span>
+              <span class="text-[12px] font-semibold">{{ $t('systemTopology.backend') }}</span>
               <span class="text-[10px] text-muted-foreground">:5000</span>
             </div>
-            <p class="text-[10px] text-muted-foreground tabular">{{ data.ready }}/{{ data.total }} 就緒</p>
+            <p class="text-[10px] text-muted-foreground tabular">{{ data.ready }}/{{ data.total }} {{ $t('common.ready') }}</p>
           </div>
         </template>
 
@@ -462,7 +464,7 @@ function miniColor(node: Node) {
               <span class="ml-auto text-[10px] text-muted-foreground tabular">{{ data.ready }}/{{ data.total }}</span>
             </div>
             <p class="text-[10px] text-muted-foreground tabular">
-              執行 {{ data.running }} · 等待 {{ data.waiting }}
+              {{ $t('common.running') }} {{ data.running }} · {{ $t('systemTopology.waiting') }} {{ data.waiting }}
               <span v-if="data.gpus.length"> · GPU {{ data.gpus.join(',') }}</span>
             </p>
             <p v-if="data.loras?.length" class="flex items-center gap-1 text-[10px] text-[var(--chart-3)]">
@@ -471,9 +473,9 @@ function miniColor(node: Node) {
             <p
               v-if="data.kvShared"
               class="flex items-center gap-1 text-[10px] text-[var(--chart-4)]"
-              title="此群組各副本共用 KV cache（/kv_cache）"
+              :title="$t('routerFan.kvSharedTooltip')"
             >
-              <Share2 class="size-3" />共用 KV cache
+              <Share2 class="size-3" />{{ $t('routerFan.kvShared') }}
             </p>
           </div>
         </template>
@@ -499,7 +501,7 @@ function miniColor(node: Node) {
             <div class="flex items-center gap-1.5">
               <StatusDot :state="data.state" size="sm" />
               <Box class="size-3.5 text-[var(--chart-4)]" />
-              <span class="text-[12px] font-semibold">嵌入</span>
+              <span class="text-[12px] font-semibold">{{ $t('common.embedding') }}</span>
               <span class="ml-auto text-[10px] text-muted-foreground">:{{ data.port }}</span>
             </div>
             <p class="text-[10px] capitalize text-muted-foreground">{{ data.state }}</p>
@@ -531,7 +533,7 @@ function miniColor(node: Node) {
                 {{ formatPercent(vramPct(data.info.memory_used, data.info.memory_total)) }} VRAM
               </p>
             </template>
-            <p v-else class="text-[10px] text-muted-foreground/70">已設定 · 未偵測到</p>
+            <p v-else class="text-[10px] text-muted-foreground/70">{{ $t('systemTopology.configuredUndetected') }}</p>
           </div>
         </template>
       </VueFlow>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loader2, Plus, Save, Trash2 } from '@lucide/vue'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
@@ -11,6 +12,7 @@ import { useAuth } from '@/composables/useAuth'
 import { useModelsStore } from '@/stores/models'
 import type { EmbeddingModelParams, SettingValue } from '@/types/api'
 
+const { t } = useI18n()
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{
   modelType: 'embedding' | 'reranking'
@@ -57,12 +59,16 @@ async function submit() {
   saving.value = true
   try {
     await api.updateEmbeddingModel(props.modelType, props.name, settings)
-    toast.success(`已更新 ${props.name}`, { description: '變更將於 embedding server 下次啟動時生效。' })
+    toast.success(t('embeddingModel.updateSuccess', { name: props.name }), {
+      description: t('embeddingModel.updateSuccessDesc'),
+    })
     void models.loadConfig()
     emit('updated')
     open.value = false
   } catch (e) {
-    toast.error('更新失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('embeddingModel.updateFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     saving.value = false
   }
@@ -70,32 +76,32 @@ async function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="`編輯 ${name}`" width-class="max-w-xl">
+  <Dialog v-model:open="open" :title="$t('embeddingModel.editTitle', { type: name })" width-class="max-w-xl">
     <div class="space-y-4">
       <p class="flex items-center gap-2 text-sm text-muted-foreground">
-        <Badge variant="muted">{{ modelType === 'embedding' ? '嵌入' : '重排序' }}</Badge>
-        <span>參數於 embedding server <span class="font-medium text-foreground">停止後</span>編輯，下次啟動生效。</span>
+        <Badge variant="muted">{{ modelType === 'embedding' ? $t('embeddingModel.typeEmbedding') : $t('embeddingModel.typeReranking') }}</Badge>
+        <span>{{ $t('embeddingModel.paramHint') }}</span>
       </p>
 
       <div>
         <div class="mb-1.5 flex items-center justify-between">
-          <span class="text-xs font-medium text-muted-foreground">參數</span>
-          <Button size="sm" variant="ghost" @click="addRow"><Plus class="size-3.5" />新增</Button>
+          <span class="text-xs font-medium text-muted-foreground">{{ $t('embeddingModel.paramsLabel') }}</span>
+          <Button size="sm" variant="ghost" @click="addRow"><Plus class="size-3.5" />{{ $t('common.add') }}</Button>
         </div>
         <div class="space-y-1.5">
           <div v-for="(r, i) in rows" :key="i" class="flex items-center gap-2">
-            <Input v-model="r.key" placeholder="參數名（snake_case）" class="flex-1 font-mono text-xs" />
-            <Input v-model="r.value" placeholder="值（true/false/數字/字串）" class="flex-1 font-mono text-xs" />
+            <Input v-model="r.key" :placeholder="$t('embeddingModel.paramKeyPlaceholder')" class="flex-1 font-mono text-xs" />
+            <Input v-model="r.value" :placeholder="$t('embeddingModel.paramValuePlaceholder')" class="flex-1 font-mono text-xs" />
             <Button size="icon-sm" variant="ghost" @click="removeRow(i)"><Trash2 class="size-3.5" /></Button>
           </div>
-          <p v-if="!rows.length" class="text-xs text-muted-foreground">無參數。</p>
+          <p v-if="!rows.length" class="text-xs text-muted-foreground">{{ $t('embeddingModel.noParams') }}</p>
         </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" @click="open = false">取消</Button>
+        <Button variant="ghost" @click="open = false">{{ $t('common.cancel') }}</Button>
         <Button :disabled="saving" @click="submit">
-          <Loader2 v-if="saving" class="size-4 animate-spin" /><Save v-else class="size-4" />儲存
+          <Loader2 v-if="saving" class="size-4 animate-spin" /><Save v-else class="size-4" />{{ $t('common.save') }}
         </Button>
       </div>
     </div>

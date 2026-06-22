@@ -43,21 +43,21 @@ const dash = computed(() => `${(memPct.value / 100) * C} ${C}`)
         </svg>
         <div class="absolute inset-0 flex flex-col items-center justify-center">
           <span class="text-2xl font-semibold tabular leading-none">{{ formatPercent(memPct) }}</span>
-          <span class="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">VRAM</span>
+          <span class="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">{{ $t('gpuGauge.vram') }}</span>
         </div>
       </div>
       <div class="min-w-0 flex-1 space-y-2">
         <div>
-          <p class="text-xs text-muted-foreground">GPU {{ gpu.index }}</p>
+          <p class="text-xs text-muted-foreground">{{ $t('statusBar.gpu') }} {{ gpu.index }}</p>
           <p class="truncate text-sm font-medium" :title="gpu.name">{{ gpu.name }}</p>
         </div>
         <dl class="space-y-1 text-xs">
           <div class="flex justify-between">
-            <dt class="text-muted-foreground">記憶體</dt>
+            <dt class="text-muted-foreground">{{ $t('gpuGauge.memory') }}</dt>
             <dd class="tabular">{{ mibToGb(gpu.memory_used) }} / {{ mibToGb(gpu.memory_total) }}</dd>
           </div>
           <div class="flex justify-between">
-            <dt class="text-muted-foreground">使用率</dt>
+            <dt class="text-muted-foreground">{{ $t('gpuGauge.util') }}</dt>
             <dd class="tabular font-medium">{{ formatPercent(gpu.gpu_util) }}</dd>
           </div>
         </dl>

@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import i18n from '@/i18n'
 import { useModelsStore } from '@/stores/models'
 import { toast } from '@/lib/toast'
 import { ApiError } from '@/lib/api'
@@ -14,6 +15,7 @@ type Action = 'start' | 'stop'
 export function useModelControl() {
   const models = useModelsStore()
   const { ensureUnlocked } = useAuth()
+  const t = i18n.global.t
 
   // Only one LLM may be in the `starting` phase at a time — loading two model
   // weights at once OOMs a single GPU. Multiple *ready* LLMs are fine, and
@@ -58,31 +60,43 @@ export function useModelControl() {
   async function runOne(key: string, action: Action, force = false) {
     const name = key.split('::')[0]
     if (action === 'start' && isStartBlocked(key)) {
-      toast.warning('一次只能啟動一顆模型', {
-        description: `「${startingLlmName()}」正在啟動中，請待其完成後再啟動 ${name}。`,
+      toast.warning(t('modelControl.oneAtATime'), {
+        description: t('modelControl.alreadyStarting', {
+          current: startingLlmName(),
+          name,
+        }),
       })
       return
     }
     try {
       if (action === 'start') {
         await models.start(key, force)
-        toast.success(`正在啟動 ${name}`, { description: '等待 /health 通過…' })
+        toast.success(t('modelControl.starting', { name }), {
+          description: t('modelControl.startingDesc'),
+        })
       } else {
         await models.stop(key)
-        toast.info(`正在停止 ${name}`, { description: '釋放 GPU 資源…' })
+        toast.info(t('modelControl.stopping', { name }), {
+          description: t('modelControl.stoppingDesc'),
+        })
       }
     } catch (e) {
       // A VRAM pre-flight block (409 mentioning force) gets a one-click override.
       if (action === 'start' && e instanceof ApiError && e.status === 409 && /force=true/i.test(e.message)) {
-        toast.warning(`${name}：VRAM 不足`, {
+        toast.warning(t('modelControl.vramInsufficient', { name }), {
           description: e.message,
           duration: 10000,
-          action: { label: '強制啟動', onClick: () => void runOne(key, 'start', true) },
+          action: { label: t('modelControl.forceStart'), onClick: () => void runOne(key, 'start', true) },
         })
         return
       }
       const msg = e instanceof ApiError ? `${e.status}: ${e.message}` : String(e)
-      toast.error(`${action === 'start' ? '啟動' : '停止'} ${name} 失敗`, { description: msg })
+      toast.error(
+        action === 'start'
+          ? t('modelControl.startFailed', { name })
+          : t('modelControl.stopFailed', { name }),
+        { description: msg },
+      )
     }
   }
 

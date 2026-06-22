@@ -49,13 +49,13 @@ const stateColor: Record<string, string> = {
         v-model="filter"
         class="h-8 rounded-md border border-input bg-background/40 px-2 text-xs"
       >
-        <option value="">全部模型</option>
+        <option value="">{{ $t('common.allModels') }}</option>
         <option v-for="m in models.models" :key="m.key" :value="m.key.split('::')[0]">
           {{ m.key.split('::')[0] }}
         </option>
       </select>
-      <span class="text-sm text-muted-foreground tabular">{{ filtered.length }} 個事件</span>
-      <Button variant="outline" size="sm" class="ml-auto" @click="load"><RefreshCw class="size-3.5" />重新整理</Button>
+      <span class="text-sm text-muted-foreground tabular">{{ $t('activity.eventCount', { n: filtered.length }) }}</span>
+      <Button variant="outline" size="sm" class="ml-auto" @click="load"><RefreshCw class="size-3.5" />{{ $t('common.refresh') }}</Button>
     </div>
 
     <Card>
@@ -80,7 +80,7 @@ const stateColor: Record<string, string> = {
               {{ ev.detail }}
             </p>
           </li>
-          <li v-if="!filtered.length" class="text-sm text-muted-foreground">尚無事件記錄。</li>
+          <li v-if="!filtered.length" class="text-sm text-muted-foreground">{{ $t('activity.noEvents') }}</li>
         </ol>
       </CardContent>
     </Card>

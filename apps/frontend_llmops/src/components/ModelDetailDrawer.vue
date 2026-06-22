@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Download, Loader2, Pencil, Play, RefreshCw, Search, Square, Trash2 } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import Sheet from '@/components/ui/Sheet.vue'
 import Tabs from '@/components/ui/Tabs.vue'
 import TabsList from '@/components/ui/TabsList.vue'
@@ -29,6 +30,7 @@ const models = useModelsStore()
 const traffic = useTrafficStore()
 const control = useModelControl()
 const { ensureUnlocked } = useAuth()
+const { t } = useI18n()
 
 const tab = ref('overview')
 const events = ref<StateEvent[]>([])
@@ -106,9 +108,13 @@ async function hotLoadLora() {
     await api.routerReload() // make the new adapter routable now
     await models.loadConfig() // refresh the mounted list
     pickLoraPath.value = ''
-    toast.success(`已熱載入 ${a.name}`, { description: '已套用到所有就緒實例並更新路由。' })
+    toast.success(t('modelDetail.hotLoadSuccess', { name: a.name }), {
+      description: t('modelDetail.hotLoadSuccessDesc'),
+    })
   } catch (e) {
-    toast.error('熱載入失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('modelDetail.hotLoadFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     hotLoraBusy.value = false
   }
@@ -117,15 +123,17 @@ async function hotUnloadLora(name: string) {
   const key = props.modelKey
   if (!key || hotLoraBusy.value) return
   if (!(await ensureUnlocked())) return
-  if (!confirm(`卸載 LoRA「${name}」？會從所有就緒實例移除並停止路由。`)) return
+  if (!confirm(t('modelDetail.hotUnloadConfirm', { name }))) return
   hotLoraBusy.value = true
   try {
     await api.unloadLora(key, name)
     await api.routerReload()
     await models.loadConfig()
-    toast.success(`已卸載 ${name}`)
+    toast.success(t('modelDetail.hotUnloadSuccess', { name }))
   } catch (e) {
-    toast.error('卸載失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('modelDetail.hotUnloadFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     hotLoraBusy.value = false
   }
@@ -177,7 +185,9 @@ function edit() {
 // One LLM may start at a time: block this model's start while another is mid-start.
 const startLocked = computed(() => model.value?.kind === 'llm' && control.isLlmStarting.value)
 const startLockTitle = computed(() =>
-  startLocked.value ? `已有模型啟動中（${control.startingLlmName()}），請待其完成` : '啟動',
+  startLocked.value
+    ? t('modelDetail.startLocked', { name: control.startingLlmName() })
+    : t('modelDetail.startLabel'),
 )
 
 async function remove() {
@@ -187,11 +197,11 @@ async function remove() {
   try {
     await api.deleteModel(k)
     void api.routerReload() // keep the router's routing table in sync
-    toast.success(`已移除 ${k}`)
+    toast.success(t('modelDetail.removeSuccess', { key: k }))
     open.value = false
     emit('deleted', k)
   } catch (e) {
-    toast.error('無法移除模型', {
+    toast.error(t('modelDetail.removeFailed'), {
       description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
     })
   }
@@ -279,7 +289,7 @@ const eventColor: Record<string, string> = {
 </script>
 
 <template>
-  <Sheet v-model:open="open" :title="model ? model.key : 'Model'">
+  <Sheet v-model:open="open" :title="model ? model.key : t('common.model')">
     <div v-if="model" class="space-y-6 p-6">
       <!-- Header summary -->
       <div class="flex items-start justify-between gap-4">
@@ -297,7 +307,7 @@ const eventColor: Record<string, string> = {
             v-if="editable"
             size="icon-sm"
             variant="ghost"
-            title="編輯參數（需先停止；vLLM 參數為群組共用）"
+            :title="$t('modelDetail.editParams')"
             @click="edit"
           >
             <Pencil class="size-4" />
@@ -306,7 +316,7 @@ const eventColor: Record<string, string> = {
             v-if="removable"
             size="icon-sm"
             variant="ghost"
-            title="移除模型（僅限動態新增的模型）"
+            :title="$t('modelDetail.removeModel')"
             @click="remove"
           >
             <Trash2 class="size-4" />
@@ -319,55 +329,59 @@ const eventColor: Record<string, string> = {
             :title="startLockTitle"
             @click="control.request(model.key, 'start')"
           >
-            <Loader2 v-if="busy" class="size-4 animate-spin" /><Play v-else class="size-4" />啟動
+            <Loader2 v-if="busy" class="size-4 animate-spin" /><Play v-else class="size-4" />{{ $t('modelDetail.startLabel') }}
           </Button>
           <Button
             v-else
             size="sm"
             variant="outline"
             :disabled="!model.managed || model.state === 'stopping'"
-            :title="model.state === 'failed' ? '終止殘留進程' : model.state === 'starting' ? '中止啟動' : '停止'"
+            :title="model.state === 'failed'
+              ? $t('modelDetail.terminateLabel')
+              : model.state === 'starting'
+                ? $t('modelDetail.abortLabel')
+                : $t('modelDetail.stopLabel')"
             @click="control.request(model.key, 'stop')"
           >
-            <Loader2 v-if="busy" class="size-4 animate-spin" /><Square v-else class="size-4" />{{ model.state === 'failed' ? '終止' : '停止' }}
+            <Loader2 v-if="busy" class="size-4 animate-spin" /><Square v-else class="size-4" />{{ model.state === 'failed' ? $t('modelDetail.terminateLabel') : $t('modelDetail.stopLabel') }}
           </Button>
         </div>
       </div>
 
       <Tabs v-model="tab">
         <TabsList class="w-full">
-          <TabsTrigger value="overview" class="flex-1">概覽</TabsTrigger>
-          <TabsTrigger value="events" class="flex-1">事件</TabsTrigger>
-          <TabsTrigger value="logs" class="flex-1">日誌</TabsTrigger>
+          <TabsTrigger value="overview" class="flex-1">{{ $t('modelDetail.overview') }}</TabsTrigger>
+          <TabsTrigger value="events" class="flex-1">{{ $t('modelDetail.events') }}</TabsTrigger>
+          <TabsTrigger value="logs" class="flex-1">{{ $t('modelDetail.logs') }}</TabsTrigger>
         </TabsList>
 
         <!-- Overview -->
         <TabsContent value="overview" class="mt-4 space-y-4">
           <div class="grid grid-cols-2 gap-3">
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">端點</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.endpoint') }}</p>
               <p class="mt-0.5 font-mono text-sm">{{ model.host }}:{{ model.port }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">顯示卡</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.gpu') }}</p>
               <p class="mt-0.5 font-mono text-sm tabular">{{ gpu !== null ? `cuda:${gpu}` : '—' }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">程序 ID</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.pid') }}</p>
               <p class="mt-0.5 font-mono text-sm tabular">{{ model.pid ?? '—' }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">管理方式</p>
-              <p class="mt-0.5 text-sm">{{ model.managed ? '是（可控制）' : '外部' }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.managedLabel') }}</p>
+              <p class="mt-0.5 text-sm">{{ model.managed ? $t('modelDetail.managedYes') : $t('modelDetail.managedExternal') }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">運行時間</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.uptime') }}</p>
               <p class="mt-0.5 text-sm tabular">
                 {{ model.ready_at ? formatDuration(model.ready_at) : '—' }}
               </p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3">
-              <p class="text-xs text-muted-foreground">自動重啟次數</p>
+              <p class="text-xs text-muted-foreground">{{ $t('modelDetail.autoRestarts') }}</p>
               <p class="mt-0.5 text-sm tabular" :class="model.restart_count ? 'text-status-starting' : ''">
                 {{ model.restart_count ?? 0 }}
               </p>
@@ -376,7 +390,7 @@ const eventColor: Record<string, string> = {
 
           <!-- vLLM startup capacity snapshot (READY instances only) -->
           <div v-if="startupMetrics" class="space-y-2.5">
-            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">啟動容量快照</p>
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('modelDetail.startupSnapshot') }}</p>
 
             <!-- Capacity headline -->
             <div
@@ -385,7 +399,7 @@ const eventColor: Record<string, string> = {
             >
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <p class="text-xs text-muted-foreground">KV cache 容量</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('modelDetail.kvCacheCapacity') }}</p>
                   <p class="text-lg font-semibold tabular">
                     {{ startupMetrics.capacity?.kv_cache_tokens != null ? formatNumber(startupMetrics.capacity.kv_cache_tokens) : '—' }}
                     <span class="text-xs font-normal text-muted-foreground">tokens</span>
@@ -393,20 +407,20 @@ const eventColor: Record<string, string> = {
                 </div>
                 <div>
                   <p class="text-xs text-muted-foreground">
-                    最大並發（{{ startupMetrics.capacity?.concurrency_req_tokens != null ? formatNumber(startupMetrics.capacity.concurrency_req_tokens) : '?' }} tok/req）
+                    {{ $t('modelDetail.maxConcurrency') }}（{{ startupMetrics.capacity?.concurrency_req_tokens != null ? $t('modelDetail.concurrencyReqTok', { n: formatNumber(startupMetrics.capacity.concurrency_req_tokens) }) : '?' }}）
                   </p>
                   <p class="text-lg font-semibold tabular">{{ fmt(startupMetrics.capacity?.max_concurrency, 1, '×') }}</p>
                 </div>
               </div>
               <p v-if="startupMetrics.capacity?.max_concurrency != null" class="mt-1 text-[11px] text-muted-foreground">
-                ≈ 可同時服務 {{ Math.floor(startupMetrics.capacity.max_concurrency) }} 個請求
+                {{ $t('modelDetail.concurrencyHint', { n: Math.floor(startupMetrics.capacity.max_concurrency) }) }}
               </p>
             </div>
 
             <!-- Memory breakdown -->
             <div v-if="startupMetrics.memory" class="grid grid-cols-3 gap-2 text-xs">
               <div class="rounded-md border border-border/60 p-2">
-                <p class="text-muted-foreground">權重</p>
+                <p class="text-muted-foreground">{{ $t('modelDetail.memWeights') }}</p>
                 <p class="tabular">{{ fmt(startupMetrics.memory.model_gib, 2, ' GiB') }}</p>
               </div>
               <div class="rounded-md border border-border/60 p-2">
@@ -421,10 +435,10 @@ const eventColor: Record<string, string> = {
 
             <!-- Startup timing -->
             <div v-if="startupMetrics.startup" class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-              <span>載權重 {{ fmt(startupMetrics.startup.weights_load_s, 2, 's') }}</span>
-              <span>模型載入 {{ fmt(startupMetrics.startup.model_load_s, 1, 's') }}</span>
-              <span>torch.compile {{ fmt(startupMetrics.startup.compile_s, 1, 's') }}</span>
-              <span>warmup {{ fmt(startupMetrics.startup.warmup_s, 2, 's') }}</span>
+              <span>{{ $t('modelDetail.startupWeightsLoad') }} {{ fmt(startupMetrics.startup.weights_load_s, 2, 's') }}</span>
+              <span>{{ $t('modelDetail.startupModelLoad') }} {{ fmt(startupMetrics.startup.model_load_s, 1, 's') }}</span>
+              <span>{{ $t('modelDetail.startupCompile') }} {{ fmt(startupMetrics.startup.compile_s, 1, 's') }}</span>
+              <span>{{ $t('modelDetail.startupWarmup') }} {{ fmt(startupMetrics.startup.warmup_s, 2, 's') }}</span>
             </div>
 
             <!-- gpu_memory_utilization advisory -->
@@ -432,14 +446,13 @@ const eventColor: Record<string, string> = {
               v-if="startupMetrics.gpu_mem_util?.suggested != null && startupMetrics.gpu_mem_util.suggested !== startupMetrics.gpu_mem_util.current"
               class="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-[11px]"
             >
-              <p class="text-amber-600">⚙ 關於 gpu_memory_utilization</p>
+              <p class="text-amber-600">{{ $t('modelDetail.gpuMemUtilTitle') }}</p>
               <p class="mt-0.5 leading-relaxed text-muted-foreground">
-                新版 vLLM 把 CUDA graph 記憶體也算進這個額度。你設
-                <span class="font-mono">{{ fmt(startupMetrics.gpu_mem_util.current, 2) }}</span>,扣掉後實際給 KV cache 的空間只等於舊版的
-                <span class="font-mono">{{ fmt(startupMetrics.gpu_mem_util.effective, 2) }}</span>。
-                想要更大 KV cache（更高並發 / 更長 context）可在停止後於「編輯參數」提到
-                <span class="font-mono font-semibold">{{ fmt(startupMetrics.gpu_mem_util.suggested, 2) }}</span>，
-                但顯存餘裕會變小、OOM 風險上升（小顯卡尤其要保守）。
+                {{ $t('modelDetail.gpuMemUtilDesc', {
+                  current: fmt(startupMetrics.gpu_mem_util.current, 2),
+                  effective: fmt(startupMetrics.gpu_mem_util.effective, 2),
+                  suggested: fmt(startupMetrics.gpu_mem_util.suggested, 2),
+                }) }}
               </p>
             </div>
           </div>
@@ -447,7 +460,7 @@ const eventColor: Record<string, string> = {
           <!-- Embedding server: the models it serves (editable while stopped) -->
           <div v-if="servedModels.length">
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              服務的模型
+              {{ $t('modelDetail.servedModels') }}
             </p>
             <div class="overflow-hidden rounded-lg border border-border/60">
               <div
@@ -457,7 +470,7 @@ const eventColor: Record<string, string> = {
                 :class="i % 2 ? 'bg-background/20' : 'bg-background/40'"
               >
                 <Badge variant="muted" :class="sm.type === 'embedding' ? 'text-[var(--chart-4)]' : 'text-[var(--chart-2)]'">
-                  {{ sm.type === 'embedding' ? '嵌入' : '重排序' }}
+                  {{ sm.type === 'embedding' ? $t('common.embedding') : $t('common.reranking') }}
                 </Badge>
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-mono text-sm">{{ sm.name }}</p>
@@ -467,7 +480,7 @@ const eventColor: Record<string, string> = {
                   v-if="removable"
                   size="icon-sm"
                   variant="ghost"
-                  title="編輯參數（需先停止 embedding server）"
+                  :title="$t('modelDetail.editEmbedding')"
                   @click="editEmbeddingModel(sm)"
                 >
                   <Pencil class="size-3.5" />
@@ -479,7 +492,7 @@ const eventColor: Record<string, string> = {
           <!-- Routing policy (router-only, not a vLLM flag) -->
           <div v-if="routingStrategy">
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              路由策略（負載平衡）
+              {{ $t('modelDetail.routingPolicy') }}
             </p>
             <div class="rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-sm">
               {{ routingStrategyLabel(routingStrategy) }}
@@ -490,7 +503,7 @@ const eventColor: Record<string, string> = {
           <!-- Full vLLM model_config -->
           <div v-if="vllmParams.length">
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              vLLM 參數（model_config）
+              {{ $t('modelDetail.vllmParams') }}
             </p>
             <div class="overflow-hidden rounded-lg border border-border/60">
               <div
@@ -508,8 +521,8 @@ const eventColor: Record<string, string> = {
           <!-- LoRA adapters -->
           <div v-if="loras.length || canHotLora">
             <p class="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              LoRA Adapters
-              <Badge v-if="canHotLora" variant="outline" class="text-[10px] normal-case">熱加載已啟用</Badge>
+              {{ $t('modelDetail.loraAdapters') }}
+              <Badge v-if="canHotLora" variant="outline" class="text-[10px] normal-case">{{ $t('modelDetail.hotLoadEnabled') }}</Badge>
             </p>
             <div v-if="loras.length" class="overflow-hidden rounded-lg border border-border/60">
               <div
@@ -525,7 +538,7 @@ const eventColor: Record<string, string> = {
                   size="icon-sm"
                   variant="ghost"
                   :disabled="hotLoraBusy"
-                  title="熱卸載"
+                  :title="$t('modelDetail.hotUnload')"
                   @click="hotUnloadLora(l.name)"
                 >
                   <Trash2 class="size-3.5" />
@@ -539,19 +552,19 @@ const eventColor: Record<string, string> = {
                 v-model="pickLoraPath"
                 class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background/40 px-2 font-mono text-xs"
               >
-                <option value="">— 從 LoRA 庫選 adapter 熱載入 —</option>
+                <option value="">{{ $t('modelDetail.hotLoadPick') }}</option>
                 <option v-for="a in loraLibrary" :key="a.path" :value="a.path">
                   {{ a.name }}{{ a.rank != null ? ` (r${a.rank})` : '' }}{{ a.base_model ? ` · ${a.base_model}` : '' }}
                 </option>
               </select>
               <Button size="sm" :disabled="!pickLoraPath || hotLoraBusy" @click="hotLoadLora">
-                <Loader2 v-if="hotLoraBusy" class="size-3.5 animate-spin" /><Download v-else class="size-3.5" />載入
+                <Loader2 v-if="hotLoraBusy" class="size-3.5 animate-spin" /><Download v-else class="size-3.5" />{{ $t('modelDetail.hotLoad') }}
               </Button>
             </div>
 
             <p class="mt-1 text-[11px] text-muted-foreground/80">
-              <template v-if="canHotLora">熱載入會套用到所有就緒實例並更新路由，且寫入 overlay（重啟後仍在）。</template>
-              <template v-else>推論時把 served name 填進 <span class="font-mono">model</span> 欄位即可（Playground / 評測 / 壓測皆可選）。</template>
+              <template v-if="canHotLora">{{ $t('modelDetail.hotLoadHint') }}</template>
+              <template v-else>{{ $t('modelDetail.coldHint') }}</template>
             </p>
           </div>
           <!-- Running but hot-load not enabled: tell the user how to turn it on -->
@@ -559,48 +572,46 @@ const eventColor: Record<string, string> = {
             v-else-if="model?.state === 'ready' && !engine?.settings?.allow_runtime_lora"
             class="rounded-lg border border-border/60 bg-muted/20 p-3 text-[11px] text-muted-foreground"
           >
-            要在不重啟下熱加載 LoRA：編輯本模型、勾選
-            <span class="font-mono">enable_lora</span> +
-            <span class="font-mono">allow_runtime_lora</span>，重啟後即可在此熱載入 / 卸載。
+            {{ $t('modelDetail.hotLoadEnableHint') }}
           </div>
 
           <!-- Live router metrics -->
           <div>
             <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              即時負載（路由器 /metrics）
+              {{ $t('modelDetail.liveMetrics') }}
             </p>
             <div v-if="metrics" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ metrics.running }}</p>
-                <p class="text-xs text-muted-foreground">執行中</p>
+                <p class="text-xs text-muted-foreground">{{ $t('modelDetail.metricsRunning') }}</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ metrics.waiting }}</p>
-                <p class="text-xs text-muted-foreground">等待中</p>
+                <p class="text-xs text-muted-foreground">{{ $t('modelDetail.metricsWaiting') }}</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">
                   {{ metrics.kv_cache_usage_perc == null ? '—' : formatPercent(metrics.kv_cache_usage_perc * 100) }}
                 </p>
-                <p class="text-xs text-muted-foreground">KV 快取</p>
+                <p class="text-xs text-muted-foreground">{{ $t('modelDetail.metricsKvCache') }}</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">
                   {{ formatNumber(metrics.generation_tokens, true) }}
                 </p>
-                <p class="text-xs text-muted-foreground">生成 tokens</p>
+                <p class="text-xs text-muted-foreground">{{ $t('modelDetail.metricsGenTokens') }}</p>
               </div>
             </div>
-            <p v-else class="text-sm text-muted-foreground">無即時指標（路由器無法連線或模型閒置）。</p>
+            <p v-else class="text-sm text-muted-foreground">{{ $t('modelDetail.noMetrics') }}</p>
           </div>
 
           <!-- Usage rollup -->
           <div v-if="usageRow">
-            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">用量</p>
+            <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('modelDetail.usageSection') }}</p>
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ formatNumber(usageRow.count) }}</p>
-                <p class="text-xs text-muted-foreground">請求次數</p>
+                <p class="text-xs text-muted-foreground">{{ $t('modelDetail.requestCount') }}</p>
               </div>
               <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
                 <p class="text-lg font-semibold tabular">{{ formatLatency(usageRow.p50_latency_ms) }}</p>
@@ -621,7 +632,7 @@ const eventColor: Record<string, string> = {
             v-if="model.last_error"
             class="rounded-lg border border-status-failed/30 bg-status-failed/10 p-3"
           >
-            <p class="text-xs font-medium text-status-failed">最後錯誤</p>
+            <p class="text-xs font-medium text-status-failed">{{ $t('modelDetail.lastError') }}</p>
             <pre class="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-status-failed/90">{{ model.last_error }}</pre>
           </div>
         </TabsContent>
@@ -629,7 +640,7 @@ const eventColor: Record<string, string> = {
         <!-- Events timeline -->
         <TabsContent value="events" class="mt-4">
           <div class="flex justify-end">
-            <Button variant="ghost" size="sm" @click="loadEvents"><RefreshCw class="size-3.5" />重新整理</Button>
+            <Button variant="ghost" size="sm" @click="loadEvents"><RefreshCw class="size-3.5" />{{ $t('common.refresh') }}</Button>
           </div>
           <ol class="relative mt-2 space-y-4 border-l border-border/70 pl-5">
             <li v-for="ev in events" :key="ev.id" class="relative">
@@ -644,7 +655,7 @@ const eventColor: Record<string, string> = {
                 {{ ev.detail }}
               </p>
             </li>
-            <li v-if="!events.length" class="text-sm text-muted-foreground">尚無事件記錄。</li>
+            <li v-if="!events.length" class="text-sm text-muted-foreground">{{ $t('modelDetail.noEventRecords') }}</li>
           </ol>
         </TabsContent>
 
@@ -655,15 +666,15 @@ const eventColor: Record<string, string> = {
               <Search class="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 v-model="logFilter"
-                placeholder="篩選日誌行…"
+                :placeholder="$t('modelDetail.filterLogs')"
                 class="h-8 w-full rounded-md border border-input bg-background/40 pl-8 pr-2 text-xs"
               />
             </div>
-            <Button variant="ghost" size="sm" :disabled="!logs" title="下載完整日誌" @click="downloadLogs">
-              <Download class="size-3.5" />下載
+            <Button variant="ghost" size="sm" :disabled="!logs" :title="$t('modelDetail.downloadLogs')" @click="downloadLogs">
+              <Download class="size-3.5" />{{ $t('common.download') }}
             </Button>
             <Button variant="ghost" size="sm" :disabled="loadingLogs" @click="loadLogs">
-              <RefreshCw class="size-3.5" :class="loadingLogs && 'animate-spin'" />重新整理
+              <RefreshCw class="size-3.5" :class="loadingLogs && 'animate-spin'" />{{ $t('common.refresh') }}
             </Button>
           </div>
           <pre
@@ -671,7 +682,7 @@ const eventColor: Record<string, string> = {
             class="max-h-[60vh] overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-xs leading-relaxed text-foreground/90"
           >{{ filteredLogs }}</pre>
           <p v-else class="rounded-lg border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
-            {{ logs ? '無符合篩選的日誌行。' : (logsError ?? '無日誌內容。') }}
+            {{ logs ? $t('modelDetail.noFilterMatch') : (logsError ?? $t('modelDetail.noLogContent')) }}
           </p>
         </TabsContent>
       </Tabs>

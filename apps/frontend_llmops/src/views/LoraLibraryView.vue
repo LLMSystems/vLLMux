@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Boxes, Cpu, Download, HardDrive, Layers, Loader2, Trash2 } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
@@ -12,6 +13,7 @@ import Input from '@/components/ui/Input.vue'
 import Badge from '@/components/ui/Badge.vue'
 import StatCard from '@/components/StatCard.vue'
 
+const { t } = useI18n()
 const { ensureUnlocked } = useAuth()
 
 const lib = ref<LoraLibraryInfo | null>(null)
@@ -39,7 +41,7 @@ async function loadLib() {
   try {
     lib.value = await api.listLora()
   } catch (e) {
-    toast.error('無法讀取 LoRA 庫', { description: String(e) })
+    toast.error(t('loraLibrary.loadFailed'), { description: String(e) })
   }
 }
 
@@ -62,10 +64,14 @@ async function startDownload() {
     await api.startLoraDownload(repo, nameInput.value.trim() || undefined)
     repoInput.value = ''
     nameInput.value = ''
-    toast.success(`開始下載 ${repo}`, { description: '可離開此頁，下載會在背景繼續。' })
+    toast.success(t('loraLibrary.downloadStarted', { repo }), {
+      description: t('loraLibrary.downloadStartedDesc'),
+    })
     await loadDownloads()
   } catch (e) {
-    toast.error('無法開始下載', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('loraLibrary.downloadFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     starting.value = false
   }
@@ -73,13 +79,15 @@ async function startDownload() {
 
 async function remove(name: string) {
   if (!(await ensureUnlocked())) return
-  if (!confirm(`確定刪除 LoRA「${name}」？此操作會移除磁碟上的 adapter 檔案。`)) return
+  if (!confirm(t('loraLibrary.deleteConfirm', { name }))) return
   try {
     await api.deleteLora(name)
-    toast.success(`已刪除 ${name}`)
+    toast.success(t('loraLibrary.deleted', { name }))
     await loadLib()
   } catch (e) {
-    toast.error('刪除失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('loraLibrary.deleteFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   }
 }
 
@@ -96,52 +104,52 @@ onBeforeUnmount(() => {
 <template>
   <div class="space-y-6 p-6">
     <div>
-      <h1 class="flex items-center gap-2 text-lg font-semibold"><Layers class="size-5" />LoRA 庫</h1>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Layers class="size-5" />{{ $t('loraLibrary.title') }}</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        管理本地 LoRA adapter。從 Hugging Face 下載、或把 adapter 資料夾直接放進
-        <span class="font-mono">{{ lib?.root ?? 'LoRA 目錄' }}</span> 也會出現在這。
-        新增 / 編輯模型時可在「LoRA Adapters」區從這裡挑選掛載。
+        {{ $t('loraLibrary.description') }}
+        <span class="font-mono">{{ lib?.root ?? $t('sidebar.loraLibrary') }}</span>
+        {{ $t('loraLibrary.descriptionEnd') }}
       </p>
     </div>
 
     <!-- Stats -->
     <div v-if="lib" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard :icon="Layers" label="Adapters" :value="String(lib.adapters.length)" />
-      <StatCard :icon="HardDrive" label="佔用空間" :value="formatBytes(totalSize)" />
-      <StatCard :icon="Download" label="下載中" :value="String(activeDownloads.length)" />
+      <StatCard :icon="Layers" :label="$t('loraLibrary.adapters')" :value="String(lib.adapters.length)" />
+      <StatCard :icon="HardDrive" :label="$t('loraLibrary.diskUsed')" :value="formatBytes(totalSize)" />
+      <StatCard :icon="Download" :label="$t('library.downloading')" :value="String(activeDownloads.length)" />
       <StatCard
         :icon="HardDrive"
-        label="磁碟剩餘"
+        :label="$t('loraLibrary.diskRemaining')"
         :value="formatBytes(lib.disk.free)"
-        :hint="`已用 ${Math.round(diskPct)}% / ${formatBytes(lib.disk.total)}`"
+        :hint="$t('library.diskUsed') + ' ' + Math.round(diskPct) + '% / ' + formatBytes(lib.disk.total)"
         color="var(--chart-1)"
       />
     </div>
 
     <!-- Download -->
     <Card class="p-5">
-      <p class="mb-3 text-sm font-semibold">下載 adapter</p>
+      <p class="mb-3 text-sm font-semibold">{{ $t('loraLibrary.downloadAdapter') }}</p>
       <div class="flex items-end gap-2">
         <label class="flex-1">
-          <span class="text-xs text-muted-foreground">Hugging Face repo id</span>
+          <span class="text-xs text-muted-foreground">{{ $t('loraLibrary.repoId') }}</span>
           <Input
             v-model="repoInput"
-            placeholder="例如：jeeejeee/llama32-3b-text2sql-spider"
+            :placeholder="$t('loraLibrary.repoPlaceholder')"
             class="mt-1 font-mono"
             @keydown.enter="startDownload"
           />
         </label>
         <label class="w-44">
-          <span class="text-xs text-muted-foreground">本地名稱（選填）</span>
+          <span class="text-xs text-muted-foreground">{{ $t('loraLibrary.localName') }}</span>
           <Input
             v-model="nameInput"
-            placeholder="預設取 repo 結尾"
+            :placeholder="$t('loraLibrary.localNamePlaceholder')"
             class="mt-1 font-mono"
             @keydown.enter="startDownload"
           />
         </label>
         <Button :disabled="!repoInput.trim() || starting" @click="startDownload">
-          <Loader2 v-if="starting" class="size-4 animate-spin" /><Download v-else class="size-4" />下載
+          <Loader2 v-if="starting" class="size-4 animate-spin" /><Download v-else class="size-4" />{{ $t('common.download') }}
         </Button>
       </div>
 
@@ -151,11 +159,11 @@ onBeforeUnmount(() => {
           <div class="flex items-center justify-between gap-3 text-sm">
             <span class="truncate font-mono text-xs">{{ job.name }} <span class="text-muted-foreground">← {{ job.repo_id }}</span></span>
             <span class="flex shrink-0 items-center gap-2">
-              <Badge v-if="job.state === 'completed'" variant="ready">完成</Badge>
-              <Badge v-else-if="job.state === 'failed'" variant="failed">失敗</Badge>
+              <Badge v-if="job.state === 'completed'" variant="ready">{{ $t('library.downloadComplete') }}</Badge>
+              <Badge v-else-if="job.state === 'failed'" variant="failed">{{ $t('library.downloadFailedBadge') }}</Badge>
               <span v-else class="flex items-center gap-1.5 text-muted-foreground">
                 <Loader2 class="size-3.5 animate-spin" />
-                {{ pct(job) != null ? `${pct(job)!.toFixed(0)}%` : '下載中…' }}
+                {{ pct(job) != null ? `${pct(job)!.toFixed(0)}%` : $t('library.downloading') + '…' }}
               </span>
             </span>
           </div>
@@ -178,7 +186,7 @@ onBeforeUnmount(() => {
 
     <!-- Adapters — card grid -->
     <div>
-      <p class="mb-2 text-sm font-semibold">本地 adapters</p>
+      <p class="mb-2 text-sm font-semibold">{{ $t('loraLibrary.localAdapters') }}</p>
       <div v-if="lib?.adapters.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div
           v-for="a in lib.adapters"
@@ -192,14 +200,14 @@ onBeforeUnmount(() => {
             <div class="min-w-0 flex-1">
               <p class="truncate font-medium" :title="a.name">{{ a.name }}</p>
               <p class="flex items-center gap-1 truncate font-mono text-xs text-muted-foreground" :title="a.base_model ?? ''">
-                <Cpu class="size-3 shrink-0" />{{ a.base_model ?? '未知 base' }}
+                <Cpu class="size-3 shrink-0" />{{ a.base_model ?? $t('loraLibrary.unknownBase') }}
               </p>
             </div>
             <Button
               size="icon-sm"
               variant="ghost"
               class="opacity-0 transition group-hover:opacity-100"
-              title="刪除 adapter"
+              :title="$t('common.delete')"
               @click="remove(a.name)"
             >
               <Trash2 class="size-4" />
@@ -217,18 +225,18 @@ onBeforeUnmount(() => {
 
           <dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <div>
-              <dt class="text-muted-foreground">大小</dt>
+              <dt class="text-muted-foreground">{{ $t('library.size') }}</dt>
               <dd class="tabular font-medium">{{ formatBytes(a.size_on_disk) }}</dd>
             </div>
             <div class="min-w-0">
-              <dt class="text-muted-foreground">路徑</dt>
+              <dt class="text-muted-foreground">{{ $t('common.path') }}</dt>
               <dd class="truncate font-mono" :title="a.path">{{ a.path }}</dd>
             </div>
           </dl>
         </div>
       </div>
       <Card v-else class="p-10 text-center text-sm text-muted-foreground">
-        庫中尚無 adapter。從上方下載，或把資料夾放進 <span class="font-mono">{{ lib?.root }}</span>。
+        {{ $t('loraLibrary.noAdapters') }} <span class="font-mono">{{ lib?.root }}</span>。
       </Card>
     </div>
   </div>

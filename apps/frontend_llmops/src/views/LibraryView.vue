@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ArrowDownUp, Boxes, Brain, Clock, Download, Files, HardDrive, Loader2, Package, Trash2 } from '@lucide/vue'
 import type { Component } from 'vue'
 import { api, ApiError } from '@/lib/api'
@@ -13,6 +14,7 @@ import Input from '@/components/ui/Input.vue'
 import Badge from '@/components/ui/Badge.vue'
 import StatCard from '@/components/StatCard.vue'
 
+const { t } = useI18n()
 const { ensureUnlocked } = useAuth()
 
 const cache = ref<CacheInfo | null>(null)
@@ -33,9 +35,9 @@ const totalSize = computed(() => (cache.value?.models ?? []).reduce((s, m) => s 
 /** Best-effort model family from the repo id, for the card icon + tag. */
 function kindMeta(repoId: string): { label: string; icon: Component; color: string } {
   const r = repoId.toLowerCase()
-  if (/rerank/.test(r)) return { label: '重排序', icon: ArrowDownUp, color: 'var(--chart-4)' }
-  if (/embed|bge|m3e|gte|e5|sentence/.test(r)) return { label: '嵌入', icon: Boxes, color: 'var(--chart-2)' }
-  return { label: 'LLM', icon: Brain, color: 'var(--chart-1)' }
+  if (/rerank/.test(r)) return { label: t('common.reranking'), icon: ArrowDownUp, color: 'var(--chart-4)' }
+  if (/embed|bge|m3e|gte|e5|sentence/.test(r)) return { label: t('common.embedding'), icon: Boxes, color: 'var(--chart-2)' }
+  return { label: t('models.llm'), icon: Brain, color: 'var(--chart-1)' }
 }
 function repoLeaf(repoId: string) {
   return repoId.split('/').pop() ?? repoId
@@ -53,7 +55,7 @@ async function loadCache() {
   try {
     cache.value = await api.getCache()
   } catch (e) {
-    toast.error('無法讀取快取', { description: String(e) })
+    toast.error(t('library.loadCacheFailed'), { description: String(e) })
   }
 }
 
@@ -75,10 +77,14 @@ async function startDownload() {
   try {
     await api.startDownload(repo)
     repoInput.value = ''
-    toast.success(`開始下載 ${repo}`, { description: '可離開此頁，下載會在背景繼續。' })
+    toast.success(t('library.downloadStarted', { repo }), {
+      description: t('library.downloadStartedDesc'),
+    })
     await loadDownloads()
   } catch (e) {
-    toast.error('無法開始下載', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('library.downloadFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     starting.value = false
   }
@@ -86,13 +92,15 @@ async function startDownload() {
 
 async function remove(model: CachedModel) {
   if (!(await ensureUnlocked())) return
-  if (!confirm(`確定刪除已快取的 ${model.repo_id}？此操作會釋放磁碟空間。`)) return
+  if (!confirm(t('library.deleteConfirm', { repo: model.repo_id }))) return
   try {
     await api.deleteCache(model.repo_id)
-    toast.success(`已刪除 ${model.repo_id}`)
+    toast.success(t('library.deleted', { repo: model.repo_id }))
     await loadCache()
   } catch (e) {
-    toast.error('刪除失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('library.deleteFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   }
 }
 
@@ -109,42 +117,41 @@ onBeforeUnmount(() => {
 <template>
   <div class="space-y-6 p-6">
     <div>
-      <h1 class="flex items-center gap-2 text-lg font-semibold"><Package class="size-5" />模型庫</h1>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Package class="size-5" />{{ $t('library.title') }}</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        預先下載 Hugging Face 權重到共用快取，啟動模型時就不必等待。Gated 模型需在後端設定
-        <span class="font-mono">HF_TOKEN</span>。
+        {{ $t('library.description') }} <span class="font-mono">HF_TOKEN</span> {{ $t('library.descriptionEnd') }}
       </p>
     </div>
 
     <!-- Stats -->
     <div v-if="cache" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard :icon="Package" label="已快取模型" :value="String(cache.models.length)" />
-      <StatCard :icon="HardDrive" label="佔用空間" :value="formatBytes(totalSize)" />
-      <StatCard :icon="Download" label="下載中" :value="String(activeDownloads.length)" />
+      <StatCard :icon="Package" :label="$t('library.cachedModels')" :value="String(cache.models.length)" />
+      <StatCard :icon="HardDrive" :label="$t('library.occupiedSpace')" :value="formatBytes(totalSize)" />
+      <StatCard :icon="Download" :label="$t('library.downloading')" :value="String(activeDownloads.length)" />
       <StatCard
         :icon="HardDrive"
-        label="磁碟剩餘"
+        :label="$t('library.diskRemaining')"
         :value="formatBytes(cache.disk.free)"
-        :hint="`已用 ${Math.round(diskPct)}% / ${formatBytes(cache.disk.total)}`"
+        :hint="$t('library.diskUsed') + ' ' + Math.round(diskPct) + '% / ' + formatBytes(cache.disk.total)"
         color="var(--chart-1)"
       />
     </div>
 
     <!-- Download -->
     <Card class="p-5">
-      <p class="mb-3 text-sm font-semibold">下載新模型</p>
+      <p class="mb-3 text-sm font-semibold">{{ $t('library.downloadNew') }}</p>
       <div class="flex items-end gap-2">
         <label class="flex-1">
-          <span class="text-xs text-muted-foreground">Hugging Face repo id</span>
+          <span class="text-xs text-muted-foreground">{{ $t('library.repoId') }}</span>
           <Input
             v-model="repoInput"
-            placeholder="例如：Qwen/Qwen3-0.6B"
+            :placeholder="$t('library.repoPlaceholder')"
             class="mt-1 font-mono"
             @keydown.enter="startDownload"
           />
         </label>
         <Button :disabled="!repoInput.trim() || starting" @click="startDownload">
-          <Loader2 v-if="starting" class="size-4 animate-spin" /><Download v-else class="size-4" />下載
+          <Loader2 v-if="starting" class="size-4 animate-spin" /><Download v-else class="size-4" />{{ $t('common.download') }}
         </Button>
       </div>
 
@@ -154,11 +161,11 @@ onBeforeUnmount(() => {
           <div class="flex items-center justify-between gap-3 text-sm">
             <span class="truncate font-mono text-xs">{{ job.repo_id }}</span>
             <span class="flex shrink-0 items-center gap-2">
-              <Badge v-if="job.state === 'completed'" variant="ready">完成</Badge>
-              <Badge v-else-if="job.state === 'failed'" variant="failed">失敗</Badge>
+              <Badge v-if="job.state === 'completed'" variant="ready">{{ $t('library.downloadComplete') }}</Badge>
+              <Badge v-else-if="job.state === 'failed'" variant="failed">{{ $t('library.downloadFailedBadge') }}</Badge>
               <span v-else class="flex items-center gap-1.5 text-muted-foreground">
                 <Loader2 class="size-3.5 animate-spin" />
-                {{ pct(job) != null ? `${pct(job)!.toFixed(0)}%` : '下載中…' }}
+                {{ pct(job) != null ? `${pct(job)!.toFixed(0)}%` : $t('library.downloading') + '…' }}
               </span>
             </span>
           </div>
@@ -181,7 +188,7 @@ onBeforeUnmount(() => {
 
     <!-- Cached models — card grid -->
     <div>
-      <p class="mb-2 text-sm font-semibold">已快取模型</p>
+      <p class="mb-2 text-sm font-semibold">{{ $t('library.cachedModels') }}</p>
       <div v-if="cache?.models.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div
           v-for="m in cache.models"
@@ -200,7 +207,7 @@ onBeforeUnmount(() => {
               size="icon-sm"
               variant="ghost"
               class="opacity-0 transition group-hover:opacity-100"
-              title="刪除快取"
+              :title="$t('library.deleteCache')"
               @click="remove(m)"
             >
               <Trash2 class="size-4" />
@@ -209,22 +216,22 @@ onBeforeUnmount(() => {
 
           <div class="mt-3 flex flex-wrap gap-1.5">
             <Badge variant="outline" class="text-[10px]">{{ kindMeta(m.repo_id).label }}</Badge>
-            <Badge variant="muted" class="text-[10px]"><Files class="size-3" />{{ m.nb_files }} 檔</Badge>
+            <Badge variant="muted" class="text-[10px]"><Files class="size-3" />{{ m.nb_files }} {{ $t('library.files') }}</Badge>
           </div>
 
           <dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <div>
-              <dt class="text-muted-foreground">大小</dt>
+              <dt class="text-muted-foreground">{{ $t('library.size') }}</dt>
               <dd class="tabular font-medium">{{ formatBytes(m.size_on_disk) }}</dd>
             </div>
             <div>
-              <dt class="flex items-center gap-1 text-muted-foreground"><Clock class="size-3" />更新</dt>
+              <dt class="flex items-center gap-1 text-muted-foreground"><Clock class="size-3" />{{ $t('library.updated') }}</dt>
               <dd class="font-medium">{{ timeAgo(m.last_modified) }}</dd>
             </div>
           </dl>
         </div>
       </div>
-      <Card v-else class="p-10 text-center text-sm text-muted-foreground">快取中尚無模型。</Card>
+      <Card v-else class="p-10 text-center text-sm text-muted-foreground">{{ $t('library.noCachedModels') }}</Card>
     </div>
   </div>
 </template>

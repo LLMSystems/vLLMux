@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PerfPoint } from '@/types/api'
 
 export interface CompareSeries {
@@ -7,6 +8,8 @@ export interface CompareSeries {
   color: string
   points: PerfPoint[]
 }
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -16,8 +19,9 @@ const props = withDefaults(
     format?: (v: number) => string
     xLabel?: string
   }>(),
-  { format: (v: number) => `${Math.round(v)}`, xLabel: '並發' },
+  { format: (v: number) => `${Math.round(v)}` },
 )
+const displayXLabel = computed(() => props.xLabel ?? t('benchmark.tableParallel'))
 
 function xVal(p: PerfPoint): number | null {
   return p.concurrency != null && p.concurrency > 0 ? p.concurrency : p.rate
@@ -77,7 +81,7 @@ const xTicks = computed(() => [...new Set(allPts.value.map((p) => p.x))].sort((a
         <circle v-for="(p, pi) in l.pts" :key="pi" :cx="px(p.x)" :cy="py(p.y)" r="3" :fill="l.color" />
       </g>
       <text v-for="x in xTicks" :key="x" :x="px(x)" :y="H - PAD_B + 12" text-anchor="middle" class="fill-muted-foreground" style="font-size: 9px">{{ x }}</text>
-      <text :x="(PAD_L + W - PAD_R) / 2" :y="H - 2" text-anchor="middle" class="fill-muted-foreground" style="font-size: 9px">{{ xLabel }}</text>
+      <text :x="(PAD_L + W - PAD_R) / 2" :y="H - 2" text-anchor="middle" class="fill-muted-foreground" style="font-size: 9px">{{ displayXLabel }}</text>
     </svg>
   </div>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RefreshCw, Search } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { toast } from '@/lib/toast'
@@ -9,6 +10,7 @@ import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 
+const { t } = useI18n()
 const RATE_KEY = 'llmops_cost_per_mtok'
 
 const rows = ref<RequestRow[]>([])
@@ -24,7 +26,7 @@ async function load() {
   try {
     rows.value = await api.getRequests({ limit: limit.value })
   } catch (e) {
-    toast.error('無法載入請求紀錄', { description: String(e) })
+    toast.error(t('requests.loadFailed'), { description: String(e) })
   } finally {
     loading.value = false
   }
@@ -79,13 +81,13 @@ onMounted(load)
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative">
         <Search class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="query" placeholder="搜尋模型 / 路徑 / 金鑰…" class="w-64 pl-8" />
+        <Input v-model="query" :placeholder="$t('requests.searchPlaceholder')" class="w-64 pl-8" />
       </div>
       <label class="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <input v-model="errorsOnly" type="checkbox" class="size-4 accent-[var(--chart-1)]" />僅錯誤
+        <input v-model="errorsOnly" type="checkbox" class="size-4 accent-[var(--chart-1)]" />{{ $t('requests.errorsOnly') }}
       </label>
       <label class="flex items-center gap-1.5 text-sm text-muted-foreground">
-        $/1M tokens
+        {{ $t('requests.costPerMTok') }}
         <Input
           :model-value="ratePerMTok"
           type="number"
@@ -101,12 +103,12 @@ onMounted(load)
           class="h-9 rounded-md border border-input bg-background/40 px-2 text-sm"
           @change="load"
         >
-          <option :value="100">最近 100</option>
-          <option :value="200">最近 200</option>
-          <option :value="500">最近 500</option>
+          <option :value="100">{{ $t('requests.recent', { n: 100 }) }}</option>
+          <option :value="200">{{ $t('requests.recent', { n: 200 }) }}</option>
+          <option :value="500">{{ $t('requests.recent', { n: 500 }) }}</option>
         </select>
         <Button variant="outline" size="sm" :disabled="loading" @click="load">
-          <RefreshCw class="size-3.5" :class="loading && 'animate-spin'" />重新整理
+          <RefreshCw class="size-3.5" :class="loading && 'animate-spin'" />{{ $t('common.refresh') }}
         </Button>
       </div>
     </div>
@@ -115,21 +117,21 @@ onMounted(load)
     <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <Card class="p-4 text-center">
         <p class="text-lg font-semibold tabular">{{ formatNumber(totals.count) }}</p>
-        <p class="text-xs text-muted-foreground">請求數</p>
+        <p class="text-xs text-muted-foreground">{{ $t('requests.requestCount') }}</p>
       </Card>
       <Card class="p-4 text-center">
         <p class="text-lg font-semibold tabular">{{ formatNumber(totals.tokens, true) }}</p>
-        <p class="text-xs text-muted-foreground">總 tokens</p>
+        <p class="text-xs text-muted-foreground">{{ $t('requests.totalTokens') }}</p>
       </Card>
       <Card class="p-4 text-center">
         <p class="text-lg font-semibold tabular" :class="totals.errorRate > 0 ? 'text-status-failed' : ''">
           {{ totals.errorRate.toFixed(1) }}%
         </p>
-        <p class="text-xs text-muted-foreground">錯誤率</p>
+        <p class="text-xs text-muted-foreground">{{ $t('requests.errorRate') }}</p>
       </Card>
       <Card class="p-4 text-center">
         <p class="text-lg font-semibold tabular">${{ totals.cost.toFixed(4) }}</p>
-        <p class="text-xs text-muted-foreground">估算成本</p>
+        <p class="text-xs text-muted-foreground">{{ $t('requests.estimatedCost') }}</p>
       </Card>
     </div>
 
@@ -139,14 +141,14 @@ onMounted(load)
         <table class="w-full text-sm">
           <thead class="border-b border-border/60 text-xs text-muted-foreground">
             <tr class="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
-              <th>時間</th>
-              <th>模型</th>
-              <th>路徑</th>
-              <th class="text-right">狀態</th>
-              <th class="text-right">延遲</th>
-              <th class="text-right">tokens</th>
-              <th class="text-right">成本</th>
-              <th>金鑰</th>
+              <th>{{ $t('requests.tableTime') }}</th>
+              <th>{{ $t('requests.tableModel') }}</th>
+              <th>{{ $t('requests.tablePath') }}</th>
+              <th class="text-right">{{ $t('requests.tableStatus') }}</th>
+              <th class="text-right">{{ $t('requests.tableLatency') }}</th>
+              <th class="text-right">{{ $t('requests.tableTokens') }}</th>
+              <th class="text-right">{{ $t('requests.tableCost') }}</th>
+              <th>{{ $t('requests.tableKey') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -170,7 +172,7 @@ onMounted(load)
             </tr>
             <tr v-if="!filtered.length">
               <td colspan="8" class="px-3 py-10 text-center text-sm text-muted-foreground">
-                {{ loading ? '載入中…' : '尚無請求紀錄。' }}
+                {{ loading ? $t('common.loading') : $t('requests.noRecords') }}
               </td>
             </tr>
           </tbody>

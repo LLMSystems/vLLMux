@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Activity, Cpu, Gauge, Server, Timer, Zap } from '@lucide/vue'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
@@ -18,6 +19,7 @@ import Badge from '@/components/ui/Badge.vue'
 import { formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
 import type { StateEvent } from '@/types/api'
 
+const { t } = useI18n()
 const models = useModelsStore()
 const resources = useResourcesStore()
 const traffic = useTrafficStore()
@@ -50,30 +52,30 @@ function codeVariant(code: number) {
     <!-- KPI row -->
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard
-        label="就緒模型"
+        :label="$t('overview.readyModels')"
         :value="`${models.readyCount} / ${models.total}`"
-        :hint="models.counts.failed ? `${models.counts.failed} 個失敗` : '全部正常'"
+        :hint="models.counts.failed ? t('overview.failedCount', { n: models.counts.failed }) : $t('overview.allNormal')"
         :icon="Server"
         color="var(--chart-1)"
       />
       <StatCard
-        label="請求次數"
+        :label="$t('overview.requestCount')"
         :value="formatNumber(traffic.totalRequests)"
-        :hint="`${formatPercent(traffic.errorRate)} 錯誤率`"
+        :hint="t('overview.errorRate', { rate: formatPercent(traffic.errorRate) })"
         :icon="Zap"
         color="var(--chart-2)"
       />
       <StatCard
-        label="延遲 p95"
+        :label="$t('overview.latencyP95')"
         :value="formatLatency(traffic.weightedP95)"
-        :hint="`已處理 ${formatNumber(traffic.totalTokens)} tokens`"
+        :hint="t('overview.processedTokens', { n: formatNumber(traffic.totalTokens) })"
         :icon="Timer"
         color="var(--chart-4)"
       />
       <StatCard
-        label="GPU 使用率"
+        :label="$t('overview.gpuUtil')"
         :value="formatPercent(resources.avgGpuUtil)"
-        :hint="`${resources.resources?.gpus.length ?? 0} 個裝置`"
+        :hint="t('overview.deviceCount', { n: resources.resources?.gpus.length ?? 0 })"
         :icon="Gauge"
         :spark="resources.gpuHistory"
         color="var(--chart-1)"
@@ -94,9 +96,9 @@ function codeVariant(code: number) {
       <!-- Model roster -->
       <Card class="lg:col-span-2">
         <CardHeader class="flex-row items-center justify-between">
-          <CardTitle>模型</CardTitle>
+          <CardTitle>{{ $t('overview.models') }}</CardTitle>
           <RouterLink to="/models" class="text-xs text-muted-foreground hover:text-foreground">
-            管理 →
+            {{ $t('common.manage') }}
           </RouterLink>
         </CardHeader>
         <CardContent class="space-y-1">
@@ -115,7 +117,7 @@ function codeVariant(code: number) {
             <Badge :variant="m.state" class="shrink-0 capitalize">{{ m.state }}</Badge>
           </RouterLink>
           <p v-if="!models.total" class="py-6 text-center text-sm text-muted-foreground">
-            尚未設定模型。
+            {{ $t('overview.noModelsYet') }}
           </p>
         </CardContent>
       </Card>
@@ -123,9 +125,9 @@ function codeVariant(code: number) {
       <!-- Recent activity -->
       <Card>
         <CardHeader class="flex-row items-center justify-between">
-          <CardTitle class="flex items-center gap-1.5"><Activity class="size-4" />活動</CardTitle>
+          <CardTitle class="flex items-center gap-1.5"><Activity class="size-4" />{{ $t('overview.activity') }}</CardTitle>
           <RouterLink to="/activity" class="text-xs text-muted-foreground hover:text-foreground">
-            全部 →
+            {{ $t('common.viewAll') }}
           </RouterLink>
         </CardHeader>
         <CardContent class="space-y-3">
@@ -140,7 +142,7 @@ function codeVariant(code: number) {
             </div>
           </div>
           <p v-if="!events.length" class="py-6 text-center text-sm text-muted-foreground">
-            無最近事件。
+            {{ $t('overview.noRecentEvents') }}
           </p>
         </CardContent>
       </Card>
@@ -149,9 +151,9 @@ function codeVariant(code: number) {
     <!-- Recent requests -->
     <Card>
       <CardHeader class="flex-row items-center justify-between">
-        <CardTitle class="flex items-center gap-1.5"><Cpu class="size-4" />最近請求</CardTitle>
+        <CardTitle class="flex items-center gap-1.5"><Cpu class="size-4" />{{ $t('overview.recentRequests') }}</CardTitle>
         <RouterLink to="/traffic" class="text-xs text-muted-foreground hover:text-foreground">
-          流量 →
+          {{ $t('overview.traffic') }}
         </RouterLink>
       </CardHeader>
       <CardContent>
@@ -159,12 +161,12 @@ function codeVariant(code: number) {
           <table class="w-full text-sm">
             <thead class="text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr class="border-b border-border/60">
-                <th class="pb-2 pr-4 font-medium">時間</th>
-                <th class="pb-2 pr-4 font-medium">模型</th>
-                <th class="pb-2 pr-4 font-medium">路徑</th>
-                <th class="pb-2 pr-4 font-medium">狀態</th>
-                <th class="pb-2 pr-4 text-right font-medium">延遲</th>
-                <th class="pb-2 text-right font-medium">Tokens</th>
+                <th class="pb-2 pr-4 font-medium">{{ $t('overview.tableTime') }}</th>
+                <th class="pb-2 pr-4 font-medium">{{ $t('overview.tableModel') }}</th>
+                <th class="pb-2 pr-4 font-medium">{{ $t('overview.tablePath') }}</th>
+                <th class="pb-2 pr-4 font-medium">{{ $t('overview.tableStatus') }}</th>
+                <th class="pb-2 pr-4 text-right font-medium">{{ $t('overview.tableLatency') }}</th>
+                <th class="pb-2 text-right font-medium">{{ $t('common.tokens') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -183,7 +185,7 @@ function codeVariant(code: number) {
                 <td class="py-2 text-right tabular text-muted-foreground">{{ r.total_tokens ?? '—' }}</td>
               </tr>
               <tr v-if="!traffic.requests.length">
-                <td colspan="6" class="py-6 text-center text-muted-foreground">尚無請求記錄。</td>
+                <td colspan="6" class="py-6 text-center text-muted-foreground">{{ $t('overview.noRequestRecords') }}</td>
               </tr>
             </tbody>
           </table>

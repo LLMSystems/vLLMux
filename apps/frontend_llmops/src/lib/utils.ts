@@ -1,6 +1,7 @@
 import type { ClassValue } from "clsx"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { currentLocale } from '@/i18n'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -51,17 +52,19 @@ export function formatPercent(n: number | null | undefined): string {
 export function timeAgo(unixSeconds: number | null | undefined): string {
   if (unixSeconds == null) return '—'
   const diff = Date.now() / 1000 - unixSeconds
-  if (diff < 5) return 'just now'
-  if (diff < 60) return `${Math.floor(diff)}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  const zh = currentLocale().startsWith('zh')
+  if (diff < 5) return zh ? '剛剛' : 'just now'
+  if (diff < 60) return zh ? `${Math.floor(diff)} 秒前` : `${Math.floor(diff)}s ago`
+  if (diff < 3600) return zh ? `${Math.floor(diff / 60)} 分前` : `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return zh ? `${Math.floor(diff / 3600)} 小時前` : `${Math.floor(diff / 3600)}h ago`
+  return zh ? `${Math.floor(diff / 86400)} 天前` : `${Math.floor(diff / 86400)}d ago`
 }
 
 /** Clock time (HH:MM:SS) from Unix seconds. */
 export function formatTime(unixSeconds: number | null | undefined): string {
   if (unixSeconds == null) return '—'
-  return new Date(unixSeconds * 1000).toLocaleTimeString('en-GB')
+  const locale = currentLocale().startsWith('zh') ? 'zh-TW' : 'en-GB'
+  return new Date(unixSeconds * 1000).toLocaleTimeString(locale)
 }
 
 /** Duration between two Unix-seconds stamps as e.g. "1m 34s". */

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loader2, Plus } from '@lucide/vue'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
@@ -18,6 +19,7 @@ const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ group: string; instances: ModelView[] }>()
 const emit = defineEmits<{ created: [key: string] }>()
 
+const { t } = useI18n()
 const models = useModelsStore()
 const creating = ref(false)
 
@@ -88,11 +90,13 @@ async function submit() {
     })
     // Deliberately NOT reloading the router here — it would route to a still-
     // stopped backend. The backend reloads it for us once this instance is READY.
-    toast.success(`已新增實例 ${view.key}`, { description: '目前已停止 — 請按「啟動」以啟用。' })
+    toast.success(t('addInstance.createSuccess', { key: view.key }), {
+      description: t('addInstance.createSuccessDesc'),
+    })
     emit('created', view.key)
     open.value = false
   } catch (e) {
-    toast.error('新增實例失敗', {
+    toast.error(t('addInstance.createFailed'), {
       description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
     })
   } finally {
@@ -102,48 +106,48 @@ async function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="`新增實例 · ${group}`" width-class="max-w-md">
+  <Dialog v-model:open="open" :title="`${$t('addInstance.title')} · ${group}`" width-class="max-w-md">
     <div class="space-y-4 text-sm">
       <!-- Inherited shared config (read-only) -->
       <div class="rounded-md border border-border/60 bg-muted/30 p-3">
-        <p class="text-xs font-medium text-muted-foreground">沿用此群組的共用設定</p>
+        <p class="text-xs font-medium text-muted-foreground">{{ $t('addInstance.sharedSettingsTitle') }}</p>
         <p class="mt-1 font-mono text-[12px]">{{ modelTag }}</p>
         <p class="mt-1 text-[11px] text-muted-foreground">
           max_model_len {{ sharedSettings.max_model_len ?? '—' }} ·
           gpu_memory_utilization {{ sharedSettings.gpu_memory_utilization ?? '—' }}
         </p>
         <p class="mt-1.5 text-[11px] text-muted-foreground">
-          同群組的所有實例共用 vLLM 參數，這裡只需設定本實例的位置。
+          {{ $t('addInstance.sharedSettingsHint') }}
         </p>
       </div>
 
       <div class="space-y-1.5">
-        <label class="text-xs font-medium text-muted-foreground">實例 ID</label>
-        <Input v-model="instanceId" placeholder="例如：qwen3-5" class="font-mono" />
-        <p v-if="idConflict" class="text-[11px] text-status-failed">此 ID 已存在於群組中。</p>
+        <label class="text-xs font-medium text-muted-foreground">{{ $t('addInstance.instanceIdLabel') }}</label>
+        <Input v-model="instanceId" :placeholder="$t('addInstance.instanceIdPlaceholder')" class="font-mono" />
+        <p v-if="idConflict" class="text-[11px] text-status-failed">{{ $t('addInstance.idConflict') }}</p>
       </div>
 
       <div class="grid grid-cols-2 gap-3">
         <div class="space-y-1.5">
-          <label class="text-xs font-medium text-muted-foreground">Port</label>
+          <label class="text-xs font-medium text-muted-foreground">{{ $t('addModel.portLabel') }}</label>
           <Input v-model.number="port" type="number" min="1" class="font-mono" />
-          <p v-if="portConflict" class="text-[11px] text-status-failed">此 port 已被佔用。</p>
+          <p v-if="portConflict" class="text-[11px] text-status-failed">{{ $t('addInstance.portConflict') }}</p>
         </div>
         <div class="space-y-1.5">
-          <label class="text-xs font-medium text-muted-foreground">CUDA 裝置</label>
+          <label class="text-xs font-medium text-muted-foreground">{{ $t('addInstance.cudaDeviceLabel') }}</label>
           <Input v-model.number="cudaDevice" type="number" min="0" class="font-mono" />
         </div>
       </div>
 
       <div class="space-y-1.5">
-        <label class="text-xs font-medium text-muted-foreground">Host</label>
+        <label class="text-xs font-medium text-muted-foreground">{{ $t('addModel.hostLabel') }}</label>
         <Input v-model="host" placeholder="localhost" class="font-mono" />
       </div>
 
       <div class="flex justify-end gap-2 pt-1">
-        <Button variant="outline" @click="open = false">取消</Button>
+        <Button variant="outline" @click="open = false">{{ $t('common.cancel') }}</Button>
         <Button :disabled="!valid || creating" @click="submit">
-          <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />新增實例
+          <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />{{ $t('addInstance.title') }}
         </Button>
       </div>
     </div>

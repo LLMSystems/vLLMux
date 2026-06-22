@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Plus, RefreshCw, Search } from '@lucide/vue'
 import { useModelsStore } from '@/stores/models'
 import { useAuth } from '@/composables/useAuth'
@@ -12,6 +13,7 @@ import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import type { ModelKind, ModelView } from '@/types/api'
 
+const { t } = useI18n()
 const models = useModelsStore()
 const { ensureUnlocked } = useAuth()
 const route = useRoute()
@@ -81,11 +83,11 @@ function openDetail(key: string) {
   drawerOpen.value = true
 }
 
-const kinds: { value: 'all' | ModelKind; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'llm', label: 'LLM' },
-  { value: 'embedding', label: '嵌入' },
-]
+const kinds = computed<{ value: 'all' | ModelKind; label: string }[]>(() => [
+  { value: 'all', label: t('models.all') },
+  { value: 'llm', label: t('models.llm') },
+  { value: 'embedding', label: t('models.embedding') },
+])
 </script>
 
 <template>
@@ -94,7 +96,7 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative">
         <Search class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="query" placeholder="搜尋模型…" class="w-56 pl-8" />
+        <Input v-model="query" :placeholder="$t('models.searchPlaceholder')" class="w-56 pl-8" />
       </div>
       <div class="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5">
         <button
@@ -113,12 +115,12 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
       </div>
       <div class="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
         <span class="tabular"
-          >{{ groups.length }} 個群組 · {{ models.counts.ready }} 就緒 · {{ models.counts.failed }} 失敗</span
+          >{{ $t('models.groupCount', { n: groups.length, ready: models.counts.ready, failed: models.counts.failed }) }}</span
         >
         <Button variant="outline" size="sm" @click="models.refresh()">
-          <RefreshCw class="size-3.5" />重新整理
+          <RefreshCw class="size-3.5" />{{ $t('common.refresh') }}
         </Button>
-        <Button size="sm" @click="openAdd"><Plus class="size-4" />新增模型</Button>
+        <Button size="sm" @click="openAdd"><Plus class="size-4" />{{ $t('models.addModel') }}</Button>
       </div>
     </div>
 
@@ -140,9 +142,9 @@ const kinds: { value: 'all' | ModelKind; label: string }[] = [
       v-else
       class="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/70 py-20 text-center"
     >
-      <p class="text-sm font-medium">找不到符合的模型。</p>
+      <p class="text-sm font-medium">{{ $t('models.noMatch') }}</p>
       <p class="mt-1 text-sm text-muted-foreground">
-        {{ models.total ? '試著清除篩選條件。' : 'config.yaml 中尚未設定模型。' }}
+        {{ models.total ? $t('models.clearFilter') : $t('models.noConfig') }}
       </p>
     </div>
 

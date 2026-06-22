@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Activity, Cpu, ExternalLink, Gauge, LayoutDashboard, Server, TrendingUp } from '@lucide/vue'
 import { useTheme } from '@/composables/useTheme'
 
@@ -8,14 +9,7 @@ import { useTheme } from '@/composables/useTheme'
 // from the provisioned dashboards (deploy/grafana/dashboards).
 const BASE = '/grafana/d'
 
-const dashboards = [
-  { id: 'overview', label: '總覽', icon: LayoutDashboard, path: `${BASE}/vllm-overview/vllm-overview` },
-  { id: 'capacity', label: 'vLLM 容量', icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
-  { id: 'perf', label: 'vLLM 效能', icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
-  { id: 'query', label: 'vLLM 請求', icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
-  { id: 'gpu', label: 'GPU', icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
-  { id: 'host', label: '主機', icon: Cpu, path: `${BASE}/rYdddlPWk/node-exporter-full` },
-] as const
+type DashboardId = 'overview' | 'capacity' | 'perf' | 'query' | 'gpu' | 'host'
 
 const ranges = [
   { label: '15m', from: 'now-15m' },
@@ -24,11 +18,23 @@ const ranges = [
   { label: '24h', from: 'now-24h' },
 ] as const
 
-const active = ref<(typeof dashboards)[number]['id']>('overview')
+const { t } = useI18n()
+const dashboards = computed(
+  () =>
+    [
+      { id: 'overview', label: t('monitoring.overview'), icon: LayoutDashboard, path: `${BASE}/vllm-overview/vllm-overview` },
+      { id: 'capacity', label: t('monitoring.vllmCapacity'), icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
+      { id: 'perf', label: t('monitoring.vllmPerf'), icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
+      { id: 'query', label: t('monitoring.vllmQuery'), icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
+      { id: 'gpu', label: t('monitoring.gpu'), icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
+      { id: 'host', label: t('monitoring.host'), icon: Cpu, path: `${BASE}/rYdddlPWk/node-exporter-full` },
+    ] as const,
+)
+const active = ref<DashboardId>('overview')
 const range = ref<(typeof ranges)[number]['from']>('now-1h')
 const { isDark } = useTheme()
 
-const current = computed(() => dashboards.find((d) => d.id === active.value)!)
+const current = computed(() => dashboards.value.find((d) => d.id === active.value)!)
 
 // kiosk hides Grafana's own chrome (nav/time-picker) for a clean embed; theme
 // follows the app's light/dark so the panels don't clash with the surrounding
@@ -85,7 +91,7 @@ const openUrl = computed(() => current.value.path + `?from=${range.value}&to=now
         class="ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <ExternalLink class="size-4" />
-        在 Grafana 開啟
+        {{ $t('monitoring.openGrafana') }}
       </a>
     </div>
 
@@ -94,7 +100,7 @@ const openUrl = computed(() => current.value.path + `?from=${range.value}&to=now
       :key="active"
       :src="src"
       class="min-h-0 w-full flex-1 rounded-xl border border-border/70 bg-card"
-      title="Grafana dashboard"
+      :title="current.label"
     />
   </div>
 </template>

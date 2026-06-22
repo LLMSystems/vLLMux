@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, Check, Download, Loader2, Plus, Share2, Trash2, Wand2 } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
 import Textarea from '@/components/ui/Textarea.vue'
@@ -19,6 +20,7 @@ import type { CachedModel, DownloadJob, KvTransferConfig, LoraAdapter, LoraModul
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ mode?: 'create' | 'edit'; editKey?: string | null }>()
 const emit = defineEmits<{ created: [key: string]; updated: [key: string] }>()
+const { t } = useI18n()
 
 const models = useModelsStore()
 const resources = useResourcesStore()
@@ -69,7 +71,10 @@ function loraBaseWarning(l: LoraModule): string {
   if (!a || !a.base_model) return ''
   return a.base_model === modelTag.value
     ? ''
-    : `此 adapter 的 base 是 ${a.base_model}，與本模型 ${modelTag.value || '(未填)'} 不符`
+    : t('addModel.loraBaseMismatch', {
+      adapterBase: a.base_model,
+      modelTag: modelTag.value || `(${t('addModel.notSet')})`,
+    })
 }
 
 const gpuOptions = computed(() => resources.resources?.gpus.map((g) => g.index) ?? [])
@@ -111,10 +116,14 @@ async function downloadWeights() {
   if (!repo) return
   try {
     await api.startDownload(repo)
-    toast.success(`開始下載 ${repo}`, { description: '可關閉此視窗，下載會在背景繼續。' })
+    toast.success(t('addModel.downloadStarted', { repo }), {
+      description: t('addModel.downloadStartedDesc'),
+    })
     await loadDownloads()
   } catch (e) {
-    toast.error('無法開始下載', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('addModel.downloadFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   }
 }
 
@@ -245,7 +254,9 @@ async function parse() {
     warnings.value = p.warnings
     parsed.value = true
   } catch (e) {
-    toast.error('無法解析指令', { description: e instanceof ApiError ? e.message : String(e) })
+    toast.error(t('addModel.parseFailed'), {
+      description: e instanceof ApiError ? e.message : String(e),
+    })
   } finally {
     parsing.value = false
   }
@@ -295,7 +306,7 @@ const showToolHint = ref(false)
 // Recommended (tool_call_parser, reasoning_parser) by model family.
 const TOOL_PRESETS = [
   { label: 'Qwen2.5 / QwQ', parser: 'hermes', reasoning: '' },
-  { label: 'Qwen3（含 thinking）', parser: 'hermes', reasoning: 'qwen3' },
+  { label: 'addModel.qwen3Thinking', parser: 'hermes', reasoning: 'qwen3' },
   { label: 'Qwen3-Coder', parser: 'qwen3_xml', reasoning: '' },
   { label: 'Llama 3.1/3.2', parser: 'llama3_json', reasoning: '' },
   { label: 'Llama 4', parser: 'llama4_pythonic', reasoning: '' },
@@ -428,28 +439,34 @@ async function submit() {
   try {
     if (isEdit.value && props.editKey) {
       const view = await api.updateModel(props.editKey, payload)
-      toast.success(`已更新 ${view.key}`, { description: '變更將於下次啟動時生效。' })
+      toast.success(t('addModel.editSuccess', { key: view.key }), {
+        description: t('addModel.editSuccessDesc'),
+      })
       // Keep the store's cached config in sync so the next edit prefills fresh.
       void models.loadConfig()
       if (!(await api.routerReload())) {
-        toast.warning('路由器未重新整理', { description: '變更已儲存，但路由器無法連線。' })
+        toast.warning(t('addModel.routerReloadFailed'), {
+          description: t('addModel.routerReloadEditDesc'),
+        })
       }
       emit('updated', view.key)
     } else {
       const view = await api.createModel(payload)
-      toast.success(`已新增 ${view.key}`, { description: '目前已停止 — 請按「啟動」以啟用。' })
+      toast.success(t('addModel.createSuccess', { key: view.key }), {
+        description: t('addModel.createSuccessDesc'),
+      })
       void models.loadConfig()
       // Make it routable end-to-end by refreshing the router's view of the config.
       if (!(await api.routerReload())) {
-        toast.warning('路由器未重新整理', {
-          description: '模型已新增，但路由器無法連線 — 重新載入前將無法路由至此模型。',
+        toast.warning(t('addModel.routerReloadFailed'), {
+          description: t('addModel.routerReloadCreateDesc'),
         })
       }
       emit('created', view.key)
     }
     open.value = false
   } catch (e) {
-    toast.error(isEdit.value ? '更新模型失敗' : '新增模型失敗', {
+    toast.error(isEdit.value ? t('addModel.editFailed') : t('addModel.createFailed'), {
       description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
     })
   } finally {
@@ -459,11 +476,11 @@ async function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="isEdit ? '編輯模型' : '新增模型'" width-class="max-w-2xl">
+  <Dialog v-model:open="open" :title="isEdit ? $t('addModel.editTitle') : $t('addModel.createTitle')" width-class="max-w-2xl">
     <div class="space-y-4">
       <!-- Paste + parse (create only) -->
       <div v-if="!isEdit">
-        <label class="text-xs font-medium text-muted-foreground">貼上 vLLM 啟動指令</label>
+        <label class="text-xs font-medium text-muted-foreground">{{ $t('addModel.pasteCommand') }}</label>
         <Textarea
           v-model="command"
           placeholder="CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85"
@@ -471,7 +488,7 @@ async function submit() {
         />
         <Button class="mt-2" size="sm" :disabled="!command.trim() || parsing" @click="parse">
           <Loader2 v-if="parsing" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />
-          解析指令
+          {{ $t('addModel.parseCommand') }}
         </Button>
       </div>
 
@@ -494,61 +511,61 @@ async function submit() {
         >
           <p class="flex items-start gap-1.5">
             <AlertTriangle class="mt-px size-3.5 shrink-0" />
-            vLLM 參數為群組共用 — 此變更將套用至群組 <span class="font-mono">{{ group }}</span> 的全部 {{ groupSiblings + 1 }} 個副本。
+            {{ $t('addModel.groupSharedWarn', { group, n: groupSiblings + 1 }) }}
           </p>
         </div>
 
         <div class="grid grid-cols-2 gap-3">
           <label class="block">
-            <span class="text-xs text-muted-foreground">群組</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.groupLabel') }}</span>
             <Input v-model="group" class="mt-1" :disabled="isEdit" />
             <span v-if="!isEdit && groupExists && !keyExists" class="mt-1 block text-[11px] text-muted-foreground">
-              已存在群組 — 將新增為新副本。
+              {{ $t('addModel.groupExists') }}
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">實例 ID</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.instanceLabel') }}</span>
             <Input v-model="instanceId" class="mt-1" :disabled="isEdit" :class="!isEdit && keyExists ? 'border-status-failed' : ''" />
             <span v-if="!isEdit && keyExists" class="mt-1 block text-[11px] text-status-failed">
-              {{ key }} 已存在。
+              {{ $t('addModel.keyExists', { key }) }}
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">主機</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.hostLabel') }}</span>
             <Input v-model="host" class="mt-1" />
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">連接埠</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.portLabel') }}</span>
             <Input v-model.number="port" type="number" class="mt-1" :class="portInUse ? 'border-status-failed' : ''" />
             <span v-if="portInUse" class="mt-1 block text-[11px] text-status-failed">
-              連接埠 {{ port }} 已被其他實例使用。
+              {{ $t('addModel.portInUse', { port }) }}
             </span>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">GPU（cuda_device）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.gpuLabel') }}</span>
             <select
               v-model="cudaDevice"
               class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
             >
-              <option :value="null">無 / 自動</option>
+              <option :value="null">{{ $t('addModel.gpuAuto') }}</option>
               <option v-for="i in gpuOptions" :key="i" :value="i">cuda:{{ i }}</option>
             </select>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">模型標籤 <span class="text-status-failed">*</span></span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.modelTagLabel') }} <span class="text-status-failed">*</span></span>
             <Input v-model="modelTag" class="mt-1 font-mono" placeholder="org/model" />
           </label>
           <label class="col-span-2 block">
-            <span class="text-xs text-muted-foreground">路由策略（負載平衡）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.routingLabel') }}</span>
             <select
               v-model="routingStrategy"
               class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm"
             >
-              <option value="">跟隨全域預設</option>
+              <option value="">{{ $t('addModel.routingDefault') }}</option>
               <option v-for="s in ROUTING_STRATEGIES" :key="s" :value="s">{{ routingStrategyLabel(s) }}</option>
             </select>
             <span class="mt-1 block text-[11px] text-muted-foreground">
-              此群組請求的分流方式;留空則跟隨全域設定（可在「流量」頁切換）。多副本才有效。
+              {{ $t('addModel.routingHint') }}
             </span>
           </label>
           <label
@@ -558,11 +575,10 @@ async function submit() {
             <input v-model="kvShared" type="checkbox" class="mt-0.5 size-4 accent-[var(--chart-1)]" />
             <span class="min-w-0">
               <span class="flex items-center gap-1.5 text-sm font-medium">
-                <Share2 class="size-3.5 text-[var(--chart-1)]" />共用 KV Cache（跨 instance）
+                <Share2 class="size-3.5 text-[var(--chart-1)]" />{{ $t('addModel.kvShareLabel') }}
               </span>
               <span class="mt-0.5 block text-[11px] text-muted-foreground">
-                同群組各副本透過共享 store（/kv_cache）重用彼此算過的 KV，相同前綴不必重算。
-                多副本 + 高前綴重複率（固定 system prompt / RAG / 多輪對話）效益最大；關閉則各副本各自獨立 KV。
+                {{ $t('addModel.kvShareDesc') }}
               </span>
             </span>
           </label>
@@ -576,7 +592,7 @@ async function submit() {
           <!-- Downloading -->
           <template v-if="downloadJob && (downloadJob.state === 'downloading' || downloadJob.state === 'pending')">
             <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-            <span class="text-muted-foreground">下載權重中…</span>
+            <span class="text-muted-foreground">{{ $t('addModel.weightsDownloading') }}</span>
             <div class="mx-1 h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
               <div
                 class="h-full rounded-full bg-[var(--chart-2)] transition-[width] duration-700"
@@ -591,22 +607,22 @@ async function submit() {
           <!-- Cached -->
           <template v-else-if="cachedEntry">
             <Check class="size-3.5 shrink-0 text-status-ready" />
-            <span class="text-status-ready">權重已快取</span>
+            <span class="text-status-ready">{{ $t('addModel.weightsCached') }}</span>
             <span class="ml-auto tabular text-muted-foreground">{{ formatBytes(cachedEntry.size_on_disk) }}</span>
           </template>
           <!-- Failed -->
           <template v-else-if="downloadJob && downloadJob.state === 'failed'">
             <AlertTriangle class="size-3.5 shrink-0 text-status-failed" />
-            <span class="truncate text-status-failed">下載失敗：{{ downloadJob.error }}</span>
+            <span class="truncate text-status-failed">{{ $t('addModel.weightsDownloadFailed') }}{{ downloadJob.error }}</span>
             <Button size="sm" variant="ghost" class="ml-auto shrink-0" @click="downloadWeights">
-              <Download class="size-3.5" />重試
+              <Download class="size-3.5" />{{ $t('common.retry') }}
             </Button>
           </template>
           <!-- Not cached -->
           <template v-else>
-            <span class="text-muted-foreground">權重尚未快取 — 首次啟動會即時下載（較慢）。</span>
+            <span class="text-muted-foreground">{{ $t('addModel.weightsNotCached') }}</span>
             <Button size="sm" variant="ghost" class="ml-auto shrink-0" @click="downloadWeights">
-              <Download class="size-3.5" />先下載
+              <Download class="size-3.5" />{{ $t('common.preDownload') }}
             </Button>
           </template>
         </div>
@@ -618,59 +634,59 @@ async function submit() {
             class="flex w-full items-center justify-between px-3 py-2 text-left"
             @click="showAccel = !showAccel"
           >
-            <span class="text-xs font-medium">⚡ 加速設定（vLLM 推理參數）</span>
+            <span class="text-xs font-medium">{{ $t('addModel.accelTitle') }}</span>
             <span class="text-xs text-muted-foreground">{{ showAccel ? '▾' : '▸' }}</span>
           </button>
           <div v-if="showAccel" class="space-y-3 border-t border-border/60 p-3">
             <!-- Scenario templates -->
             <div class="flex flex-wrap items-center gap-1.5">
-              <span class="text-[11px] text-muted-foreground">情境模板：</span>
-              <Button size="sm" variant="outline" @click="applyAccelPreset('latency')">低延遲（聊天 / agent）</Button>
-              <Button size="sm" variant="outline" @click="applyAccelPreset('throughput')">高吞吐（多併發）</Button>
-              <Button size="sm" variant="ghost" @click="clearAccel">清除（回預設）</Button>
+              <span class="text-[11px] text-muted-foreground">{{ $t('addModel.accelTemplates') }}</span>
+              <Button size="sm" variant="outline" @click="applyAccelPreset('latency')">{{ $t('addModel.accelLatency') }}</Button>
+              <Button size="sm" variant="outline" @click="applyAccelPreset('throughput')">{{ $t('addModel.accelThroughput') }}</Button>
+              <Button size="sm" variant="ghost" @click="clearAccel">{{ $t('addModel.accelClear') }}</Button>
             </div>
 
             <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
               <!-- performance_mode -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">performance_mode <span class="font-normal">(預設 balanced)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">performance_mode <span class="font-normal">({{ $t('addModel.defaultLabel') }} balanced)</span></span>
                 <select :value="getParam('performance_mode')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('performance_mode', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（balanced）</option>
-                  <option value="interactivity">interactivity（低延遲）</option>
-                  <option value="throughput">throughput（高吞吐）</option>
+                  <option value="">{{ $t('addModel.defaultLabel') }} (balanced)</option>
+                  <option value="interactivity">interactivity ({{ $t('addModel.accelLatency') }})</option>
+                  <option value="throughput">throughput ({{ $t('addModel.accelThroughput') }})</option>
                 </select>
               </label>
               <!-- optimization_level -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">optimization_level <span class="font-normal">(預設 2)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">optimization_level <span class="font-normal">({{ $t('addModel.defaultLabel') }} 2)</span></span>
                 <select :value="getParam('optimization_level')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('optimization_level', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（2）</option>
-                  <option value="0">0（最快啟動）</option>
+                  <option value="">{{ $t('addModel.defaultLabel') }} (2)</option>
+                  <option value="0">0 ({{ $t('addModel.fastestStartup') }})</option>
                   <option value="1">1</option>
                   <option value="2">2</option>
-                  <option value="3">3（最激進）</option>
+                  <option value="3">3 ({{ $t('addModel.mostAggressive') }})</option>
                 </select>
               </label>
               <!-- max_num_batched_tokens -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">max_num_batched_tokens <span class="font-normal">(預設 自動)</span></span>
-                <Input :model-value="getParam('max_num_batched_tokens')" type="number" min="1" placeholder="自動" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_batched_tokens', String($event))" />
+                <span class="text-[11px] font-medium text-muted-foreground">max_num_batched_tokens <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                <Input :model-value="getParam('max_num_batched_tokens')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_batched_tokens', String($event))" />
               </label>
               <!-- max_num_seqs -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">max_num_seqs <span class="font-normal">(預設 自動)</span></span>
-                <Input :model-value="getParam('max_num_seqs')" type="number" min="1" placeholder="自動" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_seqs', String($event))" />
+                <span class="text-[11px] font-medium text-muted-foreground">max_num_seqs <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                <Input :model-value="getParam('max_num_seqs')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_seqs', String($event))" />
               </label>
               <!-- gpu_memory_utilization (keep the model's existing value; don't impose a default) -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">gpu_memory_utilization <span class="font-normal">(沿用現值；留空＝vLLM 預設)</span></span>
-                <Input :model-value="getParam('gpu_memory_utilization')" type="number" min="0.1" max="0.98" step="0.01" placeholder="未設定" class="h-8 text-xs" @update:model-value="setParamOrClear('gpu_memory_utilization', String($event))" />
+                <span class="text-[11px] font-medium text-muted-foreground">gpu_memory_utilization <span class="font-normal">({{ $t('addModel.gpuMemHint') }})</span></span>
+                <Input :model-value="getParam('gpu_memory_utilization')" type="number" min="0.1" max="0.98" step="0.01" :placeholder="$t('addModel.notSet')" class="h-8 text-xs" @update:model-value="setParamOrClear('gpu_memory_utilization', String($event))" />
               </label>
               <!-- kv_cache_dtype -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">kv_cache_dtype <span class="font-normal">(預設 auto)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">kv_cache_dtype <span class="font-normal">({{ $t('addModel.defaultLabel') }} auto)</span></span>
                 <select :value="getParam('kv_cache_dtype')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('kv_cache_dtype', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（auto，不量化）</option>
+                  <option value="">{{ $t('addModel.kvCacheDefault') }}</option>
                   <option value="fp8">fp8</option>
                   <option value="fp8_e4m3">fp8_e4m3</option>
                   <option value="fp8_e5m2">fp8_e5m2</option>
@@ -678,54 +694,54 @@ async function submit() {
               </label>
               <!-- enable_prefix_caching -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">enable_prefix_caching <span class="font-normal">(預設 開)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">enable_prefix_caching <span class="font-normal">({{ $t('addModel.prefixCacheDefault') }})</span></span>
                 <select :value="getParam('enable_prefix_caching')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('enable_prefix_caching', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（開）</option>
-                  <option value="true">強制開</option>
-                  <option value="false">關</option>
+                  <option value="">{{ $t('addModel.prefixCacheDefault') }}</option>
+                  <option value="true">{{ $t('addModel.forceOn') }}</option>
+                  <option value="false">{{ $t('addModel.off') }}</option>
                 </select>
               </label>
               <!-- enable_chunked_prefill -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">enable_chunked_prefill <span class="font-normal">(預設 開)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">enable_chunked_prefill <span class="font-normal">({{ $t('addModel.chunkedPrefillDefault') }})</span></span>
                 <select :value="getParam('enable_chunked_prefill')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('enable_chunked_prefill', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（開）</option>
-                  <option value="true">強制開</option>
-                  <option value="false">關</option>
+                  <option value="">{{ $t('addModel.chunkedPrefillDefault') }}</option>
+                  <option value="true">{{ $t('addModel.forceOn') }}</option>
+                  <option value="false">{{ $t('addModel.off') }}</option>
                 </select>
               </label>
               <!-- async_scheduling -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">async_scheduling <span class="font-normal">(預設 關)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">async_scheduling <span class="font-normal">({{ $t('addModel.asyncSchedDefault') }})</span></span>
                 <select :value="getParam('async_scheduling')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('async_scheduling', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（關）</option>
-                  <option value="true">開（實驗性）</option>
-                  <option value="false">關</option>
+                  <option value="">{{ $t('addModel.asyncSchedDefault') }}</option>
+                  <option value="true">{{ $t('addModel.onExperimental') }}</option>
+                  <option value="false">{{ $t('addModel.off') }}</option>
                 </select>
               </label>
               <!-- stream_interval -->
               <label class="space-y-1">
-                <span class="text-[11px] font-medium text-muted-foreground">stream_interval <span class="font-normal">(預設 1)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">stream_interval <span class="font-normal">({{ $t('addModel.defaultLabel') }} 1)</span></span>
                 <Input :model-value="getParam('stream_interval')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('stream_interval', String($event))" />
               </label>
               <!-- quantization (online) -->
               <label class="space-y-1 sm:col-span-2">
-                <span class="text-[11px] font-medium text-muted-foreground">quantization <span class="font-normal">(預設 不量化 / 自動偵測)</span></span>
+                <span class="text-[11px] font-medium text-muted-foreground">quantization <span class="font-normal">({{ $t('addModel.quantDefault') }})</span></span>
                 <select :value="getParam('quantization')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('quantization', ($event.target as HTMLSelectElement).value)">
-                  <option value="">預設（不量化，或載入量化版自動偵測）</option>
-                  <option value="bitsandbytes">bitsandbytes（4-bit NF4，任何模型線上量化）</option>
-                  <option value="fp8_per_tensor">fp8_per_tensor（8-bit；Ampere 退 W8A16）</option>
-                  <option value="fp8_per_block">fp8_per_block（8-bit；Ampere 退 W8A16）</option>
-                  <option value="int8_per_channel_weight_only">int8_per_channel_weight_only（8-bit INT8）</option>
+                  <option value="">{{ $t('addModel.quantDefault') }}</option>
+                  <option value="bitsandbytes">{{ $t('addModel.quantBnb') }}</option>
+                  <option value="fp8_per_tensor">{{ $t('addModel.quantFp8Tensor') }}</option>
+                  <option value="fp8_per_block">{{ $t('addModel.quantFp8Block') }}</option>
+                  <option value="int8_per_channel_weight_only">{{ $t('addModel.quantInt8') }}</option>
                 </select>
-                <span class="text-[10px] text-muted-foreground">預量化模型（AWQ / GPTQ）直接把 model_tag 換成量化版即可，vLLM 會自動偵測，不用設此欄。</span>
+                <span class="text-[10px] text-muted-foreground">{{ $t('addModel.quantHint') }}</span>
               </label>
             </div>
 
             <!-- Advanced (tier 2) -->
             <div class="rounded-md border border-border/60">
               <button type="button" class="flex w-full items-center justify-between px-2.5 py-1.5 text-left" @click="showAdvanced = !showAdvanced">
-                <span class="text-[11px] font-medium text-muted-foreground">進階（推測解碼 / prefix hash / chunked prefill / offload）</span>
+                <span class="text-[11px] font-medium text-muted-foreground">{{ $t('addModel.advancedTitle') }}</span>
                 <span class="text-[11px] text-muted-foreground">{{ showAdvanced ? '▾' : '▸' }}</span>
               </button>
               <div v-if="showAdvanced" class="space-y-3 border-t border-border/60 p-3">
@@ -733,56 +749,55 @@ async function submit() {
                 <div class="space-y-1.5">
                   <label class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
                     <input v-model="specEnabled" type="checkbox" class="size-3.5 accent-[var(--chart-1)]" />
-                    N-gram 推測解碼（低 QPS 降單請求延遲）
+                    {{ $t('addModel.ngramSpec') }}
                   </label>
                   <label v-if="specEnabled" class="flex items-center gap-2 pl-5 text-[11px] text-muted-foreground">
                     num_speculative_tokens
                     <Input v-model.number="specTokens" type="number" min="1" max="10" class="h-7 w-20 text-xs" />
-                    <span class="text-[10px]">(預設 4)</span>
+                    <span class="text-[10px]">({{ $t('addModel.defaultLabel') }} 4)</span>
                   </label>
                 </div>
 
                 <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
                   <!-- prefix_caching_hash_algo -->
                   <label class="space-y-1">
-                    <span class="text-[11px] font-medium text-muted-foreground">prefix_caching_hash_algo <span class="font-normal">(預設 sha256)</span></span>
+                    <span class="text-[11px] font-medium text-muted-foreground">prefix_caching_hash_algo <span class="font-normal">({{ $t('addModel.hashDefault') }})</span></span>
                     <select :value="getParam('prefix_caching_hash_algo')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('prefix_caching_hash_algo', ($event.target as HTMLSelectElement).value)">
-                      <option value="">預設（sha256）</option>
-                      <option value="sha256">sha256（最穩）</option>
-                      <option value="xxhash">xxhash（較快，非密碼安全）</option>
+                      <option value="">{{ $t('addModel.hashDefault') }}</option>
+                      <option value="sha256">{{ $t('addModel.hashSha256') }}</option>
+                      <option value="xxhash">{{ $t('addModel.hashXxhash') }}</option>
                       <option value="sha256_cbor">sha256_cbor</option>
                       <option value="xxhash_cbor">xxhash_cbor</option>
                     </select>
                   </label>
                   <!-- cpu_offload_gb -->
                   <label class="space-y-1">
-                    <span class="text-[11px] font-medium text-muted-foreground">cpu_offload_gb <span class="font-normal">(預設 0)</span></span>
+                    <span class="text-[11px] font-medium text-muted-foreground">cpu_offload_gb <span class="font-normal">({{ $t('addModel.defaultLabel') }} 0)</span></span>
                     <Input :model-value="getParam('cpu_offload_gb')" type="number" min="0" placeholder="0" class="h-8 text-xs" @update:model-value="setParamOrClear('cpu_offload_gb', String($event))" />
-                    <span class="text-[10px] text-muted-foreground">把權重 offload 到 CPU RAM 換「跑得起來」(會變慢)，非加速。</span>
+                    <span class="text-[10px] text-muted-foreground">{{ $t('addModel.offloadHint') }}</span>
                   </label>
                   <!-- max_num_partial_prefills -->
                   <label class="space-y-1">
-                    <span class="text-[11px] font-medium text-muted-foreground">max_num_partial_prefills <span class="font-normal">(預設 1)</span></span>
+                    <span class="text-[11px] font-medium text-muted-foreground">max_num_partial_prefills <span class="font-normal">({{ $t('addModel.defaultLabel') }} 1)</span></span>
                     <Input :model-value="getParam('max_num_partial_prefills')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('max_num_partial_prefills', String($event))" />
                   </label>
                   <!-- max_long_partial_prefills -->
                   <label class="space-y-1">
-                    <span class="text-[11px] font-medium text-muted-foreground">max_long_partial_prefills <span class="font-normal">(預設 1)</span></span>
+                    <span class="text-[11px] font-medium text-muted-foreground">max_long_partial_prefills <span class="font-normal">({{ $t('addModel.defaultLabel') }} 1)</span></span>
                     <Input :model-value="getParam('max_long_partial_prefills')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('max_long_partial_prefills', String($event))" />
                   </label>
                   <!-- long_prefill_token_threshold -->
                   <label class="space-y-1 sm:col-span-2">
-                    <span class="text-[11px] font-medium text-muted-foreground">long_prefill_token_threshold <span class="font-normal">(預設 0=自動)</span></span>
+                    <span class="text-[11px] font-medium text-muted-foreground">long_prefill_token_threshold <span class="font-normal">({{ $t('addModel.defaultLabel') }} 0={{ $t('addModel.autoLabel') }})</span></span>
                     <Input :model-value="getParam('long_prefill_token_threshold')" type="number" min="0" placeholder="0" class="h-8 text-xs" @update:model-value="setParamOrClear('long_prefill_token_threshold', String($event))" />
-                    <span class="text-[10px] text-muted-foreground">同時有短問題＋長 prompt 時：把 partial 設 &gt;1 且 long 設小，短請求可插隊不被長的卡住。</span>
+                    <span class="text-[10px] text-muted-foreground">{{ $t('addModel.partialPrefillHint') }}</span>
                   </label>
                 </div>
               </div>
             </div>
 
             <p class="text-[10px] text-muted-foreground">
-              空白＝用 vLLM 預設。改了需重啟模型生效。組合才有感（見
-              <span class="font-mono">docs/vllm_推理加速參數整理.md</span>）。
+              {{ $t('addModel.accelHint') }}
             </p>
           </div>
         </div>
@@ -790,16 +805,16 @@ async function submit() {
         <!-- vLLM params -->
         <div>
           <div class="mb-1.5 flex items-center justify-between">
-            <span class="text-xs font-medium text-muted-foreground">vLLM 參數（model_config）</span>
-            <Button size="sm" variant="ghost" @click="addParam"><Plus class="size-3.5" />新增</Button>
+            <span class="text-xs font-medium text-muted-foreground">{{ $t('addModel.vllmParams') }}</span>
+            <Button size="sm" variant="ghost" @click="addParam"><Plus class="size-3.5" />{{ $t('addModel.addParam') }}</Button>
           </div>
           <div class="space-y-1.5">
             <div v-for="(p, i) in params" :key="i" class="flex items-center gap-2">
-              <Input v-model="p.key" placeholder="旗標（snake_case）" class="flex-1 font-mono text-xs" />
-              <Input v-model="p.value" placeholder="值" class="flex-1 font-mono text-xs" />
+              <Input v-model="p.key" :placeholder="$t('addModel.flagPlaceholder')" class="flex-1 font-mono text-xs" />
+              <Input v-model="p.value" :placeholder="$t('addModel.valuePlaceholder')" class="flex-1 font-mono text-xs" />
               <Button size="icon-sm" variant="ghost" @click="removeParam(i)"><Trash2 class="size-3.5" /></Button>
             </div>
-            <p v-if="!params.length" class="text-xs text-muted-foreground">無額外參數。</p>
+            <p v-if="!params.length" class="text-xs text-muted-foreground">{{ $t('addModel.noExtraParams') }}</p>
           </div>
 
           <!-- Tool-calling hint + quick presets -->
@@ -809,17 +824,12 @@ async function submit() {
               class="flex w-full items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground"
               @click="showToolHint = !showToolHint"
             >
-              <span>🛠 工具調用（tool calling）參數參考</span>
+              <span>{{ $t('addModel.toolCallingTitle') }}</span>
               <span>{{ showToolHint ? '▾' : '▸' }}</span>
             </button>
             <div v-if="showToolHint" class="mt-2 space-y-2 text-[11px] text-muted-foreground">
-              <p>
-                要讓模型支援 <span class="font-mono">tool_choice="auto"</span>，需加
-                <span class="font-mono">enable_auto_tool_choice=true</span> +
-                <span class="font-mono">tool_call_parser=&lt;parser&gt;</span>，reasoning 模型再加
-                <span class="font-mono">reasoning_parser</span>。parser 要對得上模型輸出格式，別看品牌猜。
-              </p>
-              <p class="font-medium text-foreground">點一下帶入推薦參數：</p>
+              <p>{{ $t('addModel.toolCallingDesc') }}</p>
+              <p class="font-medium text-foreground">{{ $t('addModel.toolCallingPresetHint') }}</p>
               <div class="flex flex-wrap gap-1.5">
                 <Button
                   v-for="t in TOOL_PRESETS"
@@ -830,12 +840,11 @@ async function submit() {
                   :title="`tool_call_parser=${t.parser}${t.reasoning ? ` · reasoning_parser=${t.reasoning}` : ''}`"
                   @click="applyToolPreset(t.parser, t.reasoning)"
                 >
-                  {{ t.label }}
+                  {{ t.label.startsWith('addModel.') ? $t(t.label) : t.label }}
                 </Button>
               </div>
               <p class="text-muted-foreground/80">
-                完整對照見 <span class="font-mono">docs/vllm_auto_tool_整理.md</span>。
-                沒有對應 parser 的模型（如 SmolLM2 / TinyLlama / Phi-3.5）請勿亂加。
+                {{ $t('addModel.toolCallingDocRef') }}
               </p>
             </div>
           </div>
@@ -844,15 +853,15 @@ async function submit() {
         <!-- LoRA adapters (static mount at serve time) -->
         <div>
           <div class="mb-1.5 flex items-center justify-between">
-            <span class="text-xs font-medium text-muted-foreground">LoRA Adapters</span>
-            <Button size="sm" variant="ghost" @click="addLora"><Plus class="size-3.5" />新增</Button>
+            <span class="text-xs font-medium text-muted-foreground">{{ $t('addModel.loraTitle') }}</span>
+            <Button size="sm" variant="ghost" @click="addLora"><Plus class="size-3.5" />{{ $t('addModel.addLora') }}</Button>
           </div>
           <div class="space-y-1.5">
             <div v-for="(l, i) in loras" :key="i" class="space-y-1">
               <div class="flex items-center gap-2">
                 <Input
                   v-model="l.name"
-                  placeholder="served name（如 sql-lora）"
+                  :placeholder="$t('addModel.loraServedName')"
                   class="flex-1 font-mono text-xs"
                   @update:model-value="ensureEnableLora"
                 />
@@ -862,12 +871,12 @@ async function submit() {
                   class="h-9 flex-[1.4] rounded-md border border-input bg-background/40 px-2 font-mono text-xs"
                   @change="onPickLora(l)"
                 >
-                  <option value="">— 選 adapter / 自填 path —</option>
+                  <option value="">{{ $t('addModel.loraPickAdapter') }}</option>
                   <option v-for="a in loraLibrary" :key="a.path" :value="a.path">
                     {{ a.name }}{{ a.rank != null ? ` (r${a.rank})` : '' }}
                   </option>
                   <option v-if="l.path && !loraLibrary.some((a) => a.path === l.path)" :value="l.path">
-                    {{ l.path }}（自填）
+                    {{ l.path }} {{ $t('addModel.loraTyped') }}
                   </option>
                 </select>
                 <Button size="icon-sm" variant="ghost" @click="removeLora(i)"><Trash2 class="size-3.5" /></Button>
@@ -876,24 +885,17 @@ async function submit() {
                 <AlertTriangle class="size-3" />{{ loraBaseWarning(l) }}
               </p>
             </div>
-            <p v-if="!loras.length" class="text-xs text-muted-foreground">
-              無 LoRA。新增一列會自動補上 <span class="font-mono">enable_lora=true</span>；
-              served name 即推論時 <span class="font-mono">model</span> 欄位要填的名稱。adapter 從
-              <span class="font-mono">LoRA 庫</span>挑選，或自填 path。
-            </p>
-            <p v-else class="text-[11px] text-muted-foreground/80">
-              從庫選 adapter 會自動帶入 base 並把 <span class="font-mono">max_lora_rank</span> 設到對齊的 rank。
-              Base model 須支援 LoRA（vLLM <span class="font-mono">SupportsLoRA</span>）。
-            </p>
+            <p v-if="!loras.length" class="text-xs text-muted-foreground">{{ $t('addModel.noLora') }}</p>
+            <p v-else class="text-[11px] text-muted-foreground/80">{{ $t('addModel.loraAutoHint') }}</p>
           </div>
         </div>
 
         <div class="flex items-center justify-end gap-2 pt-2">
-          <Badge v-if="!isEdit && !groupExists" variant="muted">新群組</Badge>
-          <Button variant="ghost" @click="open = false">取消</Button>
+          <Badge v-if="!isEdit && !groupExists" variant="muted">{{ $t('addModel.newGroup') }}</Badge>
+          <Button variant="ghost" @click="open = false">{{ $t('common.cancel') }}</Button>
           <Button :disabled="!canSubmit || creating" @click="submit">
             <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />
-            {{ isEdit ? '儲存變更' : '新增模型' }}
+            {{ isEdit ? $t('addModel.saveChanges') : $t('addModel.addModelBtn') }}
           </Button>
         </div>
       </template>

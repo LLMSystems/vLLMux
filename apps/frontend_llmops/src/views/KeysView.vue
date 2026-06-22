@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Copy, KeyRound, Loader2, Lock, Plus, Trash2 } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
@@ -12,6 +13,7 @@ import Input from '@/components/ui/Input.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Dialog from '@/components/ui/Dialog.vue'
 
+const { t } = useI18n()
 const { authEnabled, ensureUnlocked, refreshStatus } = useAuth()
 
 const keys = ref<ApiKey[]>([])
@@ -36,7 +38,7 @@ async function load() {
     keys.value = await api.listKeys()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) locked.value = true
-    else toast.error('無法載入金鑰', { description: String(e) })
+    else toast.error(t('keys.loadFailed'), { description: String(e) })
   } finally {
     loading.value = false
   }
@@ -54,7 +56,9 @@ async function create() {
     newRpm.value = undefined
     await load()
   } catch (e) {
-    toast.error('建立金鑰失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('keys.createFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     creating.value = false
   }
@@ -64,10 +68,10 @@ async function revoke(k: ApiKey) {
   if (!(await ensureUnlocked())) return
   try {
     await api.revokeKey(k.id)
-    toast.success(`已撤銷 ${k.name}`)
+    toast.success(t('keys.revokeSuccess', { name: k.name }))
     await load()
   } catch (e) {
-    toast.error('撤銷失敗', { description: String(e) })
+    toast.error(t('keys.revokeFailed'), { description: String(e) })
   }
 }
 
@@ -75,9 +79,9 @@ async function copyKey() {
   if (!reveal.value) return
   try {
     await navigator.clipboard.writeText(reveal.value.key)
-    toast.success('已複製到剪貼簿')
+    toast.success(t('keys.copySuccess'))
   } catch {
-    toast.error('複製失敗，請手動選取')
+    toast.error(t('keys.copyFailed'))
   }
 }
 
@@ -91,9 +95,9 @@ onMounted(async () => {
   <div class="space-y-6 p-6">
     <div class="flex flex-wrap items-center gap-3">
       <div>
-        <h1 class="flex items-center gap-2 text-lg font-semibold"><KeyRound class="size-5" />API 金鑰</h1>
+        <h1 class="flex items-center gap-2 text-lg font-semibold"><KeyRound class="size-5" />{{ $t('keys.title') }}</h1>
         <p class="mt-0.5 text-sm text-muted-foreground">
-          用於向路由器發送推論請求（<span class="font-mono">Authorization: Bearer …</span>）。金鑰只在建立時顯示一次。
+          {{ $t('keys.description') }}
         </p>
       </div>
     </div>
@@ -103,32 +107,31 @@ onMounted(async () => {
       v-if="authEnabled === false"
       class="border-status-starting/30 bg-status-starting/10 p-4 text-sm text-status-starting"
     >
-      後端未設定 <span class="font-mono">LLMOPS_ADMIN_TOKEN</span>，目前驗證為關閉狀態 —
-      金鑰可建立，但路由器尚未強制要求金鑰（需設定 <span class="font-mono">LLMOPS_REQUIRE_API_KEY=true</span>）。
+      {{ $t('keys.authDisabled') }}
     </Card>
 
     <!-- Locked -->
     <Card v-if="locked" class="flex flex-col items-center gap-3 p-10 text-center">
       <Lock class="size-8 text-muted-foreground" />
-      <p class="text-sm text-muted-foreground">需要管理員權杖才能管理金鑰。</p>
-      <Button size="sm" @click="load">解鎖</Button>
+      <p class="text-sm text-muted-foreground">{{ $t('keys.locked') }}</p>
+      <Button size="sm" @click="load">{{ $t('keys.unlock') }}</Button>
     </Card>
 
     <template v-else>
       <!-- Create -->
       <Card class="p-5">
-        <p class="mb-3 text-sm font-semibold">建立新金鑰</p>
+        <p class="mb-3 text-sm font-semibold">{{ $t('keys.createNew') }}</p>
         <div class="flex items-end gap-2">
           <label class="flex-1">
-            <span class="text-xs text-muted-foreground">名稱（用於用量歸屬）</span>
-            <Input v-model="newName" placeholder="例如：team-rag、ci-bot" class="mt-1" @keydown.enter="create" />
+            <span class="text-xs text-muted-foreground">{{ $t('keys.nameLabel') }}</span>
+            <Input v-model="newName" :placeholder="$t('keys.namePlaceholder')" class="mt-1" @keydown.enter="create" />
           </label>
           <label class="w-32">
-            <span class="text-xs text-muted-foreground">速率上限（次/分）</span>
-            <Input v-model.number="newRpm" type="number" min="1" placeholder="不限" class="mt-1" @keydown.enter="create" />
+            <span class="text-xs text-muted-foreground">{{ $t('keys.rateLimit') }}</span>
+            <Input v-model.number="newRpm" type="number" min="1" :placeholder="$t('keys.ratePlaceholder')" class="mt-1" @keydown.enter="create" />
           </label>
           <Button :disabled="!newName.trim() || creating" @click="create">
-            <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />建立
+            <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />{{ $t('common.create') }}
           </Button>
         </div>
       </Card>
@@ -136,7 +139,7 @@ onMounted(async () => {
       <!-- List -->
       <Card class="overflow-hidden">
         <div class="flex items-center justify-between border-b border-border/60 px-5 py-3">
-          <p class="text-sm font-semibold">已發行金鑰</p>
+          <p class="text-sm font-semibold">{{ $t('keys.issuedKeys') }}</p>
           <Loader2 v-if="loading" class="size-4 animate-spin text-muted-foreground" />
         </div>
         <div v-if="keys.length" class="divide-y divide-border/60">
@@ -144,47 +147,47 @@ onMounted(async () => {
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate text-sm font-medium">{{ k.name }}</span>
-                <Badge v-if="k.revoked" variant="muted">已撤銷</Badge>
-                <Badge v-if="k.rpm_limit" variant="muted" class="tabular">{{ k.rpm_limit }}/分</Badge>
+                <Badge v-if="k.revoked" variant="muted">{{ $t('keys.revoked') }}</Badge>
+                <Badge v-if="k.rpm_limit" variant="muted" class="tabular">{{ k.rpm_limit }}{{ $t('keys.perMin') }}</Badge>
               </div>
               <span class="font-mono text-xs text-muted-foreground">{{ k.prefix }}</span>
             </div>
             <div class="hidden text-right text-xs sm:block">
               <p class="tabular">
                 <span class="font-medium text-foreground">{{ formatNumber(k.request_count) }}</span>
-                <span class="text-muted-foreground"> 次 · {{ formatNumber(k.total_tokens, true) }} tokens</span>
+                <span class="text-muted-foreground"> {{ $t('keys.requestCount') }} · {{ formatNumber(k.total_tokens, true) }} {{ $t('common.tokens') }}</span>
               </p>
               <p class="text-muted-foreground">
-                最後使用：{{ k.usage_last_ts ? formatTime(k.usage_last_ts) : '—' }}
+                {{ $t('keys.lastUsed') }}{{ k.usage_last_ts ? formatTime(k.usage_last_ts) : '—' }}
               </p>
             </div>
             <Button
               v-if="!k.revoked"
               size="icon-sm"
               variant="ghost"
-              title="撤銷金鑰"
+              :title="$t('keys.revokeTitle')"
               @click="revoke(k)"
             >
               <Trash2 class="size-4" />
             </Button>
           </div>
         </div>
-        <p v-else-if="!loading" class="px-5 py-10 text-center text-sm text-muted-foreground">尚無金鑰。</p>
+        <p v-else-if="!loading" class="px-5 py-10 text-center text-sm text-muted-foreground">{{ $t('keys.noKeys') }}</p>
       </Card>
     </template>
 
     <!-- One-time reveal -->
-    <Dialog v-model:open="revealOpen" title="金鑰已建立">
+    <Dialog v-model:open="revealOpen" :title="$t('keys.keyCreated')">
       <div class="space-y-4">
         <p class="text-sm text-status-failed">
-          請立即複製此金鑰，關閉後將無法再次顯示。
+          {{ $t('keys.copyImmediate') }}
         </p>
         <div class="flex items-center gap-2 rounded-lg border border-border/60 bg-background/40 p-3">
           <code class="flex-1 break-all font-mono text-xs">{{ reveal?.key }}</code>
-          <Button size="icon-sm" variant="ghost" title="複製" @click="copyKey"><Copy class="size-4" /></Button>
+          <Button size="icon-sm" variant="ghost" :title="$t('codeBlock.copy')" @click="copyKey"><Copy class="size-4" /></Button>
         </div>
         <div class="flex justify-end">
-          <Button @click="revealOpen = false">完成</Button>
+          <Button @click="revealOpen = false">{{ $t('common.done') }}</Button>
         </div>
       </div>
     </Dialog>

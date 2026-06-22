@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { CheckCircle2 } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { lorasOfGroup } from '@/composables/useModelOptions'
@@ -15,12 +16,11 @@ import TabsContent from '@/components/ui/TabsContent.vue'
 import Badge from '@/components/ui/Badge.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 
+const { t } = useI18n()
 const models = useModelsStore()
 const base = api.routerBase
 
 const groups = computed(() => [...new Set(models.llms.map((m) => m.key.split('::')[0] ?? m.key))])
-// LoRA adapters across all groups — selectable in the chat dropdown so the code
-// snippets switch to a LoRA call just by changing the `model` field.
 const loraOptions = computed(() => {
   const out: { value: string; group: string }[] = []
   for (const g of groups.value) {
@@ -48,10 +48,17 @@ const rerankModel = computed(
   () => models.config?.embedding_server?.reranking_models?.[0] ?? 'bge-reranker-large',
 )
 
-// ---- Chat snippet generators (per language, honouring the stream toggle) ----
 const m = computed(() => model.value || 'Qwen3-0.6B')
 const jsonBool = computed(() => (stream.value ? 'true' : 'false'))
 const pyBool = computed(() => (stream.value ? 'True' : 'False'))
+const samplePrompt = computed(() => JSON.stringify(t('usage.samplePrompt')))
+const sampleInputs = computed(() =>
+  [t('usage.sampleInputA'), t('usage.sampleInputB')].map((value) => JSON.stringify(value)).join(', '),
+)
+const sampleQuery = computed(() => JSON.stringify(t('usage.sampleQuery')))
+const sampleDocs = computed(() =>
+  [t('usage.sampleDocA'), t('usage.sampleDocB')].map((value) => JSON.stringify(value)).join(', '),
+)
 
 const curl = computed(
   () =>
@@ -59,7 +66,7 @@ const curl = computed(
   -H "Content-Type: application/json" \\${stream.value ? '\n  -N \\' : ''}
   -d '{
     "model": "${m.value}",
-    "messages": [{"role": "user", "content": "你好，請自我介紹"}],
+    "messages": [{"role": "user", "content": ${samplePrompt.value}}],
     "stream": ${jsonBool.value}
   }'`,
 )
@@ -67,11 +74,10 @@ const curl = computed(
 const python = computed(
   () => `from openai import OpenAI
 
-client = OpenAI(base_url="${base}/v1", api_key="not-needed")  # Router 不驗證金鑰
-
+client = OpenAI(base_url="${base}/v1", api_key="not-needed")  # ${t('usage.routerNoAuthComment')}
 resp = client.chat.completions.create(
     model="${m.value}",
-    messages=[{"role": "user", "content": "你好，請自我介紹"}],
+    messages=[{"role": "user", "content": ${samplePrompt.value}}],
     stream=${pyBool.value},
 )
 ${
@@ -89,7 +95,7 @@ resp = requests.post(
     "${base}/v1/chat/completions",
     json={
         "model": "${m.value}",
-        "messages": [{"role": "user", "content": "你好，請自我介紹"}],
+        "messages": [{"role": "user", "content": ${samplePrompt.value}}],
         "stream": ${pyBool.value},
     },
     stream=${pyBool.value},
@@ -112,7 +118,7 @@ const js = computed(
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     model: "${m.value}",
-    messages: [{ role: "user", content: "你好，請自我介紹" }],
+    messages: [{ role: "user", content: ${samplePrompt.value} }],
     stream: ${jsonBool.value},
   }),
 });
@@ -123,7 +129,7 @@ const decoder = new TextDecoder();
 while (true) {
   const { done, value } = await reader.read();
   if (done) break;
-  process.stdout.write(decoder.decode(value)); // 內含 SSE \`data:\` 行
+  process.stdout.write(decoder.decode(value)); // ${t('usage.streamComment')}
 }`
     : `const data = await res.json();
 console.log(data.choices[0].message.content);`
@@ -137,7 +143,7 @@ const client = new OpenAI({ baseURL: "${base}/v1", apiKey: "not-needed" });
 
 const resp = await client.chat.completions.create({
   model: "${m.value}",
-  messages: [{ role: "user", content: "你好，請自我介紹" }],
+  messages: [{ role: "user", content: ${samplePrompt.value} }],
   stream: ${jsonBool.value},
 });
 ${
@@ -157,12 +163,11 @@ const langs = [
   { value: 'node', label: 'Node (SDK)', code: node },
 ]
 
-// ---- LoRA snippets ----
 const exampleBase = computed(() => loraOptions.value[0]?.group ?? 'Qwen3-0.6B')
 const exampleLora = computed(() => loraOptions.value[0]?.value ?? 'qwen3-test-lora')
 const modelsCurl = computed(
   () => `curl ${base}/v1/models
-# 帶 "parent" 的項目就是 LoRA（指向它的 base 模型）：
+# ${t('usage.modelsComment')}
 # {"id": "${exampleBase.value}", "object": "model"}
 # {"id": "${exampleLora.value}", "object": "model", "parent": "${exampleBase.value}"}`,
 )
@@ -171,14 +176,13 @@ const loraListPy = computed(
 
 models = requests.get("${base}/v1/models").json()["data"]
 loras = [m["id"] for m in models if m.get("parent")]
-print(loras)  # 這些名稱可直接填進 chat 請求的 "model" 欄位`,
+print(loras)  # ${t('usage.loraListComment')}`,
 )
 
-// ---- Embedding / rerank snippets ----
 const embCurl = computed(
   () => `curl ${base}/v1/embeddings \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "${embModel.value}", "input": ["第一段文字", "第二段文字"]}'`,
+  -d '{"model": "${embModel.value}", "input": [${sampleInputs.value}]}'`,
 )
 const embPython = computed(
   () => `from openai import OpenAI
@@ -186,72 +190,70 @@ const embPython = computed(
 client = OpenAI(base_url="${base}/v1", api_key="not-needed")
 resp = client.embeddings.create(
     model="${embModel.value}",
-    input=["第一段文字", "第二段文字"],
+    input=[${sampleInputs.value}],
 )
-print(len(resp.data[0].embedding))  # 向量維度`,
+print(len(resp.data[0].embedding))  # ${t('usage.vectorLengthComment')}`,
 )
 const rerankCurl = computed(
-  () => `# 帶 query 欄位即切換為 reranking，回傳每個候選的相關性分數
+  () => `# ${t('usage.rerankComment')}
 curl ${base}/v1/embeddings \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "${rerankModel.value}", "query": "如何重置密碼？", "input": ["候選文件 A", "候選文件 B"]}'`,
+  -d '{"model": "${rerankModel.value}", "query": ${sampleQuery.value}, "input": [${sampleDocs.value}]}'`,
 )
 </script>
 
 <template>
   <div class="space-y-6 p-6">
-    <!-- Quick start -->
     <Card>
       <CardHeader>
-        <CardTitle>快速開始</CardTitle>
-        <p class="text-xs text-muted-foreground">
-          Router 是 OpenAI 相容的統一入口，請求的 <span class="font-mono">model</span> 欄位填「群組名」，Router 會自動選負載最低的實例。
-        </p>
+        <CardTitle>{{ t('usage.quickStart') }}</CardTitle>
+        <p class="text-xs text-muted-foreground">{{ t('usage.quickStartDesc') }}</p>
       </CardHeader>
       <CardContent class="space-y-2 text-sm">
         <p class="flex items-center gap-2">
           <CheckCircle2 class="size-4 text-status-ready" />
-          確認 Router 已啟動：<span class="font-mono text-xs">{{ base }}</span>
+          {{ t('usage.step1') }}<span class="font-mono text-xs">{{ base }}</span>
         </p>
         <p class="flex items-center gap-2">
           <CheckCircle2 class="size-4 text-status-ready" />
-          在 Models 頁把要用的模型 <span class="font-medium">Start</span> 到
-          <Badge variant="ready">ready</Badge>
+          {{ t('usage.step2') }}<span class="font-medium">{{ t('common.start') }}</span>
+          {{ t('usage.step2End') }}
+          <Badge variant="ready">{{ t('common.ready') }}</Badge>
         </p>
         <p class="flex items-center gap-2">
           <CheckCircle2 class="size-4 text-status-ready" />
-          用下方任一語言呼叫；金鑰可任意填（Router 不驗證）
+          {{ t('usage.step3') }}
         </p>
       </CardContent>
     </Card>
 
-    <!-- Chat completions -->
     <Card>
       <CardHeader class="flex-row flex-wrap items-center justify-between gap-3">
-        <CardTitle>Chat Completions</CardTitle>
+        <CardTitle>{{ t('usage.chatCompletions') }}</CardTitle>
         <div class="flex items-center gap-3">
           <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-            模型
+            {{ t('usage.modelLabel') }}
             <select
               v-model="model"
               class="h-8 rounded-md border border-input bg-background/40 px-2 text-sm text-foreground"
             >
               <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
               <optgroup v-if="loraOptions.length" label="LoRA">
-                <option v-for="l in loraOptions" :key="l.value" :value="l.value">{{ l.group }} / {{ l.value }}</option>
+                <option v-for="l in loraOptions" :key="l.value" :value="l.value">
+                  {{ l.group }} / {{ l.value }}
+                </option>
               </optgroup>
             </select>
           </label>
           <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input v-model="stream" type="checkbox" class="size-4 accent-[var(--chart-1)]" />
-            串流 (stream)
+            {{ t('usage.streamLabel') }}
           </label>
         </div>
       </CardHeader>
       <CardContent>
         <p v-if="loraOptions.length" class="mb-3 text-xs text-muted-foreground">
-          下拉選單裡的 <span class="font-medium text-[var(--chart-3)]">LoRA</span> 項：把
-          <span class="font-mono">model</span> 換成它的 served name 即可，其餘請求完全不變。
+          {{ t('usage.loraDropdownHint') }}
         </p>
         <Tabs v-model="tab" class="space-y-3">
           <TabsList>
@@ -264,51 +266,48 @@ curl ${base}/v1/embeddings \\
       </CardContent>
     </Card>
 
-    <!-- LoRA adapters -->
     <Card>
       <CardHeader>
-        <CardTitle>LoRA Adapters</CardTitle>
+        <CardTitle>{{ t('usage.loraTitle') }}</CardTitle>
         <p class="text-xs text-muted-foreground">
-          呼叫 LoRA 與一般模型相同，只把 <span class="font-mono">model</span> 改成 adapter 的 served name（例
-          <span class="font-mono">{{ exampleLora }}</span>），Router 會路由到對應 base 模型的實例。
+          {{ t('usage.loraDesc') }}
+          <span class="font-mono">{{ exampleLora }}</span>
+          {{ t('usage.loraDescEnd') }}
         </p>
       </CardHeader>
       <CardContent class="space-y-4">
         <div class="grid gap-4 lg:grid-cols-2">
           <div class="space-y-2">
-            <p class="text-xs font-medium text-muted-foreground">列出可用模型 / LoRA · cURL</p>
+            <p class="text-xs font-medium text-muted-foreground">{{ t('usage.listModelsLabel') }}</p>
             <CodeBlock :code="modelsCurl" />
           </div>
           <div class="space-y-2">
-            <p class="text-xs font-medium text-muted-foreground">只挑出 LoRA · Python</p>
+            <p class="text-xs font-medium text-muted-foreground">{{ t('usage.filterLoraLabel') }}</p>
             <CodeBlock :code="loraListPy" />
           </div>
         </div>
         <div class="space-y-1 text-xs text-muted-foreground">
-          <p>· 前提：base 模型需以 <span class="font-mono">enable_lora</span> 啟動，且 adapter 已掛載（config 靜態掛，或在模型詳情抽屜熱載入）。</p>
-          <p>· 打一個未掛載的名稱會回 <span class="font-mono">404 — Model not found</span>。</p>
-          <p>· Base vs LoRA A/B：同一請求只換 <span class="font-mono">model</span>；Playground 比較模式可並排對照。</p>
+          <p>{{ t('usage.loraNote1') }}</p>
+          <p>{{ t('usage.loraNote2') }}</p>
+          <p>{{ t('usage.loraNote3') }}</p>
         </div>
       </CardContent>
     </Card>
 
-    <!-- Embeddings & Rerank -->
     <Card>
       <CardHeader>
-        <CardTitle>Embeddings & Rerank</CardTitle>
-        <p class="text-xs text-muted-foreground">
-          同一個 <span class="font-mono">/v1/embeddings</span> 端點：帶 <span class="font-mono">query</span> 欄位即切換為 reranking。
-        </p>
+        <CardTitle>{{ t('usage.embTitle') }}</CardTitle>
+        <p class="text-xs text-muted-foreground">{{ t('usage.embDesc') }}</p>
       </CardHeader>
       <CardContent class="grid gap-4 lg:grid-cols-2">
         <div class="space-y-2">
-          <p class="text-xs font-medium text-muted-foreground">Embedding · cURL</p>
+          <p class="text-xs font-medium text-muted-foreground">{{ t('usage.embCurlLabel') }}</p>
           <CodeBlock :code="embCurl" />
-          <p class="text-xs font-medium text-muted-foreground">Embedding · Python</p>
+          <p class="text-xs font-medium text-muted-foreground">{{ t('usage.embPyLabel') }}</p>
           <CodeBlock :code="embPython" />
         </div>
         <div class="space-y-2">
-          <p class="text-xs font-medium text-muted-foreground">Rerank · cURL</p>
+          <p class="text-xs font-medium text-muted-foreground">{{ t('usage.rerankCurlLabel') }}</p>
           <CodeBlock :code="rerankCurl" />
         </div>
       </CardContent>

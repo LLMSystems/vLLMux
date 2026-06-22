@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Box, ChevronDown, Loader2, Play, Plus, RotateCw, Sparkles, Square } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import Card from '@/components/ui/Card.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
@@ -14,6 +15,7 @@ import type { ModelState, ModelView } from '@/types/api'
 const props = defineProps<{ group: string; instances: ModelView[] }>()
 const emit = defineEmits<{ open: [key: string]; 'add-instance': [group: string] }>()
 
+const { t } = useI18n()
 const models = useModelsStore()
 const traffic = useTrafficStore()
 const control = useModelControl()
@@ -34,37 +36,43 @@ const modelTag = computed<string | null>(() => {
   return tag != null ? String(tag) : null
 })
 
-// Embedding server hosts several models at once — surface them like an LLM's tag.
 const embeddingServer = computed(() => models.config?.embedding_server ?? null)
 const servedModels = computed(() => {
-  const e = embeddingServer.value
-  if (kind.value !== 'embedding' || !e) return []
+  const server = embeddingServer.value
+  if (kind.value !== 'embedding' || !server) return []
   return [
-    ...Object.entries(e.embedding_models).map(([name, params]) => ({ name, type: 'embed' as const, params })),
-    ...Object.entries(e.reranking_models).map(([name, params]) => ({ name, type: 'rerank' as const, params })),
+    ...Object.entries(server.embedding_models).map(([name, params]) => ({
+      name,
+      type: 'embed' as const,
+      params,
+    })),
+    ...Object.entries(server.reranking_models).map(([name, params]) => ({
+      name,
+      type: 'rerank' as const,
+      params,
+    })),
   ]
 })
 const subtitle = computed(() => {
   if (kind.value === 'llm') return modelTag.value ?? 'embedding / reranker'
-  const e = embeddingServer.value
-  if (!e) return 'embedding / reranker'
+  const server = embeddingServer.value
+  if (!server) return 'embedding / reranker'
   const parts: string[] = []
-  const ne = Object.keys(e.embedding_models).length
-  const nr = Object.keys(e.reranking_models).length
-  if (ne) parts.push(`${ne} 嵌入`)
-  if (nr) parts.push(`${nr} 重排序`)
-  return parts.join(' · ') || 'embedding / reranker'
+  const embedCount = Object.keys(server.embedding_models).length
+  const rerankCount = Object.keys(server.reranking_models).length
+  if (embedCount) parts.push(`${embedCount} ${t('modelGroup.embedding')}`)
+  if (rerankCount) parts.push(`${rerankCount} ${t('modelGroup.reranking')}`)
+  return parts.join(' / ') || 'embedding / reranker'
 })
 
 const readyCount = computed(() => props.instances.filter((m) => m.state === 'ready').length)
 const total = computed(() => props.instances.length)
 
-// Worst-wins rollup so the header dot reflects the group's least-healthy state.
 const headerState = computed<ModelState>(() => {
   const states = props.instances.map((m) => m.state)
   if (states.includes('failed')) return 'failed'
-  if (states.some((s) => s === 'starting' || s === 'stopping')) return 'starting'
-  if (states.every((s) => s === 'ready')) return 'ready'
+  if (states.some((state) => state === 'starting' || state === 'stopping')) return 'starting'
+  if (states.every((state) => state === 'ready')) return 'ready'
   return 'stopped'
 })
 
@@ -75,24 +83,25 @@ const stoppableKeys = computed(() =>
   props.instances.filter((m) => m.managed && m.state !== 'stopped').map((m) => m.key),
 )
 
-// Live router metrics — only meaningful while an instance is actually serving.
-function metricsFor(m: ModelView) {
-  if (m.state !== 'ready' && m.state !== 'starting') return null
-  const inst = m.key.split('::')[1] ?? ''
-  return traffic.metrics[props.group]?.[inst] ?? null
+function metricsFor(model: ModelView) {
+  if (model.state !== 'ready' && model.state !== 'starting') return null
+  const instance = model.key.split('::')[1] ?? ''
+  return traffic.metrics[props.group]?.[instance] ?? null
 }
-function loadPct(m: ModelView): number {
-  const im = metricsFor(m)
-  if (!im) return 0
-  // Soft saturation: a handful of running/waiting reqs fills the meter.
-  // Fields are null when the scrape failed — treat as 0 for the meter.
-  const score = (im.waiting ?? 0) * 10 + (im.running ?? 0) * 3 + (im.kv_cache_usage_perc ?? 0) * 100
+
+function loadPct(model: ModelView): number {
+  const metrics = metricsFor(model)
+  if (!metrics) return 0
+  const score =
+    (metrics.waiting ?? 0) * 10 +
+    (metrics.running ?? 0) * 3 +
+    (metrics.kv_cache_usage_perc ?? 0) * 100
   return Math.min(100, score)
 }
-/** KV cache as a percent string, or "—" when the metric is unavailable. */
-function kvText(m: ModelView): string {
-  const kv = metricsFor(m)?.kv_cache_usage_perc
-  return kv == null ? '—' : `${(kv * 100).toFixed(0)}%`
+
+function kvText(model: ModelView): string {
+  const kv = metricsFor(model)?.kv_cache_usage_perc
+  return kv == null ? '--' : `${(kv * 100).toFixed(0)}%`
 }
 
 const Icon = computed(() => (kind.value === 'llm' ? Sparkles : Box))
@@ -100,26 +109,25 @@ const Icon = computed(() => (kind.value === 'llm' ? Sparkles : Box))
 function isBusy(key: string) {
   return models.pending.has(key)
 }
+
 function isRunning(state: ModelState) {
   return state === 'ready' || state === 'starting'
 }
-// Offer Stop whenever there's a live process to reap — including a FAILED
-// instance that still has one (e.g. a hung start before cleanup).
-function canStop(m: ModelView) {
-  return isRunning(m.state) || (m.state === 'failed' && m.pid != null)
+
+function canStop(model: ModelView) {
+  return isRunning(model.state) || (model.state === 'failed' && model.pid != null)
 }
 
-// One LLM may start at a time: block this group's start controls while another
-// LLM is mid-start (embeddings are unrestricted).
 const startLocked = computed(() => kind.value === 'llm' && control.isLlmStarting.value)
 const startLockTitle = computed(() =>
-  startLocked.value ? `已有模型啟動中（${control.startingLlmName()}），請待其完成` : '啟動',
+  startLocked.value
+    ? t('modelDetail.startLocked', { name: control.startingLlmName() })
+    : t('modelDetail.startLabel'),
 )
 </script>
 
 <template>
   <Card glass class="overflow-hidden">
-    <!-- Group header -->
     <div class="flex items-center justify-between gap-3 px-4 py-3">
       <div class="flex min-w-0 items-center gap-3">
         <div
@@ -137,119 +145,135 @@ const startLockTitle = computed(() =>
       </div>
       <div class="flex shrink-0 items-center gap-1.5">
         <StatusDot :state="headerState" />
-        <span class="text-xs text-muted-foreground tabular">{{ readyCount }}/{{ total }} 就緒</span>
+        <span class="tabular text-xs text-muted-foreground">
+          {{ t('modelGroup.readyCount', { ready: readyCount, total }) }}
+        </span>
       </div>
     </div>
 
-    <!-- Instance rows (compact, single line) -->
     <div class="divide-y divide-border/40 border-t border-border/40">
       <div
-        v-for="m in visibleInstances"
-        :key="m.key"
+        v-for="model in visibleInstances"
+        :key="model.key"
         class="group/row flex cursor-pointer items-center gap-2.5 px-4 py-2 transition-colors hover:bg-accent/40"
-        @click="emit('open', m.key)"
+        @click="emit('open', model.key)"
       >
-        <StatusDot :state="m.state" size="sm" />
-        <span class="font-mono text-[13px] font-medium">{{ m.key.split('::')[1] }}</span>
+        <StatusDot :state="model.state" size="sm" />
+        <span class="font-mono text-[13px] font-medium">{{ model.key.split('::')[1] }}</span>
         <Badge
-          v-if="models.gpuForKey(m.key, m.kind) !== null"
+          v-if="models.gpuForKey(model.key, model.kind) !== null"
           variant="muted"
           class="px-1.5 py-0 text-[10px]"
         >
-          GPU {{ models.gpuForKey(m.key, m.kind) }}
+          GPU {{ models.gpuForKey(model.key, model.kind) }}
         </Badge>
-        <span class="font-mono text-[11px] text-muted-foreground">:{{ m.port }}</span>
-        <Tooltip v-if="m.restart_count" :text="`崩潰後自動重啟 ${m.restart_count} 次`">
+        <span class="font-mono text-[11px] text-muted-foreground">:{{ model.port }}</span>
+        <Tooltip
+          v-if="model.restart_count"
+          :text="t('modelGroup.crashRestart', { n: model.restart_count })"
+        >
           <span class="flex items-center gap-0.5 text-[10px] text-status-starting">
-            <RotateCw class="size-3" />{{ m.restart_count }}
+            <RotateCw class="size-3" />{{ model.restart_count }}
           </span>
         </Tooltip>
 
         <div class="ml-auto flex items-center gap-2.5">
-          <!-- Live load: shown only while serving -->
-          <Tooltip v-if="metricsFor(m)">
+          <Tooltip v-if="metricsFor(model)">
             <div class="hidden cursor-help items-center gap-1.5 sm:flex" @click.stop>
               <div class="h-1 w-10 overflow-hidden rounded-full bg-muted">
                 <div
                   class="h-full rounded-full bg-[var(--chart-1)] transition-all"
-                  :style="{ width: `${Math.max(4, loadPct(m))}%` }"
+                  :style="{ width: `${Math.max(4, loadPct(model))}%` }"
                 />
               </div>
-              <span class="w-16 text-[11px] text-muted-foreground tabular">
-                {{ metricsFor(m)!.running ?? 0 }}r · {{ metricsFor(m)!.waiting ?? 0 }}w
+              <span class="w-16 tabular text-[11px] text-muted-foreground">
+                {{ metricsFor(model)!.running ?? 0 }}r / {{ metricsFor(model)!.waiting ?? 0 }}w
               </span>
             </div>
             <template #content>
-              <p class="font-medium">即時負載（路由器 /metrics）</p>
+              <p class="font-medium">{{ t('modelGroup.liveLoad') }}</p>
               <ul class="mt-1 space-y-0.5 text-muted-foreground">
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.running ?? '—' }}</span> 執行中 — 目前正在生成的請求</li>
-                <li><span class="tabular text-foreground">{{ metricsFor(m)!.waiting ?? '—' }}</span> 等待中 — 此實例的排隊請求</li>
                 <li>
-                  KV 快取 <span class="tabular text-foreground">{{ kvText(m) }}</span> 已使用
+                  <span class="tabular text-foreground">{{ metricsFor(model)!.running ?? '--' }}</span>
+                  {{ t('modelGroup.runningDesc') }}
                 </li>
+                <li>
+                  <span class="tabular text-foreground">{{ metricsFor(model)!.waiting ?? '--' }}</span>
+                  {{ t('modelGroup.waitingDesc') }}
+                </li>
+                <li>{{ t('modelGroup.kvCacheUsed', { pct: kvText(model) }) }}</li>
               </ul>
             </template>
           </Tooltip>
 
           <Button
-            v-if="!canStop(m)"
+            v-if="!canStop(model)"
             size="icon-sm"
             variant="success"
-            :disabled="isBusy(m.key) || startLocked"
+            :disabled="isBusy(model.key) || startLocked"
             :title="startLockTitle"
-            @click.stop="control.request(m.key, 'start')"
+            @click.stop="control.request(model.key, 'start')"
           >
-            <Loader2 v-if="isBusy(m.key)" class="size-3.5 animate-spin" /><Play v-else class="size-3.5" />
+            <Loader2 v-if="isBusy(model.key)" class="size-3.5 animate-spin" />
+            <Play v-else class="size-3.5" />
           </Button>
           <Button
             v-else
             size="icon-sm"
             variant="outline"
-            :disabled="!m.managed || m.state === 'stopping'"
-            :title="!m.managed ? '外部模型 — 非本後端管理' : m.state === 'failed' ? '終止殘留進程' : m.state === 'starting' ? '中止啟動' : '停止'"
-            @click.stop="control.request(m.key, 'stop')"
+            :disabled="!model.managed || model.state === 'stopping'"
+            :title="
+              !model.managed
+                ? t('modelGroup.externalNotManaged')
+                : model.state === 'failed'
+                  ? t('modelGroup.terminateHint')
+                  : model.state === 'starting'
+                    ? t('modelGroup.abortStartup')
+                    : t('modelGroup.stopHint')
+            "
+            @click.stop="control.request(model.key, 'stop')"
           >
-            <Loader2 v-if="isBusy(m.key)" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" />
+            <Loader2 v-if="isBusy(model.key)" class="size-3.5 animate-spin" />
+            <Square v-else class="size-3.5" />
           </Button>
         </div>
       </div>
 
-      <!-- Collapse toggle for large groups -->
       <button
         v-if="collapsible"
         class="flex w-full items-center justify-center gap-1 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
         @click="expanded = !expanded"
       >
         <ChevronDown class="size-3.5 transition-transform" :class="expanded && 'rotate-180'" />
-        {{ expanded ? '收起' : `顯示更多 ${hiddenCount} 個` }}
+        {{ expanded ? t('modelGroup.collapse') : t('modelGroup.showMore', { n: hiddenCount }) }}
       </button>
     </div>
 
-    <!-- Embedding server: the models it serves (parity with an LLM's model_tag) -->
     <div v-if="servedModels.length" class="border-t border-border/40 px-4 py-2.5">
-      <p class="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">服務的模型</p>
+      <p class="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {{ t('modelGroup.servedModels') }}
+      </p>
       <div class="flex flex-wrap gap-1.5">
         <span
-          v-for="sm in servedModels"
-          :key="sm.name"
+          v-for="served in servedModels"
+          :key="served.name"
           class="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5"
         >
           <Badge
             variant="muted"
             class="px-1 py-0 text-[9px]"
-            :class="sm.type === 'embed' ? 'text-[var(--chart-4)]' : 'text-[var(--chart-2)]'"
+            :class="served.type === 'embed' ? 'text-[var(--chart-4)]' : 'text-[var(--chart-2)]'"
           >
-            {{ sm.type === 'embed' ? '嵌入' : '重排序' }}
+            {{ served.type === 'embed' ? t('modelGroup.embedding') : t('modelGroup.reranking') }}
           </Badge>
-          <span class="font-mono text-[11px]">{{ sm.name }}</span>
-          <span v-if="sm.params.max_length != null" class="text-[10px] text-muted-foreground">· len {{ sm.params.max_length }}</span>
+          <span class="font-mono text-[11px]">{{ served.name }}</span>
+          <span v-if="served.params.max_length != null" class="text-[10px] text-muted-foreground">
+            / len {{ served.params.max_length }}
+          </span>
         </span>
       </div>
     </div>
 
-    <!-- Group actions. Bulk start/stop is only meaningful for multi-instance
-         groups; "add instance" is offered for any LLM group (scale up a single
-         instance too). -->
     <div v-if="kind === 'llm' || instances.length > 1" class="flex gap-2 border-t border-border/40 p-3">
       <template v-if="instances.length > 1">
         <Button
@@ -257,10 +281,10 @@ const startLockTitle = computed(() =>
           variant="success"
           class="flex-1"
           :disabled="!startableKeys.length || startLocked"
-          :title="startLocked ? startLockTitle : '依序啟動所有實例'"
+          :title="startLocked ? startLockTitle : t('modelGroup.startAll')"
           @click="control.requestMany(startableKeys, 'start')"
         >
-          <Play class="size-3.5" />全部啟動
+          <Play class="size-3.5" />{{ t('modelGroup.startAll') }}
         </Button>
         <Button
           size="sm"
@@ -269,7 +293,7 @@ const startLockTitle = computed(() =>
           :disabled="!stoppableKeys.length"
           @click="control.requestMany(stoppableKeys, 'stop')"
         >
-          <Square class="size-3.5" />全部停止
+          <Square class="size-3.5" />{{ t('modelGroup.stopAll') }}
         </Button>
       </template>
       <Button
@@ -277,10 +301,10 @@ const startLockTitle = computed(() =>
         size="sm"
         variant="outline"
         :class="instances.length > 1 ? '' : 'flex-1'"
-        title="為此模型新增一個負載平衡實例"
+        :title="t('modelGroup.addInstance')"
         @click="emit('add-instance', group)"
       >
-        <Plus class="size-3.5" />新增實例
+        <Plus class="size-3.5" />{{ t('modelGroup.addInstance') }}
       </Button>
     </div>
   </Card>

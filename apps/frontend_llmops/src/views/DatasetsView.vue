@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Database, Download, HardDrive, Layers } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
@@ -11,6 +12,7 @@ import StatCard from '@/components/StatCard.vue'
 import DatasetCard from '@/components/DatasetCard.vue'
 import DatasetPreviewDialog from '@/components/DatasetPreviewDialog.vue'
 
+const { t } = useI18n()
 const { ensureUnlocked } = useAuth()
 
 // Dataset preview (eval datasets only) — reuses the Eval page's inspector dialog.
@@ -41,7 +43,7 @@ const evalTiers = computed(() => {
   const groups: { tier: string; items: DatasetEntry[] }[] = []
   for (const d of allDatasets.value) {
     if (d.category !== 'eval') continue
-    const tier = d.tier ?? '其他'
+    const tier = d.tier ?? t('common.more')
     let g = groups.find((x) => x.tier === tier)
     if (!g) groups.push((g = { tier, items: [] }))
     g.items.push(d)
@@ -53,7 +55,7 @@ async function loadCache() {
   try {
     cache.value = await api.getDatasets()
   } catch (e) {
-    toast.error('無法讀取資料集', { description: String(e) })
+    toast.error(t('datasets.loadFailed'), { description: String(e) })
   }
 }
 
@@ -71,22 +73,28 @@ async function download(key: string) {
   if (!(await ensureUnlocked())) return
   try {
     await api.startDatasetDownload(key)
-    toast.success('開始下載', { description: '可離開此頁，下載會在背景繼續。' })
+    toast.success(t('datasets.downloadStarted'), {
+      description: t('datasets.downloadStartedDesc'),
+    })
     await loadDownloads()
   } catch (e) {
-    toast.error('無法開始下載', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('datasets.downloadStartFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   }
 }
 
 async function remove(key: string, label: string) {
   if (!(await ensureUnlocked())) return
-  if (!confirm(`確定刪除已快取的「${label}」？此操作會釋放磁碟空間。`)) return
+  if (!confirm(t('datasets.deleteConfirm', { label }))) return
   try {
     await api.deleteDataset(key)
-    toast.success(`已刪除 ${label}`)
+    toast.success(t('datasets.deleted', { label }))
     await loadCache()
   } catch (e) {
-    toast.error('刪除失敗', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('datasets.deleteFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   }
 }
 
@@ -103,23 +111,23 @@ onBeforeUnmount(() => {
 <template>
   <div class="space-y-6 p-6">
     <div>
-      <h1 class="flex items-center gap-2 text-lg font-semibold"><Database class="size-5" />資料集庫</h1>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Database class="size-5" />{{ $t('datasets.title') }}</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        預先下載資料集到共用 ModelScope 快取，跑壓測 / 評測時就不必等首次下載。
-        <span class="font-mono">random</span> / 速度基準為即時生成，無需下載。
+        {{ $t('datasets.description') }}
+        <span class="font-mono">random</span> {{ $t('datasets.descriptionRandom') }}
       </p>
     </div>
 
     <!-- Stats -->
     <div v-if="cache" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard :icon="Database" label="已快取 / 總數" :value="`${cachedCount} / ${allDatasets.length}`" />
-      <StatCard :icon="HardDrive" label="佔用空間" :value="formatBytes(cachedSize)" />
-      <StatCard :icon="Download" label="下載中" :value="String(activeDownloads.length)" />
+      <StatCard :icon="Database" :label="$t('datasets.cachedTotal')" :value="`${cachedCount} / ${allDatasets.length}`" />
+      <StatCard :icon="HardDrive" :label="$t('datasets.diskUsed')" :value="formatBytes(cachedSize)" />
+      <StatCard :icon="Download" :label="$t('library.downloading')" :value="String(activeDownloads.length)" />
       <StatCard
         :icon="HardDrive"
-        label="磁碟剩餘"
+        :label="$t('datasets.diskRemaining')"
         :value="formatBytes(cache.disk.free)"
-        :hint="`共 ${formatBytes(cache.disk.total)}`"
+        :hint="$t('datasets.diskTotal', { size: formatBytes(cache.disk.total) })"
         color="var(--chart-1)"
       />
     </div>
@@ -127,8 +135,8 @@ onBeforeUnmount(() => {
     <!-- Perf (load-test) datasets -->
     <div>
       <div class="mb-2 flex items-center justify-between">
-        <p class="flex items-center gap-2 text-sm font-semibold"><Layers class="size-4" />壓測資料集</p>
-        <span class="text-xs text-muted-foreground">下載後可在「壓測」頁選用</span>
+        <p class="flex items-center gap-2 text-sm font-semibold"><Layers class="size-4" />{{ $t('datasets.perfDatasets') }}</p>
+        <span class="text-xs text-muted-foreground">{{ $t('datasets.perfHint') }}</span>
       </div>
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <DatasetCard
@@ -145,8 +153,8 @@ onBeforeUnmount(() => {
     <!-- Eval (accuracy) datasets, grouped by capability tier -->
     <div>
       <div class="mb-2 flex items-center justify-between">
-        <p class="flex items-center gap-2 text-sm font-semibold"><Layers class="size-4" />評測資料集</p>
-        <span class="text-xs text-muted-foreground">下載後可在「評測」頁選用</span>
+        <p class="flex items-center gap-2 text-sm font-semibold"><Layers class="size-4" />{{ $t('datasets.evalDatasets') }}</p>
+        <span class="text-xs text-muted-foreground">{{ $t('datasets.evalHint') }}</span>
       </div>
       <div class="space-y-4">
         <div v-for="g in evalTiers" :key="g.tier">
@@ -168,7 +176,7 @@ onBeforeUnmount(() => {
 
     <!-- Failed downloads -->
     <Card v-for="job in downloads.filter((j) => j.state === 'failed')" :key="job.key" class="p-3">
-      <p class="text-xs text-status-failed">下載「{{ job.label }}」失敗：{{ job.error }}</p>
+      <p class="text-xs text-status-failed">{{ $t('datasets.downloadFailed', { label: job.label }) }}{{ job.error }}</p>
     </Card>
 
     <DatasetPreviewDialog v-model:open="previewOpen" :dataset-key="previewKey" />

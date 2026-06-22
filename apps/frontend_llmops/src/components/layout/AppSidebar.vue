@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   Activity,
   ArrowLeftRight,
@@ -24,6 +25,7 @@ import type { ModelState } from '@/types/api'
 
 const route = useRoute()
 const models = useModelsStore()
+const { t } = useI18n()
 
 // Roster grouped by model group (dedupes multi-instance groups), with a
 // ready/total count and a worst-wins status dot.
@@ -49,23 +51,23 @@ const roster = computed(() => {
   })
 })
 
-const nav = [
-  { to: '/', label: '總覽', icon: LayoutDashboard },
-  { to: '/models', label: '模型', icon: Server },
-  { to: '/traffic', label: '流量', icon: ArrowLeftRight },
-  { to: '/requests', label: '請求', icon: Receipt },
-  { to: '/monitoring', label: '監控', icon: LineChart },
-  { to: '/playground', label: '測試台', icon: TerminalSquare },
-  { to: '/benchmark', label: '壓測', icon: Gauge },
-  { to: '/eval', label: '評測', icon: ClipboardCheck },
-  { to: '/library', label: '模型庫', icon: Package },
-  { to: '/lora-library', label: 'LoRA 庫', icon: Layers },
-  { to: '/datasets', label: '資料集庫', icon: Database },
-  { to: '/keys', label: 'API 金鑰', icon: KeyRound },
-  { to: '/usage', label: '使用指南', icon: BookOpen },
-  { to: '/resources', label: '資源', icon: Cpu },
-  { to: '/activity', label: '活動', icon: Activity },
-]
+const nav = computed(() => [
+  { to: '/', label: t('sidebar.overview'), icon: LayoutDashboard },
+  { to: '/models', label: t('sidebar.models'), icon: Server },
+  { to: '/traffic', label: t('sidebar.traffic'), icon: ArrowLeftRight },
+  { to: '/requests', label: t('sidebar.requests'), icon: Receipt },
+  { to: '/monitoring', label: t('sidebar.monitoring'), icon: LineChart },
+  { to: '/playground', label: t('sidebar.playground'), icon: TerminalSquare },
+  { to: '/benchmark', label: t('sidebar.benchmark'), icon: Gauge },
+  { to: '/eval', label: t('sidebar.eval'), icon: ClipboardCheck },
+  { to: '/library', label: t('sidebar.library'), icon: Package },
+  { to: '/lora-library', label: t('sidebar.loraLibrary'), icon: Layers },
+  { to: '/datasets', label: t('sidebar.datasets'), icon: Database },
+  { to: '/keys', label: t('sidebar.keys'), icon: KeyRound },
+  { to: '/usage', label: t('sidebar.usage'), icon: BookOpen },
+  { to: '/resources', label: t('sidebar.resources'), icon: Cpu },
+  { to: '/activity', label: t('sidebar.activity'), icon: Activity },
+])
 </script>
 
 <template>
@@ -77,7 +79,7 @@ const nav = [
       <img src="/icon2_rb.png" alt="vLLMux" class="size-11 object-contain" />
       <div class="leading-tight">
         <p class="text-sm font-semibold">vLLMux</p>
-        <p class="text-[10px] uppercase tracking-widest text-muted-foreground">控制台</p>
+        <p class="text-[10px] uppercase tracking-widest text-muted-foreground">{{ $t('sidebar.console') }}</p>
       </div>
     </div>
 
@@ -109,7 +111,7 @@ const nav = [
     <!-- Footer: live model roster -->
     <div class="border-t border-border/70 px-4 py-3">
       <p class="mb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-        模型 · {{ models.readyCount }}/{{ models.total }} 就緒
+        {{ $t('sidebar.modelCount', { ready: models.readyCount, total: models.total }) }}
       </p>
       <ul class="max-h-40 space-y-1 overflow-y-auto pr-1">
         <li
@@ -123,7 +125,7 @@ const nav = [
             {{ g.ready }}/{{ g.total }}
           </span>
         </li>
-        <li v-if="!models.total" class="text-xs text-muted-foreground/60">尚未設定模型</li>
+        <li v-if="!models.total" class="text-xs text-muted-foreground/60">{{ $t('sidebar.noModels') }}</li>
       </ul>
     </div>
   </aside>

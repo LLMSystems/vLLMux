@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, ChevronDown, ExternalLink, Gauge, Loader2, Play, Plus, Square, Trash2, X } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { lorasOfGroup } from '@/composables/useModelOptions'
@@ -18,6 +19,7 @@ import type { CompareSeries } from '@/components/PerfCompareChart.vue'
 
 const models = useModelsStore()
 const { ensureUnlocked } = useAuth()
+const { t } = useI18n()
 
 // ---- config form ----
 const groups = computed(() => [...new Set(models.llms.map((m) => m.key.split('::')[0] ?? m.key))])
@@ -32,13 +34,13 @@ const dataset = ref<'random' | 'openqa'>('random')
 const endpoint = ref<'chat' | 'completions'>('chat')
 const mode = ref<'sweep' | 'openloop' | 'multiturn' | 'sla' | 'embedding' | 'rerank' | 'speed'>('sweep')
 const MODES = [
-  { v: 'sweep', label: '並發 Sweep' },
-  { v: 'openloop', label: '速率 Open-loop' },
-  { v: 'multiturn', label: '多輪對話' },
-  { v: 'sla', label: 'SLA 調優' },
-  { v: 'speed', label: '速度基準' },
-  { v: 'embedding', label: '嵌入 Embedding' },
-  { v: 'rerank', label: '重排序 Rerank' },
+  { v: 'sweep', label: 'benchmark.modeSweep' },
+  { v: 'openloop', label: 'benchmark.modeOpenloop' },
+  { v: 'multiturn', label: 'benchmark.modeMultiturn' },
+  { v: 'sla', label: 'benchmark.modeSla' },
+  { v: 'speed', label: 'benchmark.modeSpeed' },
+  { v: 'embedding', label: 'benchmark.modeEmbedding' },
+  { v: 'rerank', label: 'benchmark.modeRerank' },
 ] as const
 const isEmbedMode = computed(() => mode.value === 'embedding' || mode.value === 'rerank')
 // Embedding/rerank server + served-model picker (mirrors the Playground logic).
@@ -87,14 +89,14 @@ const slaUpper = ref(32)
 const slaNumRuns = ref(1)
 const slaFixedParallel = ref(10)
 const SLA_METRICS = [
-  { v: 'p99_latency', label: 'p99 延遲 (s)' },
-  { v: 'avg_latency', label: '平均延遲 (s)' },
-  { v: 'p99_ttft', label: 'p99 TTFT (ms)' },
-  { v: 'avg_ttft', label: '平均 TTFT (ms)' },
-  { v: 'p99_tpot', label: 'p99 TPOT (ms)' },
-  { v: 'avg_tpot', label: '平均 TPOT (ms)' },
-  { v: 'rps', label: 'RPS (req/s)' },
-  { v: 'tps', label: '輸出 tok/s' },
+  { v: 'p99_latency', label: 'benchmark.slaMetrics.p99_latency' },
+  { v: 'avg_latency', label: 'benchmark.slaMetrics.avg_latency' },
+  { v: 'p99_ttft', label: 'benchmark.slaMetrics.p99_ttft' },
+  { v: 'avg_ttft', label: 'benchmark.slaMetrics.avg_ttft' },
+  { v: 'p99_tpot', label: 'benchmark.slaMetrics.p99_tpot' },
+  { v: 'avg_tpot', label: 'benchmark.slaMetrics.avg_tpot' },
+  { v: 'rps', label: 'benchmark.slaMetrics.rps' },
+  { v: 'tps', label: 'benchmark.slaMetrics.tps' },
 ]
 const SLA_OPS = ['<=', '<', '>=', '>', 'max', 'min']
 function addCondition() {
@@ -174,7 +176,7 @@ async function select(id: number) {
     points.value = r.points
     sla.value = r.sla
   } catch (e) {
-    toast.error('無法載入結果', { description: String(e) })
+    toast.error(t('benchmark.loadResultFailed'), { description: String(e) })
   }
   await loadLog()
 }
@@ -201,7 +203,7 @@ async function loadLog() {
 function instanceTargetInvalid(): boolean {
   if (target.value !== 'instance') return false
   if (instanceOptions.value.find((o) => o.key === instanceKey.value)?.ready) return false
-  toast.error('該實例尚未就緒，無法直連')
+  toast.error(t('benchmark.instanceNotReady'))
   return true
 }
 
@@ -228,7 +230,7 @@ async function launch() {
   let req: PerfRequest
   if (mode.value === 'sla') {
     if (!slaConditions.value.length) {
-      toast.error('請至少加入一個 SLA 條件')
+      toast.error(t('benchmark.addSlaCondition'))
       return
     }
     req = {
@@ -245,13 +247,13 @@ async function launch() {
     }
   } else if (mode.value === 'openloop') {
     if (!rates.value.length) {
-      toast.error('請輸入至少一個速率')
+      toast.error(t('benchmark.enterRate'))
       return
     }
     req = { ...common, rate: rates.value, number: rates.value.map(() => reqPerPoint.value), duration: durationSec.value || undefined }
   } else if (mode.value === 'multiturn') {
     if (!mtConcurrent.value.length) {
-      toast.error('請輸入至少一個並發對話數')
+      toast.error(t('benchmark.enterMtConcurrent'))
       return
     }
     req = {
@@ -267,7 +269,7 @@ async function launch() {
     }
   } else {
     if (!parallel.value.length) {
-      toast.error('請輸入至少一個並發數')
+      toast.error(t('benchmark.enterParallel'))
       return
     }
     req = {
@@ -282,11 +284,11 @@ async function launch() {
 
 async function launchEmbedding() {
   if (!embModel.value) {
-    toast.error('請選擇一個模型')
+    toast.error(t('benchmark.selectModel'))
     return
   }
   if (!parallel.value.length) {
-    toast.error('請輸入至少一個並發數')
+    toast.error(t('benchmark.enterParallel'))
     return
   }
   const req: PerfRequest = {
@@ -309,7 +311,7 @@ async function launchEmbedding() {
 
 async function launchSpeed() {
   if (!model.value) {
-    toast.error('請選擇一個模型')
+    toast.error(t('benchmark.selectModel'))
     return
   }
   if (instanceTargetInvalid()) return
@@ -335,11 +337,15 @@ async function submit(req: PerfRequest) {
   launching.value = true
   try {
     const run = await api.startPerf(req)
-    toast.success(`已開始壓測 #${run.id}`, { description: '可離開此頁，背景持續執行。' })
+    toast.success(t('benchmark.startedToast', { id: run.id }), {
+      description: t('benchmark.startedDesc'),
+    })
     await loadRuns()
     await select(run.id)
   } catch (e) {
-    toast.error('無法開始壓測', { description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e) })
+    toast.error(t('benchmark.startFailed'), {
+      description: e instanceof ApiError ? `${e.status}: ${e.message}` : String(e),
+    })
   } finally {
     launching.value = false
   }
@@ -357,7 +363,7 @@ async function toggleCompare(id: number) {
     return
   }
   if (compareIds.value.length >= COMPARE_COLORS.length) {
-    toast.error(`最多比較 ${COMPARE_COLORS.length} 筆`)
+    toast.error(t('benchmark.compareMax', { n: COMPARE_COLORS.length }))
     return
   }
   compareIds.value.push(id)
@@ -367,7 +373,7 @@ async function toggleCompare(id: number) {
       compareData.value[id] = { run, points: parseResult(run.result).points }
     } catch {
       compareIds.value.splice(compareIds.value.indexOf(id), 1)
-      toast.error('無法載入比較資料')
+      toast.error(t('benchmark.compareLoadFailed'))
     }
   }
 }
@@ -381,27 +387,29 @@ const compareSeries = computed<CompareSeries[]>(() =>
     .filter((s): s is CompareSeries => s != null),
 )
 const compareXLabel = computed(() =>
-  compareIds.value.some((id) => compareData.value[id]?.run.params?.includes('"openloop"')) ? '速率' : '並發',
+  compareIds.value.some((id) => compareData.value[id]?.run.params?.includes('"openloop"'))
+    ? t('benchmark.tableRate')
+    : t('benchmark.tableParallel'),
 )
 
 // Runs we've asked to stop — shows a 'stopping…' state and reveals force-kill.
 const cancelling = ref<Set<number>>(new Set())
 async function cancel(id: number, force = false) {
-  if (force && !confirm(`強制終止壓測 #${id}？將立即 SIGKILL,結果會作廢。`)) return
+  if (force && !confirm(t('benchmark.forceConfirm', { id }))) return
   try {
     await api.cancelPerf(id, force)
     cancelling.value = new Set(cancelling.value).add(id)
-    toast.info(force ? '已強制終止' : '停止中…', {
-      description: force ? undefined : '正在停止,最多約 10 秒;仍卡住可按「強制」。',
+    toast.info(force ? t('benchmark.forceKill') : t('benchmark.stoppingBadge'), {
+      description: force ? undefined : t('benchmark.stoppingHint'),
     })
     await loadRuns()
   } catch (e) {
-    toast.error('取消失敗', { description: String(e) })
+    toast.error(t('benchmark.cancelFailed'), { description: String(e) })
   }
 }
 
 async function remove(id: number) {
-  if (!confirm(`刪除壓測 #${id}？`)) return
+  if (!confirm(t('benchmark.deleteConfirm', { id }))) return
   try {
     await api.deletePerf(id)
     if (selectedId.value === id) { selectedId.value = null; selected.value = null; points.value = [] }
@@ -410,7 +418,7 @@ async function remove(id: number) {
     delete compareData.value[id]
     await loadRuns()
   } catch (e) {
-    toast.error('刪除失敗', { description: String(e) })
+    toast.error(t('benchmark.deleteFailed'), { description: String(e) })
   }
 }
 
@@ -457,12 +465,29 @@ const aggregates = computed(() => {
 })
 const isOpenLoop = computed(() => parsedParams.value.mode === 'openloop')
 const isEmbedResult = computed(() => parsedParams.value.mode === 'embedding' || parsedParams.value.mode === 'rerank')
+const speedLengths = computed(() =>
+  speedLong.value ? t('benchmark.speedLengthsLong') : t('benchmark.speedLengthsShort'),
+)
+const statusLabel = (status: string) => {
+  const map: Record<string, string> = {
+    running: t('common.running'),
+    completed: t('common.completed'),
+    failed: t('common.failed'),
+    cancelled: t('common.cancelled'),
+  }
+  return map[status] ?? status
+}
 const runModeLabel = computed(() => {
-  if (sla.value) return `SLA（${parsedParams.value.sla_variable ?? 'parallel'}）`
+  if (sla.value) {
+    return `SLA (${parsedParams.value.sla_variable === 'rate' ? t('benchmark.slaVarRate') : t('benchmark.slaVarParallel')})`
+  }
   return ({
-    embedding: '嵌入 Embedding', rerank: '重排序 Rerank',
-    openloop: '速率 Open-loop', multiturn: '多輪對話', speed: '速度基準',
-  } as Record<string, string>)[parsedParams.value.mode as string] ?? '並發 Sweep'
+    embedding: t('benchmark.modeEmbedding'),
+    rerank: t('benchmark.modeRerank'),
+    openloop: t('benchmark.modeOpenloop'),
+    multiturn: t('benchmark.modeMultiturn'),
+    speed: t('benchmark.modeSpeed'),
+  } as Record<string, string>)[parsedParams.value.mode as string] ?? t('benchmark.modeSweep')
 })
 const mtPoint = computed(() => points.value.find((p) => p.turns != null) ?? null)
 const expanded = ref<string | null>(null)
@@ -484,34 +509,34 @@ const statusColor: Record<string, string> = {
 <template>
   <div class="space-y-4 p-6">
     <div>
-      <h1 class="flex items-center gap-2 text-lg font-semibold"><Gauge class="size-5" />壓測</h1>
+      <h1 class="flex items-center gap-2 text-lg font-semibold"><Gauge class="size-5" />{{ $t('benchmark.title') }}</h1>
       <p class="mt-0.5 text-sm text-muted-foreground">
-        評測模型的「速度」（吞吐 / 延遲，與評測的答對率不同）。支援並發 sweep、速率 open-loop、多輪對話、SLA 自動調優，以及 embedding / rerank 吞吐與單請求速度基準。部分模式可先在
-        <RouterLink to="/datasets" class="text-[var(--chart-1)] underline">資料集庫</RouterLink>
-        下載資料集。
+        {{ $t('benchmark.description') }}
+        <RouterLink to="/datasets" class="text-[var(--chart-1)] underline">{{ $t('benchmark.datasetsLink') }}</RouterLink>
+        {{ $t('benchmark.descriptionEnd') }}
       </p>
     </div>
     <div class="grid gap-4 lg:grid-cols-[20rem_1fr]">
       <!-- Config -->
     <Card class="h-fit p-5">
-      <p class="mb-4 flex items-center gap-2 text-sm font-semibold"><Gauge class="size-4" />壓測設定</p>
+      <p class="mb-4 flex items-center gap-2 text-sm font-semibold"><Gauge class="size-4" />{{ $t('benchmark.configTitle') }}</p>
       <div class="space-y-3 text-sm">
         <label v-if="!isEmbedMode" class="block">
-          <span class="text-xs text-muted-foreground">模型</span>
+          <span class="text-xs text-muted-foreground">{{ $t('benchmark.modelLabel') }}</span>
           <select v-model="model" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
-            <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : '（未啟動）' }}</option>
+            <option v-for="g in groups" :key="g" :value="g">{{ g }}{{ groupReady(g) ? '' : ` ${$t('benchmark.notStarted')}` }}</option>
             <optgroup v-if="loraOptions.length" label="LoRA">
               <option v-for="l in loraOptions" :key="l.value" :value="l.value">{{ l.group }} / {{ l.value }}</option>
             </optgroup>
           </select>
         </label>
         <label v-else class="block">
-          <span class="text-xs text-muted-foreground">{{ mode === 'rerank' ? '重排序模型' : '嵌入模型' }}</span>
+          <span class="text-xs text-muted-foreground">{{ mode === 'rerank' ? $t('benchmark.rerankModelLabel') : $t('benchmark.embModelLabel') }}</span>
           <select v-model="embModel" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
             <option v-for="m in embModels" :key="m" :value="m">{{ m }}</option>
           </select>
-          <p v-if="!embeddingServerReady" class="mt-1 text-[11px] text-status-failed">embedding server 未啟動，請先至「模型」頁啟動。</p>
-          <p v-else-if="!embModels.length" class="mt-1 text-[11px] text-muted-foreground">此模式無可用模型。</p>
+          <p v-if="!embeddingServerReady" class="mt-1 text-[11px] text-status-failed">{{ $t('benchmark.embNotStarted') }}</p>
+          <p v-else-if="!embModels.length" class="mt-1 text-[11px] text-muted-foreground">{{ $t('benchmark.noModelsForMode') }}</p>
         </label>
         <div class="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/40 p-0.5">
           <button
@@ -521,38 +546,38 @@ const statusColor: Record<string, string> = {
             :class="mode === m.v ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
             @click="mode = m.v"
           >
-            {{ m.label }}
+            {{ $t(m.label) }}
           </button>
         </div>
         <label class="block">
-          <span class="text-xs text-muted-foreground">目標</span>
+          <span class="text-xs text-muted-foreground">{{ $t('benchmark.targetLabel') }}</span>
           <select v-model="target" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
-            <option value="router">路由器（整體 + 負載平衡）</option>
-            <option value="instance">單一實例</option>
+            <option value="router">{{ $t('benchmark.targetRouter') }}</option>
+            <option value="instance">{{ $t('benchmark.targetInstance') }}</option>
           </select>
         </label>
         <label v-if="target === 'instance' && !isEmbedMode" class="block">
-          <span class="text-xs text-muted-foreground">實例</span>
+          <span class="text-xs text-muted-foreground">{{ $t('benchmark.instanceLabel') }}</span>
           <select v-model="instanceKey" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
             <option
               v-for="o in instanceOptions"
               :key="o.key"
               :value="o.key"
               :disabled="!o.ready"
-            >{{ o.key.split('::')[1] }}{{ o.ready ? '' : `（${o.state}・未就緒）` }}</option>
+            >{{ o.key.split('::')[1] }}{{ o.ready ? '' : ` (${o.state} - ${$t('benchmark.instanceNotReady')})` }}</option>
           </select>
         </label>
         <!-- Multi-turn / embedding / speed use their own dataset + endpoint. -->
         <div v-if="mode !== 'multiturn' && mode !== 'speed' && !isEmbedMode" class="grid grid-cols-2 gap-2">
           <label class="block">
-            <span class="text-xs text-muted-foreground">資料集</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.datasetLabel') }}</span>
             <select v-model="dataset" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
               <option value="random">random</option>
               <option value="openqa">openqa</option>
             </select>
           </label>
           <label class="block">
-            <span class="text-xs text-muted-foreground">端點</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.endpointLabel') }}</span>
             <select v-model="endpoint" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
               <option value="chat">chat</option>
               <option value="completions">completions</option>
@@ -562,16 +587,16 @@ const statusColor: Record<string, string> = {
         <!-- Sweep-specific -->
         <template v-if="mode === 'sweep'">
           <label class="block">
-            <span class="text-xs text-muted-foreground">並發點（逗號分隔，掃描）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.parallelLabel') }}</span>
             <Input v-model="parallelInput" placeholder="1,4,8,16" class="mt-1 font-mono" />
           </label>
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">每點請求數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.reqPerPoint') }}</span>
               <Input v-model.number="reqPerPoint" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">預熱比例</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.warmupRatio') }}</span>
               <Input v-model.number="warmup" type="number" min="0" step="0.1" class="mt-1" />
             </label>
           </div>
@@ -580,16 +605,16 @@ const statusColor: Record<string, string> = {
         <!-- Open-loop: arrival-rate sweep (Poisson; parallel ignored) -->
         <template v-else-if="mode === 'openloop'">
           <label class="block">
-            <span class="text-xs text-muted-foreground">速率（req/s，逗號分隔，掃描）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.rateLabel') }}</span>
             <Input v-model="rateInput" placeholder="5,10,20" class="mt-1 font-mono" />
           </label>
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">每速率請求數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.reqPerRate') }}</span>
               <Input v-model.number="reqPerPoint" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">最長秒數（0=不限）</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.maxDuration') }}</span>
               <Input v-model.number="durationSec" type="number" min="0" class="mt-1" />
             </label>
           </div>
@@ -598,39 +623,39 @@ const statusColor: Record<string, string> = {
         <!-- Multi-turn conversations -->
         <template v-else-if="mode === 'multiturn'">
           <label class="block">
-            <span class="text-xs text-muted-foreground">資料集</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtDatasetLabel') }}</span>
             <select v-model="mtDataset" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
-              <option value="share_gpt_zh_multi_turn">ShareGPT 中文（真實對話）</option>
-              <option value="random_multi_turn">random（隨機生成）</option>
-              <option value="custom_multi_turn">custom（自備 JSONL）</option>
+              <option value="share_gpt_zh_multi_turn">{{ $t('benchmark.mtShareGpt') }}</option>
+              <option value="random_multi_turn">{{ $t('benchmark.mtRandom') }}</option>
+              <option value="custom_multi_turn">{{ $t('benchmark.mtCustom') }}</option>
             </select>
           </label>
           <label v-if="mtDataset === 'custom_multi_turn'" class="block">
-            <span class="text-xs text-muted-foreground">資料路徑（伺服器端 JSONL）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtDatasetPath') }}</span>
             <Input v-model="mtDatasetPath" placeholder="/app/data/convos.jsonl" class="mt-1 font-mono text-xs" />
           </label>
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">並發對話數（可逗號掃描）</span>
-              <Input v-model="mtConcurrentInput" placeholder="4 或 2,4,8" class="mt-1 font-mono" />
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtConcurrent') }}</span>
+              <Input v-model="mtConcurrentInput" placeholder="4 or 2,4,8" class="mt-1 font-mono" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">每點對話數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtConvPerPoint') }}</span>
               <Input v-model.number="mtTotal" type="number" min="1" class="mt-1" />
             </label>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">最少輪數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtMinTurns') }}</span>
               <Input v-model.number="minTurns" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">最多輪數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtMaxTurns') }}</span>
               <Input v-model.number="maxTurns" type="number" min="1" class="mt-1" />
             </label>
           </div>
           <label class="block">
-            <span class="text-xs text-muted-foreground">最長秒數（0=不限，避免牆鐘失控）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.mtMaxDuration') }}</span>
             <Input v-model.number="durationSec" type="number" min="0" class="mt-1" />
           </label>
         </template>
@@ -638,21 +663,21 @@ const statusColor: Record<string, string> = {
         <!-- SLA-specific (conditions OR-ed; each runs its own binary search) -->
         <template v-else-if="mode === 'sla'">
           <label class="block">
-            <span class="text-xs text-muted-foreground">搜尋變數</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaVariable') }}</span>
             <select v-model="slaVariable" class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm">
-              <option value="parallel">並發 parallel</option>
-              <option value="rate">速率 rate（open-loop）</option>
+              <option value="parallel">{{ $t('benchmark.slaParallel') }}</option>
+              <option value="rate">{{ $t('benchmark.slaRate') }}</option>
             </select>
           </label>
           <div>
             <div class="mb-1 flex items-center justify-between">
-              <span class="text-xs text-muted-foreground">SLA 條件（多條 = OR）</span>
-              <Button size="sm" variant="ghost" @click="addCondition"><Plus class="size-3.5" />新增</Button>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaConditions') }}</span>
+              <Button size="sm" variant="ghost" @click="addCondition"><Plus class="size-3.5" />{{ $t('common.add') }}</Button>
             </div>
             <div class="space-y-1.5">
               <div v-for="(c, i) in slaConditions" :key="i" class="flex items-center gap-1.5">
                 <select v-model="c.metric" class="h-8 flex-1 rounded-md border border-input bg-background/40 px-1 text-xs">
-                  <option v-for="m in SLA_METRICS" :key="m.v" :value="m.v">{{ m.label }}</option>
+                  <option v-for="m in SLA_METRICS" :key="m.v" :value="m.v">{{ $t(m.label) }}</option>
                 </select>
                 <select v-model="c.op" class="h-8 w-14 rounded-md border border-input bg-background/40 px-1 text-xs">
                   <option v-for="o in SLA_OPS" :key="o" :value="o">{{ o }}</option>
@@ -663,20 +688,20 @@ const statusColor: Record<string, string> = {
             </div>
           </div>
           <label v-if="slaVariable === 'rate'" class="block">
-            <span class="text-xs text-muted-foreground">固定並發（rate 模式）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaFixedParallel') }}</span>
             <Input v-model.number="slaFixedParallel" type="number" min="1" class="mt-1" />
           </label>
           <div class="grid grid-cols-3 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">下界</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaLower') }}</span>
               <Input v-model.number="slaLower" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">上界</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaUpper') }}</span>
               <Input v-model.number="slaUpper" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">每點 runs</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.slaRunsPerPoint') }}</span>
               <Input v-model.number="slaNumRuns" type="number" min="1" class="mt-1" />
             </label>
           </div>
@@ -685,11 +710,10 @@ const statusColor: Record<string, string> = {
         <!-- Speed baseline: single request, fixed prompt lengths, /v1/completions -->
         <template v-else-if="mode === 'speed'">
           <div class="rounded-lg border border-border/60 bg-muted/30 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
-            單請求標準速度（並發 1）。固定 prompt 長度{{ speedLong ? ' 63k / 129k' : ' 1 / 6k / 14k / 30k' }}，
-            打 <span class="font-mono">/v1/completions</span> 避免 chat template 干擾。
+            {{ $t('benchmark.speedDesc', { lengths: speedLengths }) }}
           </div>
           <label class="flex items-center justify-between">
-            <span class="text-xs text-muted-foreground">長上下文（63k / 129k）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.speedLongCtx') }}</span>
             <input v-model="speedLong" type="checkbox" class="size-4 accent-[var(--chart-1)]" />
           </label>
         </template>
@@ -697,21 +721,21 @@ const statusColor: Record<string, string> = {
         <!-- Embedding / rerank: closed-loop concurrency sweep, no output tokens -->
         <template v-else-if="isEmbedMode">
           <label class="block">
-            <span class="text-xs text-muted-foreground">並發點（逗號分隔，掃描）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.embParallel') }}</span>
             <Input v-model="parallelInput" placeholder="1,4,8,16" class="mt-1 font-mono" />
           </label>
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
-              <span class="text-xs text-muted-foreground">每點請求數</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.embReqPerPoint') }}</span>
               <Input v-model.number="reqPerPoint" type="number" min="1" class="mt-1" />
             </label>
             <label class="block">
-              <span class="text-xs text-muted-foreground">輸入長度（token）</span>
+              <span class="text-xs text-muted-foreground">{{ $t('benchmark.embInputLen') }}</span>
               <Input v-model.number="embPromptLen" type="number" min="1" class="mt-1" />
             </label>
           </div>
           <label v-if="mode === 'rerank'" class="block">
-            <span class="text-xs text-muted-foreground">每筆文件數</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.embDocsPerReq') }}</span>
             <Input v-model.number="rerankDocs" type="number" min="1" class="mt-1" />
           </label>
         </template>
@@ -719,30 +743,30 @@ const statusColor: Record<string, string> = {
         <!-- Common knobs (LLM modes only — embedding has no output tokens/stream) -->
         <div v-if="!isEmbedMode" class="grid grid-cols-2 gap-2">
           <label class="block">
-            <span class="text-xs text-muted-foreground">輸出 tokens{{ mode === 'speed' ? '（固定）' : '' }}</span>
+            <span class="text-xs text-muted-foreground">{{ mode === 'speed' ? $t('benchmark.outputTokensFixed') : $t('benchmark.outputTokens') }}</span>
             <Input v-model.number="maxTokens" type="number" min="1" class="mt-1" />
           </label>
           <label v-if="dataset === 'random' && ['sweep', 'openloop', 'sla'].includes(mode)" class="block">
-            <span class="text-xs text-muted-foreground">輸入長度</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.inputLength') }}</span>
             <Input v-model.number="promptLen" type="number" min="1" class="mt-1" />
           </label>
           <label v-if="dataset === 'random' && ['sweep', 'openloop', 'sla'].includes(mode)" class="block">
-            <span class="text-xs text-muted-foreground">前綴長度（prefix cache）</span>
+            <span class="text-xs text-muted-foreground">{{ $t('benchmark.prefixLength') }}</span>
             <Input v-model.number="prefixLen" type="number" min="0" class="mt-1" />
           </label>
         </div>
         <label class="block">
-          <span class="text-xs text-muted-foreground">名稱（選填）</span>
-          <Input v-model="name" placeholder="例如：q05b-baseline" class="mt-1" />
+          <span class="text-xs text-muted-foreground">{{ $t('benchmark.nameLabel') }}</span>
+          <Input v-model="name" :placeholder="$t('benchmark.namePlaceholder')" class="mt-1" />
         </label>
         <label v-if="!isEmbedMode" class="flex items-center justify-between">
-          <span class="text-xs text-muted-foreground">串流（量 TTFT 必須）</span>
+          <span class="text-xs text-muted-foreground">{{ $t('benchmark.streamLabel') }}</span>
           <input v-model="stream" type="checkbox" class="size-4 accent-[var(--chart-1)]" />
         </label>
 
         <Button class="w-full" :disabled="launching || busy || (isEmbedMode ? !embModel : !model)" @click="launch">
           <Loader2 v-if="launching" class="size-4 animate-spin" /><Play v-else class="size-4" />
-          {{ busy ? '有壓測進行中…' : '開始壓測' }}
+          {{ busy ? $t('benchmark.runningBusy') : $t('benchmark.startBenchmark') }}
         </Button>
       </div>
     </Card>
@@ -752,8 +776,8 @@ const statusColor: Record<string, string> = {
       <!-- History -->
       <Card class="overflow-hidden">
         <div class="flex items-center justify-between border-b border-border/60 px-4 py-2.5 text-sm font-semibold">
-          <span>壓測歷史 <span class="text-xs font-normal text-muted-foreground">({{ runs.length }})</span></span>
-          <span class="text-xs font-normal text-muted-foreground">勾選 ≥2 筆比較</span>
+          <span>{{ $t('benchmark.history') }} <span class="text-xs font-normal text-muted-foreground">{{ $t('benchmark.historyCount', { n: runs.length }) }}</span></span>
+          <span class="text-xs font-normal text-muted-foreground">{{ $t('benchmark.compareHint') }}</span>
         </div>
         <!-- Bounded + scrollable so a long history never pushes the result far down. -->
         <div v-if="runs.length" class="max-h-72 divide-y divide-border/60 overflow-y-auto">
@@ -769,7 +793,7 @@ const statusColor: Record<string, string> = {
               type="checkbox"
               :checked="compareIds.includes(r.id)"
               class="size-4 shrink-0 accent-[var(--chart-1)]"
-              title="加入比較"
+              :title="$t('benchmark.addToCompare')"
               @click.stop="toggleCompare(r.id)"
             />
             <span v-else class="size-4 shrink-0" />
@@ -779,28 +803,28 @@ const statusColor: Record<string, string> = {
               <p class="truncate text-sm font-medium">{{ r.name || r.model }} <span class="text-xs text-muted-foreground">#{{ r.id }}</span></p>
               <p class="truncate font-mono text-[11px] text-muted-foreground">{{ r.model }} · {{ formatTime(r.created_at) }}</p>
             </div>
-            <Badge variant="muted" :class="statusColor[r.status]">{{ cancelling.has(r.id) ? '停止中…' : r.status }}</Badge>
+            <Badge variant="muted" :class="statusColor[r.status]">{{ cancelling.has(r.id) ? $t('benchmark.stoppingBadge') : statusLabel(r.status) }}</Badge>
             <template v-if="r.status === 'running'">
               <Button
                 v-if="!cancelling.has(r.id)"
                 size="icon-sm"
                 variant="ghost"
-                title="取消(停止)"
+                :title="$t('benchmark.cancelStop')"
                 @click.stop="cancel(r.id)"
               ><Square class="size-3.5" /></Button>
               <Button
                 v-else
                 size="icon-sm"
                 variant="ghost"
-                title="強制終止(立即 SIGKILL)"
+                :title="$t('benchmark.forceKillHint')"
                 class="text-status-failed"
                 @click.stop="cancel(r.id, true)"
               ><X class="size-3.5" /></Button>
             </template>
-            <Button v-else size="icon-sm" variant="ghost" title="刪除" @click.stop="remove(r.id)"><Trash2 class="size-3.5" /></Button>
+            <Button v-else size="icon-sm" variant="ghost" :title="$t('common.delete')" @click.stop="remove(r.id)"><Trash2 class="size-3.5" /></Button>
           </div>
         </div>
-        <p v-else class="px-4 py-8 text-center text-sm text-muted-foreground">尚無壓測紀錄。</p>
+        <p v-else class="px-4 py-8 text-center text-sm text-muted-foreground">{{ $t('benchmark.noHistory') }}</p>
       </Card>
 
       <!-- Comparison + selected result; scrolled into view on an explicit pick. -->
@@ -808,43 +832,43 @@ const statusColor: Record<string, string> = {
       <!-- Comparison (≥2 completed runs selected) -->
       <Card v-if="compareSeries.length >= 2" class="p-4">
         <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <p class="text-sm font-semibold">壓測比較</p>
+          <p class="text-sm font-semibold">{{ $t('benchmark.comparison') }}</p>
           <span v-for="(s, i) in compareSeries" :key="i" class="flex items-center gap-1.5 text-xs">
             <span class="size-2.5 rounded-full" :style="{ background: s.color }" />{{ s.label }}
           </span>
         </div>
         <div class="grid gap-4 lg:grid-cols-3">
-          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.rps" label="RPS（req/s）" :format="(v) => v.toFixed(1)" :x-label="compareXLabel" />
-          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.avg_latency != null ? p.avg_latency * 1000 : null" label="平均延遲（ms）" :format="(v) => `${Math.round(v)}`" :x-label="compareXLabel" />
-          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.output_tps" label="輸出吞吐 Gen/s（tok/s）" :format="(v) => formatNumber(Math.round(v))" :x-label="compareXLabel" />
+          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.rps" :label="$t('benchmark.chartRps')" :format="(v) => v.toFixed(1)" :x-label="compareXLabel" />
+          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.avg_latency != null ? p.avg_latency * 1000 : null" :label="$t('benchmark.chartAvgLatency')" :format="(v) => `${Math.round(v)}`" :x-label="compareXLabel" />
+          <PerfCompareChart :series="compareSeries" :metric="(p: PerfPoint) => p.output_tps" :label="$t('benchmark.chartGenTps')" :format="(v) => formatNumber(Math.round(v))" :x-label="compareXLabel" />
         </div>
       </Card>
 
       <!-- Selected detail -->
       <template v-if="selected">
         <div v-if="selected.status === 'failed'" class="rounded-lg border border-status-failed/30 bg-status-failed/10 p-3 text-xs text-status-failed">
-          失敗：{{ selected.error }}
+          {{ $t('benchmark.failed') }}: {{ selected.error }}
         </div>
 
         <!-- Run summary (Basic Information) -->
         <Card v-if="points.length" class="p-4">
           <div class="flex items-start justify-between gap-3">
             <div class="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-3">
-              <div><span class="text-muted-foreground">模型</span> <span class="font-mono">{{ selected.model }}</span></div>
-              <div><span class="text-muted-foreground">資料集</span> {{ parsedParams.dataset ?? '—' }}</div>
-              <div><span class="text-muted-foreground">目標</span> <span class="font-mono">{{ selected.target_url.replace(/^https?:\/\//, '') }}</span></div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.modelLabel') }}</span> <span class="font-mono">{{ selected.model }}</span></div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.datasetLabel') }}</span> {{ parsedParams.dataset ?? '—' }}</div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.targetLabel') }}</span> <span class="font-mono">{{ selected.target_url.replace(/^https?:\/\//, '') }}</span></div>
               <div>
-                <span class="text-muted-foreground">模式</span>
+                <span class="text-muted-foreground">{{ $t('benchmark.modeLabel') }}</span>
                 {{ runModeLabel }}
               </div>
-              <div><span class="text-muted-foreground">輸出 tokens</span> {{ parsedParams.max_tokens ?? '—' }}</div>
-              <div><span class="text-muted-foreground">總測試時間</span> <span class="tabular">{{ aggregates.duration.toFixed(1) }}s</span></div>
-              <div><span class="text-muted-foreground">總生成</span> <span class="tabular">{{ formatNumber(Math.round(aggregates.generated)) }} tok</span></div>
-              <div><span class="text-muted-foreground">平均輸出速率</span> <span class="tabular">{{ aggregates.rate.toFixed(1) }} tok/s</span></div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.outputTokens') }}</span> {{ parsedParams.max_tokens ?? '—' }}</div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.totalTestDuration') }}</span> <span class="tabular">{{ aggregates.duration.toFixed(1) }}s</span></div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.totalGenerated') }}</span> <span class="tabular">{{ formatNumber(Math.round(aggregates.generated)) }} tok</span></div>
+              <div><span class="text-muted-foreground">{{ $t('benchmark.avgOutputRate') }}</span> <span class="tabular">{{ aggregates.rate.toFixed(1) }} tok/s</span></div>
             </div>
             <!-- evalscope only writes an HTML report for sweep runs. -->
             <Button v-if="!sla" variant="outline" size="sm" class="shrink-0" @click="openReport">
-              <ExternalLink class="size-3.5" />完整報告
+              <ExternalLink class="size-3.5" />{{ $t('benchmark.fullReport') }}
             </Button>
           </div>
         </Card>
@@ -857,7 +881,7 @@ const statusColor: Record<string, string> = {
                 <p class="font-mono text-xs text-muted-foreground">{{ g.criteria }}</p>
                 <p class="mt-1 text-2xl font-semibold tabular">
                   {{ g.max_satisfied ?? '—' }}
-                  <span class="text-sm font-normal text-muted-foreground">最大 {{ g.variable === 'rate' ? '速率' : '並發' }}</span>
+                  <span class="text-sm font-normal text-muted-foreground">{{ $t('benchmark.slaMaxVar', { var: g.variable === 'rate' ? $t('benchmark.slaVarRate') : $t('benchmark.slaVarParallel') }) }}</span>
                 </p>
               </div>
               <Badge :class="g.max_satisfied != null ? 'text-status-ready' : 'text-status-failed'" variant="muted">{{ g.note }}</Badge>
@@ -880,37 +904,37 @@ const statusColor: Record<string, string> = {
 
         <!-- Multi-turn aggregate metrics (only present for multi-turn runs) -->
         <Card v-if="mtPoint" class="p-4">
-          <p class="mb-2 text-xs font-medium text-muted-foreground">多輪指標</p>
+          <p class="mb-2 text-xs font-medium text-muted-foreground">{{ $t('benchmark.multiTurnMetrics') }}</p>
           <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
               <p class="text-lg font-semibold tabular">{{ mtPoint.turns?.toFixed(1) ?? '—' }}</p>
-              <p class="text-xs text-muted-foreground">輪數/對話</p>
+              <p class="text-xs text-muted-foreground">{{ $t('benchmark.turnsPerConv') }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
               <p class="text-lg font-semibold tabular">{{ mtPoint.cache_hit != null ? `${mtPoint.cache_hit.toFixed(1)}%` : '—' }}</p>
-              <p class="text-xs text-muted-foreground">KV 快取命中</p>
+              <p class="text-xs text-muted-foreground">{{ $t('benchmark.kvCacheHit') }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
               <p class="text-lg font-semibold tabular">{{ mtPoint.first_ttft != null ? `${mtPoint.first_ttft.toFixed(0)}ms` : '—' }}</p>
-              <p class="text-xs text-muted-foreground">首輪 TTFT</p>
+              <p class="text-xs text-muted-foreground">{{ $t('benchmark.firstTtft') }}</p>
             </div>
             <div class="rounded-lg border border-border/60 bg-background/40 p-3 text-center">
               <p class="text-lg font-semibold tabular">{{ mtPoint.subsequent_ttft != null ? `${mtPoint.subsequent_ttft.toFixed(0)}ms` : '—' }}</p>
-              <p class="text-xs text-muted-foreground">後續輪 TTFT</p>
+              <p class="text-xs text-muted-foreground">{{ $t('benchmark.subsequentTtft') }}</p>
             </div>
           </div>
         </Card>
 
         <!-- Charts: throughput + decode + tail latency (need ≥2 points for a curve) -->
         <div v-if="points.length > 1" class="grid gap-4 lg:grid-cols-3">
-          <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.rps" label="RPS（req/s）" color="var(--chart-1)" :format="(v) => v.toFixed(1)" :x-label="isOpenLoop ? '速率' : '並發'" /></Card>
+          <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.rps" :label="$t('benchmark.chartRps')" color="var(--chart-1)" :format="(v) => v.toFixed(1)" :x-label="isOpenLoop ? $t('benchmark.tableRate') : $t('benchmark.tableParallel')" /></Card>
           <template v-if="isEmbedResult">
-            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.avg_latency != null ? p.avg_latency * 1000 : null" label="平均延遲（ms）" color="var(--chart-2)" :format="(v) => `${Math.round(v)}`" :x-label="'並發'" /></Card>
-            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.latency_p99 != null ? p.latency_p99 * 1000 : null" label="延遲 p99（ms）" color="var(--chart-4)" :format="(v) => `${Math.round(v)}`" :x-label="'並發'" /></Card>
+            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.avg_latency != null ? p.avg_latency * 1000 : null" :label="$t('benchmark.chartAvgLatency')" color="var(--chart-2)" :format="(v) => `${Math.round(v)}`" :x-label="$t('benchmark.tableParallel')" /></Card>
+            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.latency_p99 != null ? p.latency_p99 * 1000 : null" :label="$t('benchmark.chartP99Latency')" color="var(--chart-4)" :format="(v) => `${Math.round(v)}`" :x-label="$t('benchmark.tableParallel')" /></Card>
           </template>
           <template v-else>
-            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.output_tps" label="輸出吞吐 Gen/s（tok/s）" color="var(--chart-2)" :format="(v) => formatNumber(Math.round(v))" :x-label="isOpenLoop ? '速率' : '並發'" /></Card>
-            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.ttft_p99 ?? p.avg_ttft" label="TTFT p99（ms）" color="var(--chart-4)" :format="(v) => `${Math.round(v)}`" :x-label="isOpenLoop ? '速率' : '並發'" /></Card>
+            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.output_tps" :label="$t('benchmark.chartGenTps')" color="var(--chart-2)" :format="(v) => formatNumber(Math.round(v))" :x-label="isOpenLoop ? $t('benchmark.tableRate') : $t('benchmark.tableParallel')" /></Card>
+            <Card class="p-4"><PerfSweepChart :points="points" :metric="(p: PerfPoint) => p.ttft_p99 ?? p.avg_ttft" :label="$t('benchmark.chartTtft')" color="var(--chart-4)" :format="(v) => `${Math.round(v)}`" :x-label="isOpenLoop ? $t('benchmark.tableRate') : $t('benchmark.tableParallel')" /></Card>
           </template>
         </div>
 
@@ -920,7 +944,7 @@ const statusColor: Record<string, string> = {
             <table class="w-full text-sm">
               <thead class="border-b border-border/60 text-xs text-muted-foreground">
                 <tr class="[&>th]:px-3 [&>th]:py-2 [&>th]:text-right [&>th]:font-medium [&>th:first-child]:text-left">
-                  <th>{{ isOpenLoop ? '速率' : '並發' }}</th><th>RPS</th><th>Gen/s</th><th>Total tok/s</th><th>平均延遲</th><th>TTFT</th><th>TTFT p99</th><th>TPOT</th><th>ITL</th><th>延遲 p99</th><th>輸入/輸出</th><th>成功/總數</th>
+                  <th>{{ isOpenLoop ? $t('benchmark.tableRate') : $t('benchmark.tableParallel') }}</th><th>RPS</th><th>Gen/s</th><th>Total tok/s</th><th>{{ $t('benchmark.tableAvgLatency') }}</th><th>TTFT</th><th>TTFT p99</th><th>TPOT</th><th>ITL</th><th>{{ $t('benchmark.chartP99Latency') }}</th><th>{{ $t('benchmark.tableInputOutput') }}</th><th>{{ $t('benchmark.tableSuccessTotal') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -948,7 +972,7 @@ const statusColor: Record<string, string> = {
                     <td colspan="12" class="px-4 py-3">
                       <div class="grid gap-3 sm:grid-cols-3">
                         <div v-for="row in [
-                          { name: '延遲 Latency (s)', avg: p.avg_latency, p50: p.latency_p50, p99: p.latency_p99, max: p.latency_max, ms: false },
+                          { name: $t('benchmark.latencyDetail'), avg: p.avg_latency, p50: p.latency_p50, p99: p.latency_p99, max: p.latency_max, ms: false },
                           { name: 'TTFT (ms)', avg: p.avg_ttft, p50: p.ttft_p50, p99: p.ttft_p99, max: p.ttft_max, ms: true },
                           { name: 'TPOT (ms)', avg: p.avg_tpot, p50: p.tpot_p50, p99: p.tpot_p99, max: p.tpot_max, ms: true },
                         ]" :key="row.name" class="rounded-lg border border-border/60 bg-background/40 p-2.5">
@@ -972,8 +996,8 @@ const statusColor: Record<string, string> = {
 
         <!-- Live log -->
         <Card v-if="selectedRunning || log" class="p-4">
-          <p class="mb-2 text-xs font-medium text-muted-foreground">執行日誌</p>
-          <pre class="max-h-64 overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">{{ log || '（等待輸出…）' }}</pre>
+          <p class="mb-2 text-xs font-medium text-muted-foreground">{{ $t('benchmark.executionLog') }}</p>
+          <pre class="max-h-64 overflow-auto rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">{{ log || $t('benchmark.waitingOutput') }}</pre>
         </Card>
       </template>
       </div>

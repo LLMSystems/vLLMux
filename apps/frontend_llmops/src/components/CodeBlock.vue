@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check, Copy } from '@lucide/vue'
 import { toast } from '@/lib/toast'
 
 const props = defineProps<{ code: string }>()
 const copied = ref(false)
+const { t } = useI18n()
 
 async function copy() {
   try {
@@ -12,7 +14,7 @@ async function copy() {
     copied.value = true
     setTimeout(() => (copied.value = false), 1500)
   } catch {
-    toast.error('複製失敗')
+    toast.error(t('codeBlock.copyFailed'))
   }
 }
 </script>
@@ -25,7 +27,7 @@ async function copy() {
     >
       <Check v-if="copied" class="size-3.5 text-status-ready" />
       <Copy v-else class="size-3.5" />
-      {{ copied ? '已複製' : '複製' }}
+      {{ copied ? $t('codeBlock.copied') : $t('codeBlock.copy') }}
     </button>
     <pre
       class="overflow-x-auto rounded-lg border border-border/60 bg-black/40 p-4 font-mono text-xs leading-relaxed text-foreground/90"
