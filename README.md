@@ -76,7 +76,9 @@ the router load-balances across that group's instances:
 |---|---|
 | `POST /v1/chat/completions` | Chat — streaming supported; load-balanced across the model group |
 | `POST /v1/completions` | Text completion |
-| `POST /v1/embeddings` | Embeddings — and **reranking** when a `query` field is present (forwarded to the embedding/rerank server) |
+| `POST /v1/embeddings` | Embeddings — OpenAI-compatible (forwarded to the embedding server) |
+| `POST /v1/rerank` | Reranking — Jina/Cohere-compatible (`query` + `documents` → sorted `results`) |
+| `POST /v1/score` | Pairwise relevance scoring (`text_1` × `text_2`) |
 | `GET /v1/models` | List configured model groups |
 
 ```bash

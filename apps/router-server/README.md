@@ -345,21 +345,26 @@ print(f"Embedding dimension: {len(embedding_1)}")
 #### Reranking
 
 ```python
+import httpx
+
 documents = [
     "Machine learning is best learned through projects.",
     "Theory is essential for understanding machine learning.",
     "Practical tutorials are the best way to learn machine learning."
 ]
 
-response = client.embeddings.create(
-    model="bge-reranker-large",
-    input=documents,
-    extra_body={"query": "How to learn machine learning?"}
-)
+resp = httpx.post(
+    "http://localhost:8887/v1/rerank",
+    json={
+        "model": "bge-reranker-large",
+        "query": "How to learn machine learning?",
+        "documents": documents,
+    },
+).json()
 
-# Get reranking scores
-for idx, item in enumerate(response.data):
-    print(f"Document {idx}: Score {item.embedding}")
+# Results are sorted by descending relevance_score (in [0, 1]).
+for item in resp["results"]:
+    print(f"Document {item['index']}: score {item['relevance_score']:.4f}")
 ```
 
 ---
@@ -372,7 +377,9 @@ for idx, item in enumerate(response.data):
 |------|------|------|
 | `/v1/chat/completions` | POST | Chat completion (supports streaming) |
 | `/v1/completions` | POST | Text completion (supports streaming) |
-| `/v1/embeddings` | POST | Text embeddings / Reranking |
+| `/v1/embeddings` | POST | Text embeddings (OpenAI-compatible) |
+| `/v1/rerank` | POST | Reranking (Jina/Cohere-compatible) |
+| `/v1/score` | POST | Pairwise relevance scoring |
 | `/v1/models` | GET | List all available models |
 
 ### Internal Project Documentation

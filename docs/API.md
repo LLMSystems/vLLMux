@@ -346,7 +346,7 @@ curl http://localhost:8887/v1/completions \
 
 ### 2.3 `POST /v1/embeddings`
 
-轉發到 Embedding/Reranker Server。帶 `query` 欄位時走 reranking，否則走 embedding（見 §3）。
+轉發到 Embedding/Reranker Server，OpenAI Embeddings 相容（見 §3.2）。
 
 ```bash
 curl http://localhost:8887/v1/embeddings \
@@ -356,7 +356,27 @@ curl http://localhost:8887/v1/embeddings \
 
 - `503`：無法連到 Embedding Server。
 
-### 2.4 `GET /v1/models`
+### 2.4 `POST /v1/rerank`
+
+轉發到 Embedding/Reranker Server，Jina / Cohere 相容的重排序（見 §3.3）。
+
+```bash
+curl http://localhost:8887/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bge-reranker-large", "query": "問題", "documents": ["候選一", "候選二"]}'
+```
+
+### 2.5 `POST /v1/score`
+
+轉發到 Embedding/Reranker Server，成對相關性打分（見 §3.4）。
+
+```bash
+curl http://localhost:8887/v1/score \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bge-reranker-large", "text_1": "問題", "text_2": ["候選一", "候選二"]}'
+```
+
+### 2.6 `GET /v1/models`
 
 列出設定中的模型群組（OpenAI 格式）。
 
@@ -368,7 +388,7 @@ curl -s http://localhost:8887/v1/models
 { "object": "list", "data": [{ "id": "Qwen3-0.6B", "object": "model" }] }
 ```
 
-### 2.5 `GET /metrics`
+### 2.7 `GET /metrics`
 
 回傳 Router 快取的每個實例 vLLM 指標（給負載決策與觀測用）。
 
@@ -412,28 +432,75 @@ curl -s http://localhost:8005/health
 
 ### 3.2 `POST /v1/embeddings`
 
-依是否帶 `query` 切換兩種模式：
+OpenAI Embeddings 相容。`model` 須是設定中的 embedding 模型。
 
-**Embedding（無 `query`）**
 ```bash
 curl http://localhost:8005/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"model": "m3e-base", "input": ["文字一", "文字二"]}'
 ```
-回傳 `data[].embedding` 為向量陣列。
 
-**Reranking（帶 `query`）**
-```bash
-curl http://localhost:8005/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{"model": "bge-reranker-large", "query": "問題", "input": ["候選一", "候選二"]}'
+```json
+{
+  "object": "list",
+  "data": [{ "object": "embedding", "embedding": [0.01, -0.02, ...], "index": 0 }],
+  "model": "m3e-base",
+  "usage": { "prompt_tokens": 12, "total_tokens": 12 }
+}
 ```
-回傳 `data[].embedding` 為相關性分數（float）。
+
+### 3.3 `POST /v1/rerank`
+
+Jina / Cohere 相容重排序。`model` 須是設定中的 reranking 模型；結果依 `relevance_score`（sigmoid 映射到 `[0, 1]`）降冪排序。
+
+```bash
+curl http://localhost:8005/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bge-reranker-large", "query": "問題", "documents": ["候選一", "候選二"], "top_n": 2}'
+```
+
+```json
+{
+  "id": "rerank-…",
+  "model": "bge-reranker-large",
+  "results": [
+    { "index": 1, "relevance_score": 0.97, "document": { "text": "候選二" } },
+    { "index": 0, "relevance_score": 0.12, "document": { "text": "候選一" } }
+  ],
+  "usage": { "prompt_tokens": 20, "total_tokens": 20 }
+}
+```
+
+- `top_n`（選填）：排序後只保留前 N 筆。
+- `return_documents`（選填，預設 `true`）：是否在結果中回傳 `document.text`。
+
+### 3.4 `POST /v1/score`
+
+成對相關性打分（cross-encoder）。任一邊為純字串時，會與另一邊的清單逐一配對；兩邊皆為清單時長度須相等、逐位配對。`score` 為 `[0, 1]`。
+
+```bash
+curl http://localhost:8005/v1/score \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bge-reranker-large", "text_1": "問題", "text_2": ["候選一", "候選二"]}'
+```
+
+```json
+{
+  "id": "score-…",
+  "model": "bge-reranker-large",
+  "data": [
+    { "index": 0, "object": "score", "score": 0.12 },
+    { "index": 1, "object": "score", "score": 0.97 }
+  ],
+  "usage": { "prompt_tokens": 20, "total_tokens": 20 }
+}
+```
 
 | 狀態碼 | 情況 |
 |--------|------|
 | `200` | 成功 |
-| `400` | 指定的 embedding / reranking 模型不存在 |
+| `400` | 請求格式錯誤（如 `documents` 為空、雙清單長度不一致） |
+| `404` | 指定的 embedding / reranking 模型不存在 |
 | `500` | 推理發生錯誤 |
 
 ---

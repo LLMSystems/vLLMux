@@ -341,21 +341,26 @@ print(f"嵌入向量維度: {len(embedding_1)}")
 #### Reranking（重排序）
 
 ```python
+import httpx
+
 documents = [
     "機器學習最好透過專案來學習。",
     "理論對於理解機器學習至關重要。",
     "實作教程是學習機器學習的最佳方式。"
 ]
 
-response = client.embeddings.create(
-    model="bge-reranker-large",
-    input=documents,
-    extra_body={"query": "如何學習機器學習？"}
-)
+resp = httpx.post(
+    "http://localhost:8887/v1/rerank",
+    json={
+        "model": "bge-reranker-large",
+        "query": "如何學習機器學習？",
+        "documents": documents,
+    },
+).json()
 
-# 取得重排序分數
-for idx, item in enumerate(response.data):
-    print(f"文檔 {idx}: 分數 {item.embedding}")
+# 結果依 relevance_score（介於 [0, 1]）降冪排序
+for item in resp["results"]:
+    print(f"文檔 {item['index']}: 分數 {item['relevance_score']:.4f}")
 ```
 
 ---
@@ -368,7 +373,9 @@ for idx, item in enumerate(response.data):
 |------|------|------|
 | `/v1/chat/completions` | POST | 對話生成（支援流式） |
 | `/v1/completions` | POST | 文本補全（支援流式） |
-| `/v1/embeddings` | POST | 文本嵌入 / 重排序 |
+| `/v1/embeddings` | POST | 文本嵌入（OpenAI 相容） |
+| `/v1/rerank` | POST | 重排序（Jina/Cohere 相容） |
+| `/v1/score` | POST | 成對相關性打分 |
 | `/v1/models` | GET | 列出所有可用模型 |
 
 ### 專案內部文檔

@@ -74,7 +74,9 @@ GPU 選擇、快取路徑 —— 在 [deploy/.env.example](deploy/.env.example) 
 |---|---|
 | `POST /v1/chat/completions` | 對話——支援串流；在模型群組內負載平衡 |
 | `POST /v1/completions` | 文字補全 |
-| `POST /v1/embeddings` | 向量嵌入——帶 `query` 欄位時改走 **reranking**（轉發到 embedding/rerank 伺服器） |
+| `POST /v1/embeddings` | 向量嵌入——OpenAI 相容（轉發到 embedding 伺服器） |
+| `POST /v1/rerank` | 重排序——Jina/Cohere 相容（`query` + `documents` → 排序好的 `results`） |
+| `POST /v1/score` | 成對相關性打分（`text_1` × `text_2`） |
 | `GET /v1/models` | 列出設定的模型群組 |
 
 ```bash
