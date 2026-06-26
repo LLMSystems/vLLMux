@@ -430,9 +430,14 @@ async def proxy_completion(request: Request):
     return await _proxy_to_backend(request, "/v1/completions", api_key_name=key_name)
 
 
-@router.post("/v1/embeddings")
-async def proxy_embeddings(request: Request):
-    key_name = await authenticate(request)
+async def _proxy_to_embedding_server(request: Request, upstream_path: str, key_name=None) -> Response:
+    """Forward an embedding/rerank/score request to the embedding server.
+
+    Shared by /v1/embeddings, /v1/rerank and /v1/score — these differ only in the
+    upstream path. Unlike the LLM path there's a single embedding server (no
+    instance pool), so this is a straight pass-through with API-key-attributed
+    request logging and token-usage capture.
+    """
     started = time.perf_counter()
     model_key = None
     try:
@@ -440,7 +445,7 @@ async def proxy_embeddings(request: Request):
         embedding_cfg = config.get("embedding_server", {})
         host = embedding_cfg.get("host", "localhost")
         port = embedding_cfg.get("port", 8003)
-        target_url = f"http://{host}:{port}/v1/embeddings"
+        target_url = f"http://{host}:{port}{upstream_path}"
 
         body = await request.body()
         try:
@@ -452,8 +457,8 @@ async def proxy_embeddings(request: Request):
         headers.pop("content-length", None)
 
         client = request.app.state.http_client
-        # The shared client has read=None (for long LLM generations); embeddings
-        # are fast, so give this path a real bound instead.
+        # The shared client has read=None (for long LLM generations); embedding/
+        # rerank calls are fast, so give this path a real bound instead.
         resp = await client.post(
                 target_url,
                 content=body,
@@ -470,7 +475,7 @@ async def proxy_embeddings(request: Request):
             # Log after responding (off the client's path) — attributes the
             # request to its API key and captures token usage like the LLM path.
             background=BackgroundTask(
-                _record_request, request.app, model_key, None, "/v1/embeddings",
+                _record_request, request.app, model_key, None, upstream_path,
                 resp.status_code, started, _usage_from_body(resp.content),
                 None, key_name,
             ),
@@ -478,7 +483,7 @@ async def proxy_embeddings(request: Request):
 
     except httpx.RequestError as e:
         await _record_request(
-            request.app, model_key, None, "/v1/embeddings", 503, started,
+            request.app, model_key, None, upstream_path, 503, started,
             error=str(e), api_key_name=key_name,
         )
         raise HTTPException(
@@ -488,3 +493,21 @@ async def proxy_embeddings(request: Request):
         raise HTTPException(
             status_code=500, detail=f"Unexpected error: {str(e)}"
         )
+
+
+@router.post("/v1/embeddings")
+async def proxy_embeddings(request: Request):
+    key_name = await authenticate(request)
+    return await _proxy_to_embedding_server(request, "/v1/embeddings", key_name)
+
+
+@router.post("/v1/rerank")
+async def proxy_rerank(request: Request):
+    key_name = await authenticate(request)
+    return await _proxy_to_embedding_server(request, "/v1/rerank", key_name)
+
+
+@router.post("/v1/score")
+async def proxy_score(request: Request):
+    key_name = await authenticate(request)
+    return await _proxy_to_embedding_server(request, "/v1/score", key_name)

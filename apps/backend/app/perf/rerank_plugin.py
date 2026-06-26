@@ -1,16 +1,18 @@
-"""Custom evalscope rerank ApiPlugin matching this project's embedding server.
+"""Custom evalscope rerank ApiPlugin for this project's /v1/rerank endpoint.
 
-evalscope's built-in ``openai_rerank`` plugin targets Cohere/Jina-style APIs
-(POST /v1/rerank, body {query, documents}, response results[].relevance_score).
-Our embedding server instead reuses POST /v1/embeddings with a ``query`` field:
+Our embedding server exposes a Jina/Cohere-style rerank API:
 
-    request : {"input": [doc, ...], "model": ..., "query": "..."}
-    response: {"object": "list",
-               "data": [{"object": "reranking", "embedding": <float score>, "index": i}, ...],
+    request : {"query": "...", "documents": [doc, ...], "model": ...}
+    response: {"id": "rerank-...", "model": ...,
+               "results": [{"index": i, "relevance_score": <float>, "document": {...}}, ...],
                "usage": {"prompt_tokens": N, "total_tokens": N}}
 
-This plugin adapts evalscope's rerank dataset (which yields {query, documents})
-to that wire format. Importing this module registers it under api='llmops_rerank'.
+Why not evalscope's built-in ``openai_rerank``? Its request/response handling now
+matches us, but evalscope 1.8.1 hard-codes a ``reranks`` (plural) endpoint suffix
+in ``_OPENAI_API_ENDPOINT_MAP`` and rewrites any URL that doesn't end in it — so
+``/v1/rerank`` becomes ``/v1/rerank/reranks`` (404). Our standard route is the
+singular ``/v1/rerank`` (vLLM/Jina/Cohere), so this plugin stays: it POSTs to the
+exact URL with no suffix mangling. Importing it registers api='llmops_rerank'.
 """
 import json
 import sys
@@ -30,14 +32,14 @@ logger = get_logger()
 
 @register_api(['llmops_rerank'])
 class LlmopsRerankPlugin(ApiPluginBase):
-    """Rerank plugin for the project's /v1/embeddings-based rerank endpoint."""
+    """Rerank plugin for the project's /v1/rerank endpoint."""
 
     def __init__(self, param: Arguments):
         super().__init__(param=param)
         self.tokenizer = load_tokenizer(param.tokenizer_path) if param.tokenizer_path else None
 
     def build_request(self, messages: Union[List[Dict], str, Dict], param: Arguments = None) -> Dict:
-        """Map the rerank dataset's {query, documents} into our embedding-style body."""
+        """Map the rerank dataset's {query, documents} into our /v1/rerank body."""
         param = param or self.param
         try:
             query = ''
@@ -58,7 +60,7 @@ class LlmopsRerankPlugin(ApiPluginBase):
             if not documents:
                 return None
 
-            payload = {'input': documents, 'model': param.model, 'query': query}
+            payload = {'query': query, 'documents': documents, 'model': param.model}
             if param.extra_args:
                 # Don't leak dataset-generation knobs (num_documents…) into the body.
                 payload.update({k: v for k, v in param.extra_args.items()
@@ -78,7 +80,7 @@ class LlmopsRerankPlugin(ApiPluginBase):
             # Fallback: estimate from the request (query + documents).
             if self.tokenizer and request:
                 req = json.loads(request)
-                texts = [req.get('query', '')] + list(req.get('input', []))
+                texts = [req.get('query', '')] + list(req.get('documents', []))
                 total = sum(len(self.tokenizer.encode(t, add_special_tokens=False)) for t in texts if t)
                 return total, 0
             return 0, 0
@@ -108,7 +110,7 @@ class LlmopsRerankPlugin(ApiPluginBase):
                     except Exception:
                         payload = await response.text()
                     if isinstance(payload, dict):
-                        results = payload.get('data', [])
+                        results = payload.get('results', [])
                         if results:
                             output.generated_text = f'num_results={len(results)}'
                         if usage := payload.get('usage'):
