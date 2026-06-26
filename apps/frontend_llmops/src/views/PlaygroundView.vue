@@ -335,12 +335,43 @@ async function runEmbedding() {
   }
 }
 
-const isRerankMode = computed(() => !!rerankQuery.value.trim())
-const embeddingReady = computed(() => models.byKey.get('embedding::default')?.state === 'ready')
-const embModelOptions = computed(() => {
+// Embed/rerank is a manual toggle (was previously inferred from whether a query
+// had been typed, which was unintuitive).
+const embMode = ref<'embed' | 'rerank'>('embed')
+const isRerankMode = computed(() => embMode.value === 'rerank')
+
+// vLLM pooling groups (in LLM_engines, model_config.kind) that serve the current
+// embed/rerank mode. These are managed like LLMs but routed to the pooling
+// endpoints, so they belong in this picker alongside the bespoke server models.
+const poolingGroupsForMode = computed(() => {
+  // config.LLM_engines is keyed by `group::instance`; the router routes by the
+  // GROUP name, so split + dedupe (mirrors EvalView's group derivation).
+  const engines = models.config?.LLM_engines ?? {}
+  const want = isRerankMode.value ? 'rerank' : 'embed'
+  const groups = new Set<string>()
+  for (const [key, e] of Object.entries(engines)) {
+    if (e.settings?.kind === want) groups.add(key.split('::')[0] ?? key)
+  }
+  return [...groups]
+})
+// A pooling group is ready if any of its instances (key `group::instance`) is ready.
+function groupReady(group: string) {
+  return models.llms.some((m) => m.key.startsWith(`${group}::`) && m.state === 'ready')
+}
+// Bespoke server models configured for the current mode (regardless of state).
+const bespokeForMode = computed(() => {
   const server = models.config?.embedding_server
   if (!server) return []
   return isRerankMode.value ? Object.keys(server.reranking_models) : Object.keys(server.embedding_models)
+})
+const bespokeReady = computed(() => models.byKey.get('embedding::default')?.state === 'ready')
+// Only started models are selectable (the label reads "only showing ready"):
+// bespoke models need the embedding server up; pooling groups need an instance up.
+const embModelOptions = computed(() => {
+  const out: string[] = []
+  if (bespokeReady.value) out.push(...bespokeForMode.value)
+  for (const g of poolingGroupsForMode.value) if (groupReady(g)) out.push(g)
+  return out
 })
 watch(
   embModelOptions,
@@ -356,9 +387,11 @@ const embeddingModeLabel = computed(() =>
 const embeddingResultType = computed(() =>
   isRerankMode.value ? t('playground.relevanceScores') : t('playground.vectorDimensions'),
 )
-const embeddingEmptyHint = computed(() =>
-  embeddingReady.value ? t('playground.noModelsForMode') : t('playground.embNotStarted'),
-)
+// Distinguish "nothing configured for this mode" from "configured but none started".
+const embeddingEmptyHint = computed(() => {
+  const anyConfigured = bespokeForMode.value.length > 0 || poolingGroupsForMode.value.length > 0
+  return anyConfigured ? t('playground.embNotStarted') : t('playground.noModelsForMode')
+})
 </script>
 
 <template>
@@ -661,6 +694,24 @@ const embeddingEmptyHint = computed(() =>
           <Card class="p-5">
             <p class="mb-4 text-sm font-semibold">{{ t('playground.request') }}</p>
             <div class="space-y-4 text-sm">
+              <div class="flex gap-1 rounded-md border border-input p-0.5">
+                <button
+                  type="button"
+                  class="flex-1 rounded px-2 py-1 text-xs font-medium transition"
+                  :class="!isRerankMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  @click="embMode = 'embed'"
+                >
+                  {{ t('playground.embed') }}
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 rounded px-2 py-1 text-xs font-medium transition"
+                  :class="isRerankMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  @click="embMode = 'rerank'"
+                >
+                  {{ t('playground.rerank') }}
+                </button>
+              </div>
               <label class="block">
                 <span class="text-xs text-muted-foreground">
                   {{ t('playground.modelLabel', { mode: embeddingModeLabel }) }}
@@ -674,7 +725,7 @@ const embeddingEmptyHint = computed(() =>
                 </select>
                 <p v-else class="mt-1 text-xs text-muted-foreground">{{ embeddingEmptyHint }}</p>
               </label>
-              <label class="block">
+              <label v-if="isRerankMode" class="block">
                 <span class="text-xs text-muted-foreground">{{ t('playground.queryLabel') }}</span>
                 <Input v-model="rerankQuery" :placeholder="t('playground.queryPlaceholder')" class="mt-1" />
               </label>
@@ -682,7 +733,10 @@ const embeddingEmptyHint = computed(() =>
                 <span class="text-xs text-muted-foreground">{{ t('playground.inputLabel') }}</span>
                 <Textarea v-model="embInput" class="mt-1 min-h-[140px] font-mono text-xs" />
               </label>
-              <Button :disabled="embBusy || !embModel" @click="runEmbedding">
+              <Button
+                :disabled="embBusy || !embModel || (isRerankMode && !rerankQuery.trim())"
+                @click="runEmbedding"
+              >
                 <Loader2 v-if="embBusy" class="size-4 animate-spin" />
                 {{ embeddingModeLabel }}
               </Button>
