@@ -373,9 +373,12 @@ for item in resp["results"]:
 |------|------|------|
 | `/v1/chat/completions` | POST | 對話生成（支援流式） |
 | `/v1/completions` | POST | 文本補全（支援流式） |
+| `/v1/messages` | POST | Anthropic 相容 Messages API（支援流式） |
+| `/v1/messages/count_tokens` | POST | 計算 Messages 請求的 token 數（不生成） |
 | `/v1/embeddings` | POST | 文本嵌入（OpenAI 相容） |
 | `/v1/rerank` | POST | 重排序（Jina/Cohere 相容） |
 | `/v1/score` | POST | 成對相關性打分 |
+| `/tokenize` · `/detokenize` | POST | Token 工具——文字 ⇄ token id（任何 kind 的模型） |
 | `/v1/models` | GET | 列出所有可用模型 |
 
 ### 專案內部文檔

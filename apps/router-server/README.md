@@ -377,9 +377,12 @@ for item in resp["results"]:
 |------|------|------|
 | `/v1/chat/completions` | POST | Chat completion (supports streaming) |
 | `/v1/completions` | POST | Text completion (supports streaming) |
+| `/v1/messages` | POST | Anthropic-compatible Messages API (supports streaming) |
+| `/v1/messages/count_tokens` | POST | Count tokens for a Messages request (no generation) |
 | `/v1/embeddings` | POST | Text embeddings (OpenAI-compatible) |
 | `/v1/rerank` | POST | Reranking (Jina/Cohere-compatible) |
 | `/v1/score` | POST | Pairwise relevance scoring |
+| `/tokenize` · `/detokenize` | POST | Token utilities — text ⇄ token ids (any model kind) |
 | `/v1/models` | GET | List all available models |
 
 ### Internal Project Documentation

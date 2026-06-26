@@ -76,9 +76,12 @@ the router load-balances across that group's instances:
 |---|---|
 | `POST /v1/chat/completions` | Chat — streaming supported; load-balanced across the model group |
 | `POST /v1/completions` | Text completion |
+| `POST /v1/messages` | Anthropic-compatible Messages API — streaming supported (Anthropic SSE) |
+| `POST /v1/messages/count_tokens` | Count tokens for a Messages request (no generation) |
 | `POST /v1/embeddings` | Embeddings — OpenAI-compatible (forwarded to the embedding server) |
 | `POST /v1/rerank` | Reranking — Jina/Cohere-compatible (`query` + `documents` → sorted `results`) |
 | `POST /v1/score` | Pairwise relevance scoring (`text_1` × `text_2`) |
+| `POST /tokenize` · `POST /detokenize` | Token utilities — text ⇄ token ids (any model kind) |
 | `GET /v1/models` | List configured model groups |
 
 ```bash
