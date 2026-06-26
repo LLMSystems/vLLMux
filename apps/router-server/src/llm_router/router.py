@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Paths only a chat (kind=="chat") group can serve — used to 404 a pooling group
+# early. /tokenize + /detokenize are deliberately excluded: every model has a
+# tokenizer regardless of kind.
+_CHAT_ONLY_PATHS = (
+    "/v1/chat/completions",
+    "/v1/completions",
+    "/v1/messages",
+    "/v1/messages/count_tokens",
+)
+# Paths where we inject stream_options.include_usage (an OpenAI-only knob).
+_OPENAI_STREAM_PATHS = ("/v1/chat/completions", "/v1/completions")
+
 
 @router.post("/reload")
 async def reload_config(request: Request):
@@ -64,14 +76,44 @@ async def set_routing(request: Request):
     return {"strategy": name}
 
 
+def _normalize_usage(usage) -> dict | None:
+    """Normalize a usage block to OpenAI keys (prompt/completion/total_tokens).
+
+    Passes an OpenAI-shaped usage straight through; maps an Anthropic-shaped one
+    (`input_tokens`/`output_tokens`, as the /v1/messages family returns) onto the
+    OpenAI keys so the telemetry store only ever sees one shape.
+    """
+    if not isinstance(usage, dict):
+        return None
+    if any(k in usage for k in ("prompt_tokens", "completion_tokens", "total_tokens")):
+        return usage
+    if "input_tokens" in usage or "output_tokens" in usage:
+        pt = usage.get("input_tokens")
+        ct = usage.get("output_tokens")
+        tt = (pt or 0) + (ct or 0) if (pt is not None or ct is not None) else None
+        return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
+    return None
+
+
 def _usage_from_body(body) -> dict | None:
-    """Pull an OpenAI `usage` block out of a buffered JSON response body."""
+    """Pull a usage block out of a buffered JSON response body.
+
+    Covers OpenAI (`usage:{...}`), Anthropic Messages (`usage:{input_tokens,
+    output_tokens}`) and Anthropic count_tokens (bare top-level `input_tokens`).
+    Returns the raw dict; callers normalize via _normalize_usage.
+    """
     if body is None:
         return None
     try:
-        return (json.loads(body) or {}).get("usage") or None
+        obj = json.loads(body) or {}
     except Exception:
         return None
+    if not isinstance(obj, dict):
+        return None
+    usage = obj.get("usage")
+    if usage is None and "input_tokens" in obj:
+        usage = obj  # count_tokens returns input_tokens at the top level
+    return usage if isinstance(usage, dict) else None
 
 
 def _scan_sse_for_usage(buffer: bytes, captured: dict) -> bytes:
@@ -99,8 +141,16 @@ def _scan_sse_for_usage(buffer: bytes, captured: dict) -> bytes:
                 obj = json.loads(data)
             except Exception:
                 continue
-            if isinstance(obj, dict) and obj.get("usage"):
-                captured["usage"] = obj["usage"]
+            if not isinstance(obj, dict):
+                continue
+            # OpenAI puts usage at the top level of the final chunk; Anthropic
+            # splits it across message_start (message.usage.input_tokens) and
+            # message_delta (usage.output_tokens) — merge so we keep both halves.
+            for u in (obj.get("usage"), (obj.get("message") or {}).get("usage")):
+                if isinstance(u, dict):
+                    merged = dict(captured["usage"] or {})
+                    merged.update({k: v for k, v in u.items() if v is not None})
+                    captured["usage"] = merged
     return buffer
 
 
@@ -177,7 +227,7 @@ async def _record_request(app, model_key, instance_id, path, status_code, starte
     if store is None or not model_key:
         return
     latency_ms = (time.perf_counter() - started) * 1000.0
-    usage = usage or {}
+    usage = _normalize_usage(usage) or {}
     prompt_tokens = usage.get("prompt_tokens")
     completion_tokens = usage.get("completion_tokens")
     total_tokens = usage.get("total_tokens")
@@ -229,11 +279,11 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
         resolved = resolve_model(config, requested)
         if not resolved:
             raise HTTPException(status_code=404, detail=f"Model '{requested}' not found.")
-        # Guard the generate endpoints against a pooling group (the pooling
+        # Guard the chat/generate endpoints against a pooling group (the pooling
         # endpoints validate kind themselves in _dispatch_pooling): a kind!=chat
-        # group has no chat/completions.
-        if upstream_path in ("/v1/chat/completions", "/v1/completions") \
-                and resolved.get("kind", "chat") != "chat":
+        # group has no chat/completions/messages. /tokenize + /detokenize are
+        # intentionally exempt — every model (incl. pooling) has a tokenizer.
+        if upstream_path in _CHAT_ONLY_PATHS and resolved.get("kind", "chat") != "chat":
             raise HTTPException(
                 status_code=404,
                 detail=f"Model '{requested}' is a pooling model (kind={resolved['kind']}); "
@@ -245,7 +295,9 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
 
         # For streaming, ask the backend to emit a final usage chunk so token
         # counts can be logged (otherwise streamed requests log no tokens).
-        if request_json.get("stream"):
+        # stream_options is OpenAI-only — skip it for /v1/messages, whose
+        # Anthropic-shaped stream would reject the field.
+        if upstream_path in _OPENAI_STREAM_PATHS and request_json.get("stream"):
             opts = request_json.get("stream_options")
             opts = opts if isinstance(opts, dict) else {}
             opts.setdefault("include_usage", True)
@@ -438,6 +490,35 @@ async def list_models(request: Request):
 async def proxy_completion(request: Request):
     key_name = await authenticate(request)
     return await _proxy_to_backend(request, "/v1/completions", api_key_name=key_name)
+
+
+@router.post("/v1/messages")
+async def proxy_messages(request: Request):
+    """Anthropic-compatible Messages API. Routes by `model` like chat and supports
+    streaming (passed through in Anthropic's SSE shape)."""
+    key_name = await authenticate(request)
+    return await _proxy_to_backend(request, "/v1/messages", api_key_name=key_name)
+
+
+@router.post("/v1/messages/count_tokens")
+async def proxy_count_tokens(request: Request):
+    """Anthropic token-count endpoint — no generation, returns {input_tokens}."""
+    key_name = await authenticate(request)
+    return await _proxy_to_backend(request, "/v1/messages/count_tokens", api_key_name=key_name)
+
+
+@router.post("/tokenize")
+async def proxy_tokenize(request: Request):
+    """vLLM tokenize utility — works for any model kind (all have a tokenizer)."""
+    key_name = await authenticate(request)
+    return await _proxy_to_backend(request, "/tokenize", api_key_name=key_name)
+
+
+@router.post("/detokenize")
+async def proxy_detokenize(request: Request):
+    """vLLM detokenize utility — token ids back to text, any model kind."""
+    key_name = await authenticate(request)
+    return await _proxy_to_backend(request, "/detokenize", api_key_name=key_name)
 
 
 async def _proxy_to_embedding_server(request: Request, upstream_path: str, key_name=None) -> Response:
