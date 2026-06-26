@@ -139,6 +139,12 @@ const groups = computed<GroupAgg[]>(() => {
 const embedding = computed(() => models.byKey.get('embedding::default') ?? null)
 const gpus = computed(() => resources.resources?.gpus ?? [])
 
+// The model column stacks vertically (ROW apart), so a fixed-height canvas forces
+// fitView to shrink the whole graph when there are many groups — wasting horizontal
+// space. Grow the canvas with the row count (clamped) so nodes stay legible.
+const rowCount = computed(() => groups.value.length + (embedding.value ? 1 : 0))
+const flowHeight = computed(() => `${Math.min(780, Math.max(460, rowCount.value * 70 + 60))}px`)
+
 // GPU nodes = physically-present GPUs ∪ GPU indices referenced by any model's
 // config. A referenced-but-undetected index (e.g. embedding on cuda:1 on a
 // single-GPU box) still gets a node so its placement edge has a target.
@@ -345,6 +351,10 @@ watch(
   { immediate: true, deep: true },
 )
 
+// Canvas height animates (transition-[height]) when the group count changes; refit
+// once it settles so the graph fills the new height, not the mid-transition size.
+watch(flowHeight, () => window.setTimeout(() => fitView({ padding: 0.15 }), 320))
+
 function vramPct(used: number, total: number) {
   return total ? (used / total) * 100 : 0
 }
@@ -389,7 +399,7 @@ function miniColor(node: Node) {
       </div>
     </div>
 
-    <div class="h-[460px] w-full">
+    <div class="w-full transition-[height] duration-300" :style="{ height: flowHeight }">
       <VueFlow
         :id="flowId"
         :nodes="nodes"
