@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Activity, Cpu, Gauge, Server, Timer, Zap } from '@lucide/vue'
@@ -17,12 +17,29 @@ import GpuGauge from '@/components/GpuGauge.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import Badge from '@/components/ui/Badge.vue'
 import { formatLatency, formatNumber, formatPercent, formatTime } from '@/lib/utils'
+import { useCountUp } from '@/composables/useCountUp'
 import type { StateEvent } from '@/types/api'
 
 const { t } = useI18n()
 const models = useModelsStore()
 const resources = useResourcesStore()
 const traffic = useTrafficStore()
+
+// Roll the KPI magnitudes toward their targets instead of hard-jumping on poll.
+const animRequests = useCountUp(() => traffic.totalRequests ?? 0)
+const animTokens = useCountUp(() => traffic.totalTokens ?? 0)
+const animP95 = useCountUp(() => traffic.weightedP95 ?? 0)
+const animGpu = useCountUp(() => resources.avgGpuUtil ?? 0)
+
+// Health tones — surface a degraded error rate / P95 without reading the digits.
+// errorRate is already in percent units; weightedP95 is in ms.
+const errorTone = computed<'default' | 'warn' | 'danger'>(() =>
+  traffic.errorRate >= 5 ? 'danger' : traffic.errorRate >= 1 ? 'warn' : 'default',
+)
+const latencyTone = computed<'default' | 'warn' | 'danger'>(() => {
+  const ms = traffic.weightedP95 ?? 0
+  return ms >= 5000 ? 'danger' : ms >= 2000 ? 'warn' : 'default'
+})
 
 const events = ref<StateEvent[]>([])
 let timer: ReturnType<typeof setInterval> | null = null
@@ -49,32 +66,39 @@ function codeVariant(code: number) {
 
 <template>
   <div class="space-y-6 p-6">
-    <!-- KPI row -->
+    <!-- KPI row — staggered fade-up entrance (motion-safe only). -->
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard
+        class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500"
         :label="$t('overview.readyModels')"
         :value="`${models.readyCount} / ${models.total}`"
         :hint="models.counts.failed ? t('overview.failedCount', { n: models.counts.failed }) : $t('overview.allNormal')"
+        :tone="models.counts.failed ? 'danger' : 'default'"
         :icon="Server"
         color="var(--chart-1)"
       />
       <StatCard
+        class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:70ms]"
         :label="$t('overview.requestCount')"
-        :value="formatNumber(traffic.totalRequests)"
+        :value="formatNumber(Math.round(animRequests))"
         :hint="t('overview.errorRate', { rate: formatPercent(traffic.errorRate) })"
+        :tone="errorTone"
         :icon="Zap"
         color="var(--chart-2)"
       />
       <StatCard
+        class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:140ms]"
         :label="$t('overview.latencyP95')"
-        :value="formatLatency(traffic.weightedP95)"
-        :hint="t('overview.processedTokens', { n: formatNumber(traffic.totalTokens) })"
+        :value="formatLatency(animP95)"
+        :hint="t('overview.processedTokens', { n: formatNumber(Math.round(animTokens)) })"
+        :tone="latencyTone"
         :icon="Timer"
         color="var(--chart-4)"
       />
       <StatCard
+        class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:210ms]"
         :label="$t('overview.gpuUtil')"
-        :value="formatPercent(resources.avgGpuUtil)"
+        :value="formatPercent(animGpu)"
         :hint="t('overview.deviceCount', { n: resources.resources?.gpus.length ?? 0 })"
         :icon="Gauge"
         :spark="resources.gpuHistory"
@@ -83,16 +107,23 @@ function codeVariant(code: number) {
     </div>
 
     <!-- System topology — the live mission-control view of the whole stack -->
-    <SystemTopology />
+    <SystemTopology
+      class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:280ms]"
+    />
 
     <!-- GPUs -->
-    <section v-if="resources.resources?.gpus.length">
+    <section
+      v-if="resources.resources?.gpus.length"
+      class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:340ms]"
+    >
       <div class="grid gap-4 lg:grid-cols-2">
         <GpuGauge v-for="g in resources.resources.gpus" :key="g.index" :gpu="g" />
       </div>
     </section>
 
-    <div class="grid gap-6 lg:grid-cols-3">
+    <div
+      class="grid gap-6 lg:grid-cols-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:400ms]"
+    >
       <!-- Model roster -->
       <Card class="lg:col-span-2">
         <CardHeader class="flex-row items-center justify-between">
@@ -149,7 +180,9 @@ function codeVariant(code: number) {
     </div>
 
     <!-- Recent requests -->
-    <Card>
+    <Card
+      class="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 fill-mode-both duration-500 [animation-delay:460ms]"
+    >
       <CardHeader class="flex-row items-center justify-between">
         <CardTitle class="flex items-center gap-1.5"><Cpu class="size-4" />{{ $t('overview.recentRequests') }}</CardTitle>
         <RouterLink to="/traffic" class="text-xs text-muted-foreground hover:text-foreground">

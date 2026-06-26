@@ -3,24 +3,35 @@ import { type Component } from 'vue'
 import Card from '@/components/ui/Card.vue'
 import Sparkline from '@/components/Sparkline.vue'
 
-defineProps<{
-  label: string
-  value: string
-  hint?: string
-  icon?: Component
-  spark?: number[]
-  /** Accent color for icon + sparkline. */
-  color?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    label: string
+    value: string
+    hint?: string
+    icon?: Component
+    spark?: number[]
+    /** Accent color for the top rail, icon + sparkline. */
+    color?: string
+    /** Semantic tone for the hint — surfaces metric health at a glance. */
+    tone?: 'default' | 'warn' | 'danger'
+  }>(),
+  { tone: 'default' },
+)
+
+const hintClass = {
+  default: 'text-muted-foreground',
+  warn: 'text-status-starting',
+  danger: 'text-status-failed',
+}[props.tone]
 </script>
 
 <template>
-  <Card glass class="relative overflow-hidden p-5">
+  <Card glass class="relative overflow-hidden p-5 transition-shadow hover:shadow-md">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ label }}</p>
         <p class="mt-1.5 text-2xl font-semibold tabular tracking-tight">{{ value }}</p>
-        <p v-if="hint" class="mt-1 text-xs text-muted-foreground tabular">{{ hint }}</p>
+        <p v-if="hint" class="mt-1 text-xs tabular" :class="hintClass">{{ hint }}</p>
       </div>
       <div
         v-if="icon"
