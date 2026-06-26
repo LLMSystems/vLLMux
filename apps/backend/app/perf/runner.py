@@ -123,6 +123,7 @@ def main() -> int:
     from evalscope.perf.main import run_perf_benchmark
 
     # Importing registers our custom rerank api ('llmops_rerank') with evalscope.
+    # (evalscope's built-in openai_rerank rewrites /v1/rerank -> /v1/rerank/reranks.)
     import app.perf.rerank_plugin  # noqa: F401
 
     from app.runners_common import heartbeat

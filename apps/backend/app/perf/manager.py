@@ -87,9 +87,10 @@ class PerfManager:
     def _resolve_embedding(self, name: str, mode: str, target: str):
         """Resolve an embedding/rerank model to (model_field, base_url, tokenizer).
 
-        Both modes share the /v1/embeddings endpoint; the embedding server routes
-        by the model key (same field for router or direct). The tokenizer is the
-        model's HF id (evalscope's random_* dataset needs it to synthesize text).
+        Embedding hits /v1/embeddings and rerank hits /v1/rerank (see _target);
+        the embedding server routes by the model key (same field for router or
+        direct). The tokenizer is the model's HF id (evalscope's random_* dataset
+        needs it to synthesize text).
         """
         emb = getattr(self.manager.config, "embedding_server", None)
         field = "embedding_models" if mode == "embedding" else "reranking_models"
@@ -108,7 +109,8 @@ class PerfManager:
         target = req.get("target", "router")
         if mode in ("embedding", "rerank"):
             model_field, base, tokenizer = self._resolve_embedding(group, mode, target)
-            return model_field, f"{base}/v1/embeddings", tokenizer
+            path = "/v1/rerank" if mode == "rerank" else "/v1/embeddings"
+            return model_field, f"{base}{path}", tokenizer
         model_field, base, model_tag = self._resolve(group, target, req.get("instance_key"))
         path = "/v1/completions" if req.get("endpoint") == "completions" else "/v1/chat/completions"
         return model_field, f"{base}{path}", model_tag

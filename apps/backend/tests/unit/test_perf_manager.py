@@ -143,7 +143,7 @@ def test_build_cfg_rerank(tmp_path):
          "parallel": [2], "number": [10], "rerank_documents": 20},
         str(tmp_path / "1"),
     )
-    assert cfg["url"] == "http://127.0.0.1:8005/v1/embeddings"  # direct to embedding server
+    assert cfg["url"] == "http://127.0.0.1:8005/v1/rerank"  # direct to embedding server
     assert cfg["api"] == "llmops_rerank" and cfg["dataset"] == "random_rerank"
     assert cfg["tokenizer_path"] == "BAAI/bge-reranker-large"
     assert cfg["extra_args"] == {"num_documents": 20}
