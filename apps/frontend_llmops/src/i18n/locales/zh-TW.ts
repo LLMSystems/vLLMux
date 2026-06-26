@@ -578,7 +578,7 @@ export default {
     loraNote2: '· 打一個未掛載的名稱會回 404 — Model not found。',
     loraNote3: '· Base vs LoRA A/B：同一請求只換 model；Playground 比較模式可並排對照。',
     embTitle: 'Embeddings & Rerank',
-    embDesc: '同一個 /v1/embeddings 端點：帶 query 欄位即切換為 reranking。',
+    embDesc: 'OpenAI 相容 /v1/embeddings；重排序走 /v1/rerank（query + documents）。',
     embCurlLabel: 'Embedding · cURL',
     embPyLabel: 'Embedding · Python',
     rerankCurlLabel: 'Rerank · cURL',

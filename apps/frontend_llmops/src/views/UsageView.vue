@@ -196,9 +196,9 @@ print(len(resp.data[0].embedding))  # ${t('usage.vectorLengthComment')}`,
 )
 const rerankCurl = computed(
   () => `# ${t('usage.rerankComment')}
-curl ${base}/v1/embeddings \\
+curl ${base}/v1/rerank \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "${rerankModel.value}", "query": ${sampleQuery.value}, "input": [${sampleDocs.value}]}'`,
+  -d '{"model": "${rerankModel.value}", "query": ${sampleQuery.value}, "documents": [${sampleDocs.value}]}'`,
 )
 </script>
 

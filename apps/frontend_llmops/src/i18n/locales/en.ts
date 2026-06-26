@@ -594,7 +594,7 @@ export default {
     loraNote2: '· Requesting an unmounted name returns 404 — Model not found.',
     loraNote3: '· Base vs LoRA A/B: same request, just change model; Playground compare mode for side-by-side.',
     embTitle: 'Embeddings & Rerank',
-    embDesc: 'Same /v1/embeddings endpoint: add a query field to switch to reranking.',
+    embDesc: 'OpenAI-compatible /v1/embeddings; reranking via /v1/rerank (query + documents).',
     embCurlLabel: 'Embedding · cURL',
     embPyLabel: 'Embedding · Python',
     rerankCurlLabel: 'Rerank · cURL',

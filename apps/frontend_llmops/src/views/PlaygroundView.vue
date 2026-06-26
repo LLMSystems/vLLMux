@@ -298,28 +298,35 @@ async function runEmbedding() {
   embResult.value = null
   embDim.value = null
   const inputs = embInput.value.split('\n').filter((s) => s.trim())
+  const rerank = isRerankMode.value
   try {
-    const body: Record<string, unknown> = { model: embModel.value || 'm3e-base', input: inputs }
-    if (rerankQuery.value.trim()) body.query = rerankQuery.value.trim()
-    const res = await api.routerFetch('/v1/embeddings', {
+    const path = rerank ? '/v1/rerank' : '/v1/embeddings'
+    const body: Record<string, unknown> = rerank
+      ? { model: embModel.value, query: rerankQuery.value.trim(), documents: inputs }
+      : { model: embModel.value || 'm3e-base', input: inputs }
+    const res = await api.routerFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
     const json = await res.json()
-    const data = json.data ?? []
-    embResult.value = data.map((d: { embedding: number[] | number }, i: number) => {
-      const isRerank = typeof d.embedding === 'number'
-      if (!isRerank && Array.isArray(d.embedding)) embDim.value = d.embedding.length
-      return {
-        index: i,
-        value: isRerank ? (d.embedding as number) : (d.embedding as number[]).length,
-        preview: inputs[i] ?? '',
-      }
-    })
-    if (rerankQuery.value.trim() && embResult.value) {
-      embResult.value.sort((a, b) => b.value - a.value)
+    if (rerank) {
+      // /v1/rerank returns results sorted by descending relevance_score.
+      const results = json.results ?? []
+      embResult.value = results.map(
+        (r: { index: number; relevance_score: number; document?: { text: string } }) => ({
+          index: r.index,
+          value: r.relevance_score,
+          preview: r.document?.text ?? inputs[r.index] ?? '',
+        }),
+      )
+    } else {
+      const data = json.data ?? []
+      embResult.value = data.map((d: { embedding: number[] }, i: number) => {
+        if (Array.isArray(d.embedding)) embDim.value = d.embedding.length
+        return { index: i, value: d.embedding.length, preview: inputs[i] ?? '' }
+      })
     }
   } catch (e) {
     toast.error(t('playground.embedFailed'), { description: String(e) })
