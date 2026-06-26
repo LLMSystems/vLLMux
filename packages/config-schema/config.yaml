@@ -171,19 +171,12 @@ embedding_server:
       max_length: 512
       use_gpu: True
       use_float16: True
-    bge-m3:
-      model_name: "BAAI/bge-m3"
-      model_path: "./models/embedding_engine/model/embedding_model/bge-m3-model"
-      tokenizer_path: "./models/embedding_engine/model/embedding_model/bge-m3-tokenizer"
-      max_length: 512
-      use_gpu: True
-      use_float16: True
 
   reranking_models:
-    bge-reranker-large:
-      model_name: "BAAI/bge-reranker-large"
-      model_path: "./models/embedding_engine/model/reranking_model/bge-reranker-large-model"
-      tokenizer_path: "./models/embedding_engine/model/reranking_model/bge-reranker-large-tokenizer"
-      max_length: 512
+    ms-marco-minilm:
+      model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+      model_path: "./models/embedding_engine/model/reranking_model/ms-marco-minilm-model"
+      tokenizer_path: "./models/embedding_engine/model/reranking_model/ms-marco-minilm-tokenizer"
+      max_length: 256
       use_gpu: true
       use_float16: True
