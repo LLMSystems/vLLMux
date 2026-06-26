@@ -27,6 +27,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 
 ## Highlights
 
+- **One router controls the whole fleet** — a single OpenAI- & Anthropic-compatible origin fronts every model. Route by the `model` field across `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/rerank`, `/v1/score`, `/tokenize` and more; the router resolves the group and load-balances its instances, so clients never address an instance directly.
 - **Add a model by pasting `vllm serve …`** — parsed into a form and layered on as a dynamic overlay; the router hot-reloads, no `config.yaml` edits.
 - **Lifecycle + self-healing** — per-instance state machine (`stopped → starting → ready → failed`), VRAM pre-flight guard, GPU auto-placement, crash auto-restart with backoff.
 - **Pluggable routing strategies** — pick the load-balancing policy per model group or globally: `least_load` (default), `round_robin`, `random`, `least_inflight`, `p2c`, plus `session_affinity` / `prefix_affinity` for cache reuse on multi-turn chat & shared prompts. Switch it live from the dashboard; transparent failover + per-backend cooldown apply to every strategy.
