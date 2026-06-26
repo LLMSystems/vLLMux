@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Box, ChevronDown, Loader2, Play, Plus, RotateCw, Sparkles, Square } from '@lucide/vue'
+import { Box, ChevronDown, Loader2, Play, Plus, Power, RotateCw, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import Card from '@/components/ui/Card.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -76,6 +76,25 @@ const headerState = computed<ModelState>(() => {
   return 'stopped'
 })
 
+// Tint the ready/total count by overall group health for an at-a-glance read.
+const countClass = computed(
+  () =>
+    ({
+      ready: 'text-status-ready',
+      starting: 'text-status-starting',
+      stopping: 'text-status-starting',
+      failed: 'text-status-failed',
+      stopped: 'text-muted-foreground',
+    })[headerState.value],
+)
+
+// When every instance sits on the same GPU, surface it once in the header instead of
+// repeating an identical "GPU n" badge on every row.
+const uniformGpu = computed(() => {
+  const vals = props.instances.map((m) => models.gpuForKey(m.key, m.kind))
+  return vals.length && vals.every((v) => v !== null && v === vals[0]) ? vals[0] : null
+})
+
 const startableKeys = computed(() =>
   props.instances.filter((m) => !['ready', 'starting'].includes(m.state)).map((m) => m.key),
 )
@@ -105,6 +124,13 @@ function kvText(model: ModelView): string {
 }
 
 const Icon = computed(() => (kind.value === 'llm' ? Sparkles : Box))
+// Kind accent — LLM vs embedding read at a glance from the tinted icon chip.
+const kindVar = computed(() => (kind.value === 'llm' ? 'var(--chart-1)' : 'var(--chart-4)'))
+const kindChipStyle = computed(() => ({
+  color: kindVar.value,
+  backgroundColor: `color-mix(in oklch, ${kindVar.value} 12%, transparent)`,
+  borderColor: `color-mix(in oklch, ${kindVar.value} 30%, transparent)`,
+}))
 
 function isBusy(key: string) {
   return models.pending.has(key)
@@ -127,12 +153,15 @@ const startLockTitle = computed(() =>
 </script>
 
 <template>
-  <Card glass class="overflow-hidden">
+  <Card
+    glass
+    class="overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-md"
+  >
     <div class="flex items-center justify-between gap-3 px-4 py-3">
       <div class="flex min-w-0 items-center gap-3">
         <div
-          class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-background/50"
-          :class="kind === 'llm' ? 'text-[var(--chart-1)]' : 'text-[var(--chart-4)]'"
+          class="flex size-8 shrink-0 items-center justify-center rounded-lg border"
+          :style="kindChipStyle"
         >
           <component :is="Icon" class="size-4" />
         </div>
@@ -143,11 +172,20 @@ const startLockTitle = computed(() =>
           </p>
         </div>
       </div>
-      <div class="flex shrink-0 items-center gap-1.5">
-        <StatusDot :state="headerState" />
-        <span class="tabular text-xs text-muted-foreground">
-          {{ t('modelGroup.readyCount', { ready: readyCount, total }) }}
-        </span>
+      <div class="flex shrink-0 items-center gap-2">
+        <Badge
+          v-if="uniformGpu !== null"
+          variant="muted"
+          class="px-1.5 py-0 text-[10px]"
+        >
+          GPU {{ uniformGpu }}
+        </Badge>
+        <div class="flex items-center gap-1.5">
+          <StatusDot :state="headerState" />
+          <span class="tabular text-xs font-medium" :class="countClass">
+            {{ t('modelGroup.readyCount', { ready: readyCount, total }) }}
+          </span>
+        </div>
       </div>
     </div>
 
@@ -161,7 +199,7 @@ const startLockTitle = computed(() =>
         <StatusDot :state="model.state" size="sm" />
         <span class="font-mono text-[13px] font-medium">{{ model.key.split('::')[1] }}</span>
         <Badge
-          v-if="models.gpuForKey(model.key, model.kind) !== null"
+          v-if="uniformGpu === null && models.gpuForKey(model.key, model.kind) !== null"
           variant="muted"
           class="px-1.5 py-0 text-[10px]"
         >
@@ -209,7 +247,8 @@ const startLockTitle = computed(() =>
           <Button
             v-if="!canStop(model)"
             size="icon-sm"
-            variant="success"
+            variant="ghost"
+            class="text-status-ready hover:bg-status-ready/15 hover:text-status-ready"
             :disabled="isBusy(model.key) || startLocked"
             :title="startLockTitle"
             @click.stop="control.request(model.key, 'start')"
@@ -293,7 +332,7 @@ const startLockTitle = computed(() =>
           :disabled="!stoppableKeys.length"
           @click="control.requestMany(stoppableKeys, 'stop')"
         >
-          <Square class="size-3.5" />{{ t('modelGroup.stopAll') }}
+          <Power class="size-3.5" />{{ t('modelGroup.stopAll') }}
         </Button>
       </template>
       <Button

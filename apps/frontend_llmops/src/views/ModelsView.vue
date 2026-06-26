@@ -96,7 +96,7 @@ const kinds = computed<{ value: 'all' | ModelKind; label: string }[]>(() => [
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative">
         <Search class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="query" :placeholder="$t('models.searchPlaceholder')" class="w-56 pl-8" />
+        <Input v-model="query" :placeholder="$t('models.searchPlaceholder')" class="w-56 pl-8 lg:w-72" />
       </div>
       <div class="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5">
         <button
@@ -114,9 +114,22 @@ const kinds = computed<{ value: 'all' | ModelKind; label: string }[]>(() => [
         </button>
       </div>
       <div class="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
-        <span class="tabular"
-          >{{ $t('models.groupCount', { n: groups.length, ready: models.counts.ready, failed: models.counts.failed }) }}</span
-        >
+        <div class="hidden items-center gap-1.5 tabular text-xs sm:flex">
+          <span class="rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
+            {{ $t('models.groups', { n: groups.length }) }}
+          </span>
+          <span
+            class="rounded-md border border-status-ready/30 bg-status-ready/12 px-2 py-0.5 text-status-ready"
+          >
+            {{ $t('models.readyStat', { n: models.counts.ready }) }}
+          </span>
+          <span
+            v-if="models.counts.failed"
+            class="rounded-md border border-status-failed/30 bg-status-failed/12 px-2 py-0.5 text-status-failed"
+          >
+            {{ $t('models.failedStat', { n: models.counts.failed }) }}
+          </span>
+        </div>
         <Button variant="outline" size="sm" @click="models.refresh()">
           <RefreshCw class="size-3.5" />{{ $t('common.refresh') }}
         </Button>
