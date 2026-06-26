@@ -28,8 +28,8 @@ def test_engine_model_config_aliases_to_settings():
 
 def test_embedding_and_reranking_models_parsed():
     cfg = schema.load_config()
-    assert set(cfg.embedding_server.embedding_models) == {"m3e-base", "bge-m3"}
-    assert "bge-reranker-large" in cfg.embedding_server.reranking_models
+    assert set(cfg.embedding_server.embedding_models) == {"m3e-base"}
+    assert "ms-marco-minilm" in cfg.embedding_server.reranking_models
 
 
 def test_missing_required_server_field_raises():
