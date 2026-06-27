@@ -37,6 +37,8 @@ class BackendSettings:
     gpu_poll_interval: float = 5.0
     # How often per-group live load (queue depth) is aggregated from the router scrape.
     load_poll_interval: float = 5.0
+    # How often the autoscaler evaluates each autoscale-enabled group.
+    autoscale_interval: float = 5.0
     # SQLite telemetry DB path. None -> let LLMOpsStore use its shared default.
     db_path: Optional[str] = None
     # Pre-flight VRAM check before starting a model (blocks likely-OOM starts).
@@ -77,6 +79,7 @@ class BackendSettings:
             stop_timeout=_env_float("LLMOPS_STOP_TIMEOUT", 10.0),
             gpu_poll_interval=_env_float("LLMOPS_GPU_POLL_INTERVAL", 5.0),
             load_poll_interval=_env_float("LLMOPS_LOAD_POLL_INTERVAL", 5.0),
+            autoscale_interval=_env_float("LLMOPS_AUTOSCALE_INTERVAL", 5.0),
             db_path=os.environ.get("LLMOPS_DB_PATH"),
             vram_guard=_env_bool("LLMOPS_VRAM_GUARD", True),
             auto_restart=_env_bool("LLMOPS_AUTO_RESTART", True),

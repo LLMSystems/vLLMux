@@ -33,6 +33,7 @@ from app.core.settings import BackendSettings
 from app.core.store import LLMOpsStore
 from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
+from app.llmops.autoscaler import autoscaler_loop
 from app.llmops.load_monitor import load_monitor_loop
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
@@ -133,8 +134,9 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(
             load_monitor_loop(app, registry, http_client, router_url, settings.load_poll_interval)
         ),
+        asyncio.create_task(autoscaler_loop(app, manager, settings.autoscale_interval)),
     ]
-    logger.info("Reconciler + GPU poller + load monitor started")
+    logger.info("Reconciler + GPU poller + load monitor + autoscaler started")
 
     try:
         yield

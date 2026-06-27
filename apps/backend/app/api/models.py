@@ -164,9 +164,25 @@ async def get_model(key: str, manager: ModelManager = Depends(get_manager)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
 
 
+def _reject_if_autoscaled(manager: ModelManager, key: str) -> None:
+    """Block manual lifecycle control on an autoscale-owned group — the autoscaler
+    holds the desired state, so a manual start/stop would just be undone. Turning
+    off the group's autoscale returns control to the operator."""
+    group = key.partition("::")[0]
+    engine = manager.config.LLM_engines.get(group)
+    autoscale = getattr(engine, "autoscale", None) if engine else None
+    if autoscale is not None and autoscale.enabled:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"'{group}' is autoscaled — manual start/stop/sleep is disabled. "
+            f"Turn off autoscale for the group to control it by hand.",
+        )
+
+
 @router.post("/{key}/start", response_model=ModelView, status_code=status.HTTP_202_ACCEPTED,
              dependencies=[Depends(require_admin)])
 async def start_model(key: str, force: bool = False, manager: ModelManager = Depends(get_manager)):
+    _reject_if_autoscaled(manager, key)
     try:
         return ModelView.from_instance(await manager.start(key, force=force))
     except ModelNotFound:
@@ -180,6 +196,7 @@ async def start_model(key: str, force: bool = False, manager: ModelManager = Dep
 @router.post("/{key}/stop", response_model=ModelView, status_code=status.HTTP_202_ACCEPTED,
              dependencies=[Depends(require_admin)])
 async def stop_model(key: str, manager: ModelManager = Depends(get_manager)):
+    _reject_if_autoscaled(manager, key)
     try:
         return ModelView.from_instance(await manager.stop(key))
     except ModelNotFound:
@@ -191,6 +208,7 @@ async def stop_model(key: str, manager: ModelManager = Depends(get_manager)):
 async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(get_manager)):
     """Level-1 sleep a ready instance: free its VRAM but keep it warm for a
     seconds-fast wake. Requires the model to be launched with enable_sleep_mode."""
+    _reject_if_autoscaled(manager, key)
     try:
         return ModelView.from_instance(await manager.sleep(key, level=level))
     except ModelNotFound:
@@ -205,6 +223,7 @@ async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(
              dependencies=[Depends(require_admin)])
 async def wake_model(key: str, manager: ModelManager = Depends(get_manager)):
     """Wake a sleeping instance back to ready (reloads weights to GPU)."""
+    _reject_if_autoscaled(manager, key)
     try:
         return ModelView.from_instance(await manager.wake(key))
     except ModelNotFound:

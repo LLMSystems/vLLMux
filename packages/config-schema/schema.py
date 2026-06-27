@@ -76,12 +76,32 @@ class EngineModelConfig(BaseModel):
     kv_transfer_config: Optional[dict] = None
 
 
+class AutoscaleConfig(BaseModel):
+    """Per-group autoscaling policy (Phase 2). When ``enabled``, the backend's
+    autoscaler owns the group's instances: it keeps between ``min_ready`` warm
+    serving replicas and ``max_ready`` (default = all declared instances), scaling
+    on queue depth. If the group launches with sleep mode it uses the warm-standby
+    tier (ready -> asleep -> stopped); otherwise ready <-> stopped directly.
+    See docs/autoscaling-design_zh-CN.md."""
+    model_config = ConfigDict(extra="allow")
+    enabled: bool = False
+    min_ready: int = 1               # always-warm serving replicas (0 = allow all-asleep)
+    min_warm: int = 1                # ready+asleep kept resident (>= min_ready)
+    max_ready: Optional[int] = None  # cap on ready replicas; None = all declared instances
+    scale_up_waiting: float = 4.0    # scale up when waiting_per_replica exceeds this …
+    scale_up_window_s: float = 20.0  # … sustained for this long
+    sleep_after_s: float = 180.0     # idle ready replica -> sleep (or stop) after this
+    stop_after_s: float = 900.0      # idle asleep replica -> stop after this
+    cooldown_s: float = 60.0         # min gap between scale-up actions (anti-flap)
+
+
 class LLMEngine(BaseModel):
     # populate_by_name lets us refer to `.settings` in code while the YAML key
     # stays the historical `model_config`.
     model_config = ConfigDict(extra="allow", populate_by_name=True, protected_namespaces=())
     instances: list[InstanceConfig] = Field(default_factory=list)
     settings: EngineModelConfig = Field(alias="model_config")
+    autoscale: Optional[AutoscaleConfig] = None
 
 
 class EmbeddingModelEntry(BaseModel):

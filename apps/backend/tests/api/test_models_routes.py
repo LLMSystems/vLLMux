@@ -1,10 +1,23 @@
 import pytest
 
 from app.llmops.state import ModelState
+from schema import AutoscaleConfig
 
 pytestmark = pytest.mark.api
 
 KEY = "Qwen3-0.6B::qwen3"
+
+
+def test_manual_start_stop_blocked_on_autoscaled_group(client):
+    """When a group is autoscale-owned, manual lifecycle control is rejected (409)."""
+    manager = client.app.state.manager
+    manager.config.LLM_engines["Qwen3-0.6B"].autoscale = AutoscaleConfig(enabled=True)
+    try:
+        assert client.post(f"/api/models/{KEY}/start").status_code == 409
+        assert client.post(f"/api/models/{KEY}/stop").status_code == 409
+        assert client.post(f"/api/models/{KEY}/sleep").status_code == 409
+    finally:
+        manager.config.LLM_engines["Qwen3-0.6B"].autoscale = None
 
 
 def test_list_models_returns_all_configured_instances(client):
