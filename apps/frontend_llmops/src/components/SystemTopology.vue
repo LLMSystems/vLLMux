@@ -78,6 +78,7 @@ const stateBorder: Record<ModelState, string> = {
   stopping: 'var(--status-starting)',
   failed: 'var(--status-failed)',
   stopped: 'var(--border)',
+  sleeping: 'var(--status-sleeping)',
 }
 
 interface GroupAgg {

@@ -17,11 +17,16 @@ class ModelState(str, Enum):
         READY    -> FAILED   (process exited unexpectedly)
         READY    -> STOPPING -> STOPPED (stop requested)
         FAILED   -> STARTING (start requested again)
+        READY    -> SLEEPING (sleep requested; vLLM level-1 sleep frees VRAM,
+                              process stays alive)
+        SLEEPING -> READY    (wake requested)
+        SLEEPING -> STOPPING -> STOPPED (stop requested while asleep)
     """
 
     STOPPED = "stopped"
     STARTING = "starting"
     READY = "ready"
+    SLEEPING = "sleeping"
     FAILED = "failed"
     STOPPING = "stopping"
 
@@ -37,4 +42,5 @@ class Desired(str, Enum):
     """The state the user has asked for; compared against the observed state."""
 
     RUNNING = "running"
+    ASLEEP = "asleep"
     STOPPED = "stopped"

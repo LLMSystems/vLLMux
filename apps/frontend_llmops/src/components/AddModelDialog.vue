@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { AlertTriangle, Check, Download, Loader2, Plus, Share2, Trash2, Wand2 } from '@lucide/vue'
+import { AlertTriangle, Check, Download, Loader2, Moon, Plus, Share2, Trash2, Wand2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
@@ -50,6 +50,10 @@ const routingStrategy = ref('')
 // preset into model_config; off = each instance keeps its own KV. Edited via a
 // switch, never the raw param list (kv_transfer_config is a nested object).
 const kvShared = ref(false)
+// Sleep-mode (warm-standby) toggle. On = launch with --enable-sleep-mode +
+// VLLM_SERVER_DEV_MODE=1 so the instance can be slept (VRAM freed, seconds-fast
+// wake). Edited via a switch, kept out of the raw param list.
+const sleepMode = ref(false)
 // LoRA adapters mounted at serve time; edited apart from the flat param list
 // because each is a {name, path, base_model_name} object, not a scalar flag.
 const loras = ref<LoraModule[]>([])
@@ -163,6 +167,7 @@ function reset() {
   params.value = []
   routingStrategy.value = ''
   kvShared.value = false
+  sleepMode.value = false
   loras.value = []
 }
 
@@ -206,9 +211,14 @@ function prefillForEdit() {
   modelTag.value = String(cfg.settings.model_tag ?? '')
   routingStrategy.value = String(cfg.settings.routing_strategy ?? '')
   kvShared.value = isKvShared(cfg.settings)
+  sleepMode.value = !!cfg.settings.enable_sleep_mode
   params.value = extractLoras(
     Object.entries(cfg.settings).filter(
-      ([k2]) => k2 !== 'model_tag' && k2 !== 'routing_strategy' && k2 !== 'kv_transfer_config',
+      ([k2]) =>
+        k2 !== 'model_tag' &&
+        k2 !== 'routing_strategy' &&
+        k2 !== 'kv_transfer_config' &&
+        k2 !== 'enable_sleep_mode',
     ),
   ).map(([k2, v]) => ({ key: k2, value: v === null ? '' : String(v) }))
   warnings.value = []
@@ -246,9 +256,14 @@ async function parse() {
       (p.model_config as Record<string, unknown>).routing_strategy ?? '',
     )
     kvShared.value = isKvShared(p.model_config as Record<string, unknown>)
+    sleepMode.value = !!(p.model_config as Record<string, unknown>).enable_sleep_mode
     params.value = extractLoras(
       Object.entries(p.model_config).filter(
-        ([k]) => k !== 'model_tag' && k !== 'routing_strategy' && k !== 'kv_transfer_config',
+        ([k]) =>
+          k !== 'model_tag' &&
+          k !== 'routing_strategy' &&
+          k !== 'kv_transfer_config' &&
+          k !== 'enable_sleep_mode',
       ),
     ).map(([k, v]) => ({ key: k, value: String(v) }))
     warnings.value = p.warnings
@@ -405,6 +420,7 @@ async function submit() {
   const settings: Record<string, SettingValue> & {
     lora_modules?: LoraModule[]
     kv_transfer_config?: KvTransferConfig
+    enable_sleep_mode?: boolean
   } = {
     model_tag: modelTag.value,
   }
@@ -413,7 +429,13 @@ async function submit() {
     // editors below — never let a raw param (e.g. a stray "" from a null, or a
     // leaked key) stomp them via the generic param list.
     const kk = k.trim()
-    if (kk && kk !== 'lora_modules' && kk !== 'routing_strategy' && kk !== 'kv_transfer_config')
+    if (
+      kk &&
+      kk !== 'lora_modules' &&
+      kk !== 'routing_strategy' &&
+      kk !== 'kv_transfer_config' &&
+      kk !== 'enable_sleep_mode'
+    )
       settings[kk] = coerce(value)
   }
   // Router-only load-balancing policy; '' inherits the global default, so only
@@ -422,6 +444,9 @@ async function submit() {
   // Cross-instance KV-cache sharing: write the OffloadingConnector preset when
   // the toggle is on; otherwise leave it unset so each instance keeps its own KV.
   if (kvShared.value) settings.kv_transfer_config = KV_SHARE_PRESET
+  // Sleep-mode warm-standby tier: launch with --enable-sleep-mode + dev mode so
+  // the instance can be slept/woken (see docs/autoscaling-design_zh-CN.md).
+  if (sleepMode.value) settings.enable_sleep_mode = true
   // Mounted adapters: keep only filled rows; drop the empty base_model_name field.
   const cleanLoras = loras.value
     .filter((l) => l.name.trim() && l.path.trim())
@@ -579,6 +604,20 @@ async function submit() {
               </span>
               <span class="mt-0.5 block text-[11px] text-muted-foreground">
                 {{ $t('addModel.kvShareDesc') }}
+              </span>
+            </span>
+          </label>
+          <label
+            class="col-span-2 flex cursor-pointer items-start gap-3 rounded-lg border border-input bg-background/40 px-3 py-2.5"
+            :class="sleepMode && 'border-[var(--chart-4)]/50 bg-[var(--chart-4)]/5'"
+          >
+            <input v-model="sleepMode" type="checkbox" class="mt-0.5 size-4 accent-[var(--chart-4)]" />
+            <span class="min-w-0">
+              <span class="flex items-center gap-1.5 text-sm font-medium">
+                <Moon class="size-3.5 text-[var(--chart-4)]" />{{ $t('addModel.sleepModeLabel') }}
+              </span>
+              <span class="mt-0.5 block text-[11px] text-muted-foreground">
+                {{ $t('addModel.sleepModeDesc') }}
               </span>
             </span>
           </label>

@@ -30,6 +30,9 @@ class LaunchSpec:
     port: int
     probe_url: str
     model_tag: Optional[str] = None
+    # True when launched with --enable-sleep-mode + VLLM_SERVER_DEV_MODE=1, so the
+    # /sleep, /wake_up and /is_sleeping dev endpoints are available.
+    sleep_enabled: bool = False
 
 
 @dataclass

@@ -1,7 +1,7 @@
 /** Shared types mirroring the Dashboard Backend / Router API (see docs/API.md). */
 
 export type ModelKind = 'llm' | 'embedding'
-export type ModelState = 'stopped' | 'starting' | 'ready' | 'failed' | 'stopping'
+export type ModelState = 'stopped' | 'starting' | 'ready' | 'sleeping' | 'failed' | 'stopping'
 export type DesiredState = 'running' | 'stopped'
 
 // vLLM startup capacity/memory/compile metrics parsed from the engine log.
@@ -229,9 +229,26 @@ export interface ApiKey {
   last_used_at: number | null
   revoked: number
   rpm_limit: number | null
+  token_quota: number | null
+  quota_period: 'total' | 'daily' | 'monthly' | null
+  quota_used: number | null
   request_count: number
   total_tokens: number
   usage_last_ts: number | null
+}
+
+export type QuotaPeriod = 'total' | 'daily' | 'monthly'
+
+/** Per-group live load (autoscaling signal), keyed by group name in the API. */
+export interface GroupLoad {
+  group: string
+  ready_replicas: number
+  asleep_replicas: number
+  stopped_replicas: number
+  waiting_total: number
+  running_total: number
+  waiting_per_replica: number
+  kv_avg: number
 }
 
 /** Returned once on creation — `key` is the plaintext, shown only here. */

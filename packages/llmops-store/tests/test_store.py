@@ -53,6 +53,35 @@ async def test_api_key_lifecycle(store):
     assert await store.revoke_api_key(kid) is False  # already revoked
 
 
+async def test_api_key_token_quota_persisted(store):
+    kid = await store.create_api_key(
+        "team-rag", "hash-q", "sk-llmops-Q…", token_quota=1000, quota_period="daily"
+    )
+    row = await store.get_active_api_key_by_hash("hash-q")
+    assert row["token_quota"] == 1000 and row["quota_period"] == "daily"
+    listed = await store.list_api_keys()
+    assert listed[0]["id"] == kid and listed[0]["token_quota"] == 1000
+
+
+async def test_tokens_used_by_key_sums_and_windows(store):
+    await store.create_api_key("k", "h", "sk-llmops-K…", token_quota=500)
+    await store.record_request(
+        model_key="m", path="/v1/chat/completions", total_tokens=100,
+        api_key_name="k", ts=1000.0,
+    )
+    await store.record_request(
+        model_key="m", path="/v1/chat/completions", total_tokens=250,
+        api_key_name="k", ts=2000.0,
+    )
+    # another key's usage must not leak in
+    await store.record_request(
+        model_key="m", path="/v1/chat/completions", total_tokens=999,
+        api_key_name="other", ts=2000.0,
+    )
+    assert await store.tokens_used_by_key("k") == 350
+    assert await store.tokens_used_by_key("k", since=1500.0) == 250  # only the 2nd row
+
+
 async def test_record_request_with_api_key_attribution(store):
     await store.record_request(
         model_key="Qwen::a", path="/v1/chat/completions", status_code=200,

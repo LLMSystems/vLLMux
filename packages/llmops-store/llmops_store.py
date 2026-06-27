@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at   REAL    NOT NULL,
     last_used_at REAL,
     revoked      INTEGER NOT NULL DEFAULT 0,
-    rpm_limit    INTEGER
+    rpm_limit    INTEGER,
+    token_quota  INTEGER,            -- max total_tokens per quota_period; NULL = unlimited
+    quota_period TEXT                -- 'total' | 'daily' | 'monthly' (NULL == 'total')
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
 
@@ -111,6 +113,8 @@ CREATE INDEX IF NOT EXISTS idx_eval_runs_created ON eval_runs(created_at);
 _MIGRATIONS = [
     ("request_logs", "api_key_name", "TEXT"),
     ("api_keys", "rpm_limit", "INTEGER"),
+    ("api_keys", "token_quota", "INTEGER"),
+    ("api_keys", "quota_period", "TEXT"),
 ]
 
 
@@ -220,14 +224,16 @@ class LLMOpsStore:
 
     async def create_api_key(
         self, name: str, key_hash: str, prefix: str,
-        rpm_limit: Optional[int] = None, ts: Optional[float] = None,
+        rpm_limit: Optional[int] = None, token_quota: Optional[int] = None,
+        quota_period: Optional[str] = None, ts: Optional[float] = None,
     ) -> int:
         import time
 
         cur = await self._db.execute(
-            "INSERT INTO api_keys (name, key_hash, prefix, created_at, rpm_limit) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, key_hash, prefix, ts or time.time(), rpm_limit),
+            "INSERT INTO api_keys "
+            "(name, key_hash, prefix, created_at, rpm_limit, token_quota, quota_period) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, key_hash, prefix, ts or time.time(), rpm_limit, token_quota, quota_period),
         )
         await self._db.commit()
         return cur.lastrowid
@@ -235,21 +241,37 @@ class LLMOpsStore:
     async def list_api_keys(self) -> list[dict]:
         """All keys, newest first — never returns the hash."""
         cur = await self._db.execute(
-            "SELECT id, name, prefix, created_at, last_used_at, revoked, rpm_limit "
-            "FROM api_keys ORDER BY id DESC"
+            "SELECT id, name, prefix, created_at, last_used_at, revoked, rpm_limit, "
+            "token_quota, quota_period FROM api_keys ORDER BY id DESC"
         )
         return [dict(r) for r in await cur.fetchall()]
 
     async def get_active_api_key_by_hash(self, key_hash: str) -> Optional[dict]:
         """Look up a non-revoked key by its hash (for request authentication)."""
         cur = await self._db.execute(
-            "SELECT id, name, prefix, revoked, rpm_limit FROM api_keys WHERE key_hash = ?",
+            "SELECT id, name, prefix, revoked, rpm_limit, token_quota, quota_period "
+            "FROM api_keys WHERE key_hash = ?",
             (key_hash,),
         )
         row = await cur.fetchone()
         if row is None or row["revoked"]:
             return None
         return dict(row)
+
+    async def tokens_used_by_key(self, name: str, since: Optional[float] = None) -> int:
+        """Sum of total_tokens attributed to one key name, optionally since a
+        timestamp (the start of the current quota window). Used for quota checks."""
+        where = "api_key_name = ?"
+        params: tuple = (name,)
+        if since is not None:
+            where += " AND ts >= ?"
+            params = (name, since)
+        cur = await self._db.execute(
+            f"SELECT COALESCE(SUM(total_tokens), 0) AS used FROM request_logs WHERE {where}",
+            params,
+        )
+        row = await cur.fetchone()
+        return int(row["used"] or 0)
 
     # -- Perf runs (load tests) --------------------------------------------
 

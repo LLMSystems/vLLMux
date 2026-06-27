@@ -13,6 +13,7 @@ const colorClass: Record<ModelState, string> = {
   stopping: 'text-status-stopping',
   failed: 'text-status-failed',
   stopped: 'text-status-stopped',
+  sleeping: 'text-status-sleeping',
 }
 const transient = computed(() => props.state === 'starting' || props.state === 'stopping')
 const sizeClass = computed(

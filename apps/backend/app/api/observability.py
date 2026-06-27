@@ -49,6 +49,14 @@ async def usage(request: Request, since: Optional[float] = None):
     return await _store(request).usage_summary(since=since)
 
 
+@router.get("/load")
+async def load(request: Request):
+    """Per-group live load: ready/asleep/stopped replica counts plus queue depth
+    (waiting), in-flight (running) and KV utilisation aggregated from the router
+    scrape. The signal the autoscaler acts on. Empty until the first poll lands."""
+    return getattr(request.app.state, "load_stats", {})
+
+
 @router.get("/requests")
 async def requests_log(request: Request, model_key: Optional[str] = None, limit: int = 100):
     return await _store(request).recent_requests(model_key=model_key, limit=limit)

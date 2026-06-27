@@ -47,15 +47,19 @@ class FakeHTTPClient:
 
 
 class FakeStore:
-    def __init__(self, keys=None):
+    def __init__(self, keys=None, used_tokens=0):
         self.reqs = []
         self._keys = keys or {}  # hash -> {"id","name"}
+        self._used_tokens = used_tokens
 
     async def record_request(self, **kwargs):
         self.reqs.append(kwargs)
 
     async def get_active_api_key_by_hash(self, key_hash):
         return self._keys.get(key_hash)
+
+    async def tokens_used_by_key(self, name, since=None):
+        return self._used_tokens
 
 
 def _hash(token):
@@ -78,9 +82,11 @@ def _client(store):
 def _reset_cache():
     auth_mod._cache.clear()
     auth_mod._hits.clear()
+    auth_mod._quota_cache.clear()
     yield
     auth_mod._cache.clear()
     auth_mod._hits.clear()
+    auth_mod._quota_cache.clear()
 
 
 def test_disabled_by_default_no_key_needed(monkeypatch):
@@ -131,6 +137,51 @@ def test_enabled_enforces_rpm_limit(monkeypatch):
     assert client.post("/v1/chat/completions", json=body, headers=h).status_code == 200
     assert client.post("/v1/chat/completions", json=body, headers=h).status_code == 200
     assert client.post("/v1/chat/completions", json=body, headers=h).status_code == 429  # over 2/min
+
+
+def test_enabled_allows_under_token_quota(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore(
+        keys={_hash("sk-q"): {"id": 1, "name": "q", "token_quota": 1000, "quota_period": "total"}},
+        used_tokens=500,
+    )
+    client = _client(store)
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-q"},
+    )
+    assert r.status_code == 200
+
+
+def test_enabled_rejects_over_token_quota(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore(
+        keys={_hash("sk-q"): {"id": 1, "name": "q", "token_quota": 1000, "quota_period": "daily"}},
+        used_tokens=1000,  # already at the cap
+    )
+    client = _client(store)
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-q"},
+    )
+    assert r.status_code == 429
+
+
+def test_no_quota_means_unlimited(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore(
+        keys={_hash("sk-u"): {"id": 2, "name": "u"}},  # no token_quota
+        used_tokens=10**9,
+    )
+    client = _client(store)
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-u"},
+    )
+    assert r.status_code == 200
 
 
 def test_enabled_rejects_unknown_key(monkeypatch):

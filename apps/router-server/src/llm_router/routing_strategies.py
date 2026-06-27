@@ -69,6 +69,13 @@ def score_instance(app: Any, model_key: str, instance: dict) -> float:
     return base + inflight_penalty + cooldown_penalty
 
 
+def is_instance_sleeping(app: Any, model_key: str, instance_id: str) -> bool:
+    """True if the metrics poller has flagged this instance as level-1/2 asleep
+    (VRAM freed, can't serve). Missing metrics -> not sleeping."""
+    metric = app.state.metrics_cache.get(model_key, {}).get(instance_id)
+    return bool(getattr(metric, "is_sleeping", False))
+
+
 def inflight_score(app: Any, model_key: str, instance: dict) -> float:
     """Cheaper score that ignores the metrics scrape: in-flight + cooldown only."""
     instance_id = instance["id"]
@@ -224,6 +231,16 @@ async def select_instance(
             status_code=503,
             detail=f"No remaining instance to try for model '{model_key}'.",
         )
+    # Sleep-aware routing: a level-1-asleep instance has freed its VRAM and can't
+    # serve, so drop it from the pool. If *every* candidate is asleep there is
+    # nothing to serve — surface that plainly rather than routing into a failure.
+    awake = [i for i in candidates if not is_instance_sleeping(app, model_key, i["id"])]
+    if not awake:
+        raise HTTPException(
+            status_code=503,
+            detail=f"All instances of model '{model_key}' are asleep.",
+        )
+    candidates = awake
     if len(candidates) == 1:
         return candidates[0]
 

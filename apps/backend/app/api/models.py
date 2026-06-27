@@ -20,6 +20,7 @@ from app.llmops.manager import (
     ModelConflict,
     ModelManager,
     ModelNotFound,
+    SleepError,
     VRAMInsufficient,
 )
 from app.services.vllm_command import parse_vllm_command
@@ -183,3 +184,32 @@ async def stop_model(key: str, manager: ModelManager = Depends(get_manager)):
         return ModelView.from_instance(await manager.stop(key))
     except ModelNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+
+
+@router.post("/{key}/sleep", response_model=ModelView,
+             dependencies=[Depends(require_admin)])
+async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(get_manager)):
+    """Level-1 sleep a ready instance: free its VRAM but keep it warm for a
+    seconds-fast wake. Requires the model to be launched with enable_sleep_mode."""
+    try:
+        return ModelView.from_instance(await manager.sleep(key, level=level))
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except SleepError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+
+@router.post("/{key}/wake", response_model=ModelView,
+             dependencies=[Depends(require_admin)])
+async def wake_model(key: str, manager: ModelManager = Depends(get_manager)):
+    """Wake a sleeping instance back to ready (reloads weights to GPU)."""
+    try:
+        return ModelView.from_instance(await manager.wake(key))
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except SleepError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))

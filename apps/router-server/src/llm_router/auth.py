@@ -11,6 +11,7 @@ keys; revocation therefore takes effect within ``_CACHE_TTL`` seconds.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import os
 import time
@@ -19,10 +20,16 @@ from collections import deque
 from fastapi import HTTPException, Request, status
 
 _CACHE_TTL = 30.0
-# hash -> (key_id_or_None, name, rpm_limit_or_None, expires_at)
-_cache: dict[str, tuple[int | None, str, int | None, float]] = {}
+# hash -> (key_id_or_None, name, rpm_limit, token_quota, quota_period, expires_at)
+_cache: dict[str, tuple[int | None, str, int | None, int | None, str | None, float]] = {}
 # key name -> request timestamps in the trailing 60s (sliding-window limiter)
 _hits: dict[str, deque] = {}
+# Token-quota usage cache: name -> (used_tokens, period_start, expires_at).
+# Quotas are enforced *softly* — token counts are only known after a response
+# completes, so we admit on the running total and reject once it's over. A short
+# TTL keeps the hot path off SQLite without letting overruns drift far.
+_QUOTA_TTL = 15.0
+_quota_cache: dict[str, tuple[int, float, float]] = {}
 
 
 def _check_rate(name: str, rpm_limit: int | None) -> None:
@@ -39,6 +46,40 @@ def _check_rate(name: str, rpm_limit: int | None) -> None:
             headers={"Retry-After": "60"},
         )
     dq.append(now)
+
+
+def _period_start(quota_period: str | None) -> float:
+    """Epoch-seconds start of the current quota window (UTC), matching the
+    time.time() clock written to request_logs.ts. 'total' (or None) == all time."""
+    if quota_period == "daily":
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    if quota_period == "monthly":
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    return 0.0
+
+
+async def _check_quota(
+    store, name: str, token_quota: int | None, quota_period: str | None
+) -> None:
+    if not token_quota or store is None:
+        return
+    period_start = _period_start(quota_period)
+    now = time.monotonic()
+    cached = _quota_cache.get(name)
+    if cached and cached[1] == period_start and cached[2] > now:
+        used = cached[0]
+    else:
+        used = await store.tokens_used_by_key(name, period_start or None)
+        _quota_cache[name] = (used, period_start, now + _QUOTA_TTL)
+    if used >= token_quota:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"token quota exceeded for key '{name}' "
+            f"({used}/{token_quota} tokens, {quota_period or 'total'})",
+            headers={"Retry-After": "60"},
+        )
 
 
 def _hash_key(plaintext: str) -> str:
@@ -79,18 +120,23 @@ async def authenticate(request: Request) -> str | None:
 
     key_hash = _hash_key(token)
     now = time.monotonic()
+    store = getattr(request.app.state, "store", None)
     cached = _cache.get(key_hash)
-    if cached and cached[3] > now:
+    if cached and cached[5] > now:
         _check_rate(cached[1], cached[2])
+        await _check_quota(store, cached[1], cached[3], cached[4])
         return cached[1]
 
-    store = getattr(request.app.state, "store", None)
     row = await store.get_active_api_key_by_hash(key_hash) if store is not None else None
     if row is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "invalid or revoked API key",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    _cache[key_hash] = (row["id"], row["name"], row.get("rpm_limit"), now + _CACHE_TTL)
+    _cache[key_hash] = (
+        row["id"], row["name"], row.get("rpm_limit"),
+        row.get("token_quota"), row.get("quota_period"), now + _CACHE_TTL,
+    )
     _check_rate(row["name"], row.get("rpm_limit"))
+    await _check_quota(store, row["name"], row.get("token_quota"), row.get("quota_period"))
     return row["name"]

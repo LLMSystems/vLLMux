@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Plus, RefreshCw, Search } from '@lucide/vue'
+import { api } from '@/lib/api'
 import { useModelsStore } from '@/stores/models'
 import { useAuth } from '@/composables/useAuth'
+import type { GroupLoad } from '@/types/api'
 import ModelGroupCard from '@/components/ModelGroupCard.vue'
 import ModelDetailDrawer from '@/components/ModelDetailDrawer.vue'
 import AddModelDialog from '@/components/AddModelDialog.vue'
@@ -28,6 +30,25 @@ const editOpen = ref(false)
 const editKey = ref<string | null>(null)
 const addInstanceOpen = ref(false)
 const addInstanceGroup = ref<string | null>(null)
+
+// Per-group live load (queue depth, asleep counts) — polled independently of the
+// model list so the cards show saturation at a glance. Best-effort; empty on error.
+const load = ref<Record<string, GroupLoad>>({})
+let loadPoll: ReturnType<typeof setInterval> | null = null
+async function refreshLoad() {
+  try {
+    load.value = await api.groupLoad()
+  } catch {
+    /* router/load not ready yet — leave the last snapshot */
+  }
+}
+onMounted(() => {
+  void refreshLoad()
+  loadPoll = setInterval(refreshLoad, 5000)
+})
+onUnmounted(() => {
+  if (loadPoll) clearInterval(loadPoll)
+})
 
 function onCreated() {
   // Pull fresh model list + config so the new instance (and its GPU/params) show.
@@ -147,6 +168,7 @@ const kinds = computed<{ value: 'all' | ModelKind; label: string }[]>(() => [
         :key="g.group"
         :group="g.group"
         :instances="g.instances"
+        :load="load[g.group]"
         @open="openDetail"
         @add-instance="openAddInstance"
       />

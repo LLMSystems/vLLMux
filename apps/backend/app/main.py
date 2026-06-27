@@ -33,6 +33,7 @@ from app.core.settings import BackendSettings
 from app.core.store import LLMOpsStore
 from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
+from app.llmops.load_monitor import load_monitor_loop
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
 from app.eval.manager import EvalManager
@@ -78,7 +79,10 @@ async def lifespan(app: FastAPI):
 
     launchers = [VllmLauncher(), EmbeddingLauncher()]
     registry = build_registry(config, config_path, launchers)
-    router_url = os.environ.get("LLMOPS_ROUTER_URL", "http://127.0.0.1:8887")
+    # `or` (not get's default) so an env var set-but-empty (as the compose env
+    # passes it) still falls back instead of yielding "" — an empty router_url
+    # would no-op router reloads and the load-monitor scrape.
+    router_url = os.environ.get("LLMOPS_ROUTER_URL") or "http://127.0.0.1:8887"
     manager = ModelManager(
         registry, launchers, http_client, config, config_path, settings, store=store,
         overlay_path=ov_path, router_url=router_url,
@@ -122,11 +126,15 @@ async def lifespan(app: FastAPI):
     # so monitoring has a valid file from t=0, before the first state transition.
     await manager.write_prometheus_targets()
 
+    app.state.load_stats = {}
     tasks = [
         asyncio.create_task(reconcile_loop(registry, http_client, settings, store, manager)),
         asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
+        asyncio.create_task(
+            load_monitor_loop(app, registry, http_client, router_url, settings.load_poll_interval)
+        ),
     ]
-    logger.info("Reconciler + GPU poller started")
+    logger.info("Reconciler + GPU poller + load monitor started")
 
     try:
         yield

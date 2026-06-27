@@ -11,6 +11,7 @@ const label: Record<ModelState, string> = {
   stopping: 'Stopping',
   failed: 'Failed',
   stopped: 'Stopped',
+  sleeping: 'Sleeping',
 }
 </script>
 

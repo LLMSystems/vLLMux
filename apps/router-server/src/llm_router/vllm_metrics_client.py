@@ -16,6 +16,9 @@ class VLLMInstanceMetrics:
     prompt_tokens: float = 0.0
     generation_tokens: float = 0.0
     raw_metrics: Optional[str] = None
+    # True when the backend has level-1/2 slept this instance (VRAM freed). Set by
+    # the metrics poller for sleep-capable groups; routing skips sleeping instances.
+    is_sleeping: bool = False
     
     def compute_load_score(
         self,
@@ -44,6 +47,7 @@ class VLLMInstanceMetrics:
             "kv_cache_usage_perc": None if math.isinf(self.kv_cache_usage_perc) else self.kv_cache_usage_perc,
             "prompt_tokens": None if math.isinf(self.prompt_tokens) else self.prompt_tokens,
             "generation_tokens": None if math.isinf(self.generation_tokens) else self.generation_tokens,
+            "is_sleeping": self.is_sleeping,
             "raw_metrics": self.raw_metrics,
         }
         

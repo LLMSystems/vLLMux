@@ -15,8 +15,11 @@ MODEL = "Qwen3-0.6B"
 INSTANCES = [{"id": "a", "port": 8002}, {"id": "b", "port": 8004}, {"id": "c", "port": 8006}]
 
 
-def metric(running=0.0, waiting=0.0, kv=0.0):
-    return VLLMInstanceMetrics(base_url="x", running=running, waiting=waiting, kv_cache_usage_perc=kv)
+def metric(running=0.0, waiting=0.0, kv=0.0, is_sleeping=False):
+    return VLLMInstanceMetrics(
+        base_url="x", running=running, waiting=waiting,
+        kv_cache_usage_perc=kv, is_sleeping=is_sleeping,
+    )
 
 
 def ctx(app, candidates=None, all_instances=None, **kw):
@@ -57,6 +60,29 @@ async def test_unknown_strategy_falls_back_to_least_load(make_app):
         make_app(metrics_cache=metrics), MODEL, {"instances": INSTANCES}, strategy="bogus",
     )
     assert res["id"] == "b"
+
+
+async def test_sleeping_instance_is_excluded_from_routing(make_app):
+    # 'b' is least-loaded but asleep -> must be skipped; next-best 'a' wins.
+    metrics = {MODEL: {
+        "a": metric(running=1),
+        "b": metric(running=0, is_sleeping=True),
+        "c": metric(running=5),
+    }}
+    res = await select_instance(
+        make_app(metrics_cache=metrics), MODEL, {"instances": INSTANCES}, strategy="least_load",
+    )
+    assert res["id"] == "a"
+
+
+async def test_all_asleep_raises_503(make_app):
+    metrics = {MODEL: {i["id"]: metric(is_sleeping=True) for i in INSTANCES}}
+    with pytest.raises(HTTPException) as exc:
+        await select_instance(
+            make_app(metrics_cache=metrics), MODEL, {"instances": INSTANCES},
+        )
+    assert exc.value.status_code == 503
+    assert "asleep" in exc.value.detail.lower()
 
 
 async def test_exclude_removes_candidate(make_app):

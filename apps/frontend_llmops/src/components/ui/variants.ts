@@ -43,6 +43,7 @@ export const badgeVariants = cva(
         stopping: 'border-status-stopping/30 bg-status-stopping/12 text-status-stopping',
         failed: 'border-status-failed/30 bg-status-failed/12 text-status-failed',
         stopped: 'border-status-stopped/30 bg-status-stopped/12 text-status-stopped',
+        sleeping: 'border-status-sleeping/30 bg-status-sleeping/12 text-status-sleeping',
       },
     },
     defaultVariants: { variant: 'default' },

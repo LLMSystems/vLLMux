@@ -46,6 +46,12 @@ class LoraRuntimeError(RuntimeError):
     """A runtime LoRA load/unload against a vLLM instance failed."""
 
 
+class SleepError(RuntimeError):
+    """A sleep/wake call against a vLLM instance failed (the endpoint errored
+    or is unreachable). Distinct from ModelConflict, which is a client-side
+    precondition failure (wrong state / not sleep-capable)."""
+
+
 def build_registry(config, config_path: str, launchers: list[Launcher]) -> ModelRegistry:
     """Enumerate every instance every launcher defines, all STOPPED initially."""
     registry = ModelRegistry()
@@ -322,6 +328,83 @@ class ModelManager:
             inst.set_state(ModelState.STOPPED)
         await self._record(inst, ModelState.STOPPING, ModelState.STOPPED)
         logger.info("Stopped %s", key)
+        return inst
+
+    # -- Sleep / wake (level-1 warm standby) ----------------------------------
+
+    async def sleep(self, key: str, level: int = 1) -> ModelInstance:
+        """Put a READY instance into vLLM level-1 sleep: weights are paged to CPU
+        RAM and VRAM is freed, but the process stays alive so wake is seconds (no
+        cold start). Requires the instance to have been launched with sleep mode.
+
+        The HTTP call runs outside the registry lock; on failure the desired
+        intent is reverted so the reconciler doesn't fight a half-applied state."""
+        inst = self._require(key)
+        if not getattr(inst.spec, "sleep_enabled", False):
+            raise ModelConflict(
+                f"{key} was not launched with sleep mode "
+                f"(set enable_sleep_mode: true on the model)"
+            )
+        async with self.registry.lock:
+            if inst.state != ModelState.READY:
+                raise ModelConflict(
+                    f"can only sleep a ready model; {key} is {inst.state.value}"
+                )
+            prev = inst.state
+            inst.desired = Desired.ASLEEP
+            inst.touch()
+
+        url = f"http://{inst.host}:{inst.port}/sleep?level={level}"
+        try:
+            resp = await self.http_client.post(url, timeout=30.0)
+            resp.raise_for_status()
+        except Exception as e:
+            async with self.registry.lock:
+                inst.desired = Desired.RUNNING  # revert intent; still READY
+                inst.touch()
+            raise SleepError(f"sleep call failed for {key}: {e}")
+
+        async with self.registry.lock:
+            inst.last_error = None
+            inst.set_state(ModelState.SLEEPING)
+        await self._record(inst, prev, ModelState.SLEEPING, f"sleep level={level}")
+        # Drop it from the router's pool + Prometheus scrape while asleep.
+        await self.trigger_router_reload()
+        await self.write_prometheus_targets()
+        logger.info("Slept %s (level=%d)", key, level)
+        return inst
+
+    async def wake(self, key: str) -> ModelInstance:
+        """Wake a SLEEPING instance back to READY (vLLM /wake_up reloads weights to
+        GPU). Seconds, not a cold start."""
+        inst = self._require(key)
+        async with self.registry.lock:
+            if inst.state != ModelState.SLEEPING:
+                raise ModelConflict(
+                    f"can only wake a sleeping model; {key} is {inst.state.value}"
+                )
+            prev = inst.state
+            inst.desired = Desired.RUNNING
+            inst.touch()
+
+        url = f"http://{inst.host}:{inst.port}/wake_up"
+        try:
+            resp = await self.http_client.post(url, timeout=120.0)
+            resp.raise_for_status()
+        except Exception as e:
+            async with self.registry.lock:
+                inst.desired = Desired.ASLEEP  # revert intent; still SLEEPING
+                inst.touch()
+            raise SleepError(f"wake call failed for {key}: {e}")
+
+        async with self.registry.lock:
+            inst.last_error = None
+            inst.set_state(ModelState.READY)
+        await self._record(inst, prev, ModelState.READY, "wake_up")
+        # Rejoin the router pool + Prometheus scrape now that it serves again.
+        await self.trigger_router_reload()
+        await self.write_prometheus_targets()
+        logger.info("Woke %s", key)
         return inst
 
     # -- Dynamic models (overlay) ---------------------------------------------

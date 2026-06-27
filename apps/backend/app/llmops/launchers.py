@@ -181,6 +181,15 @@ class VllmLauncher:
         if merged.get("kv_transfer_config"):
             env.setdefault("PYTHONHASHSEED", "0")
 
+        # Sleep mode (autoscaling warm-standby tier): the `--enable-sleep-mode`
+        # CLI flag is emitted by build_vllm_cli_args from the config, but the
+        # /sleep, /wake_up and /is_sleeping endpoints only appear when the server
+        # also runs in dev mode (an env toggle, not a CLI flag). See
+        # docs/vllm_sleep_mode.md + docs/autoscaling-design_zh-CN.md.
+        sleep_enabled = bool(merged.get("enable_sleep_mode"))
+        if sleep_enabled:
+            env["VLLM_SERVER_DEV_MODE"] = "1"
+
         command = ["vllm"] + build_vllm_cli_args(merged)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
         return LaunchSpec(
@@ -193,6 +202,7 @@ class VllmLauncher:
             port=inst.port,
             probe_url=f"http://{inst.host}:{inst.port}/health",
             model_tag=engine.settings.model_tag,
+            sleep_enabled=sleep_enabled,
         )
 
 

@@ -36,6 +36,7 @@ export const useModelsStore = defineStore('models', () => {
       stopping: 0,
       failed: 0,
       stopped: 0,
+      sleeping: 0,
     }
     for (const m of models.value) c[m.state]++
     return c

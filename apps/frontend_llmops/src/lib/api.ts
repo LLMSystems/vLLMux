@@ -10,6 +10,8 @@ import type {
   EvalConfig,
   EvalDataset,
   EvalDatasetPreview,
+  GroupLoad,
+  QuotaPeriod,
   EvalListResponse,
   EvalReportDataset,
   EvalRequest,
@@ -158,6 +160,8 @@ export const api = {
     request<StateEvent[]>(API_BASE, `/api/models/${enc(key)}/events?limit=${limit}`),
   getUsage: (since?: number) =>
     request<UsageRow[]>(API_BASE, `/api/usage${since ? `?since=${since}` : ''}`),
+  /** Per-group live load (queue depth, ready/asleep counts) for the autoscaling signal. */
+  groupLoad: () => request<Record<string, GroupLoad>>(API_BASE, '/api/load'),
   getRequests: (opts: { modelKey?: string; limit?: number } = {}) => {
     const params = new URLSearchParams()
     if (opts.modelKey) params.set('model_key', opts.modelKey)
@@ -322,10 +326,20 @@ export const api = {
   evalReportUrl: (id: number) => `${API_BASE}/api/eval/${id}/report`,
 
   listKeys: () => request<ApiKey[]>(API_BASE, '/api/keys'),
-  createKey: (name: string, rpmLimit?: number | null) =>
+  createKey: (
+    name: string,
+    rpmLimit?: number | null,
+    tokenQuota?: number | null,
+    quotaPeriod: QuotaPeriod = 'total',
+  ) =>
     request<CreatedKey>(API_BASE, '/api/keys', {
       method: 'POST',
-      body: JSON.stringify({ name, rpm_limit: rpmLimit ?? null }),
+      body: JSON.stringify({
+        name,
+        rpm_limit: rpmLimit ?? null,
+        token_quota: tokenQuota ?? null,
+        quota_period: quotaPeriod,
+      }),
     }),
   revokeKey: (id: number) => request<null>(API_BASE, `/api/keys/${id}`, { method: 'DELETE' }),
 

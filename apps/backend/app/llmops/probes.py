@@ -20,3 +20,19 @@ async def is_ready(http_client, probe_url: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+
+async def is_sleeping(http_client, base_url: str) -> bool:
+    """True iff a sleep-mode vLLM reports it is asleep (level-1/2).
+
+    Queries the dev endpoint `GET /is_sleeping` (only present when launched with
+    VLLM_SERVER_DEV_MODE=1 + --enable-sleep-mode). Any error / missing endpoint is
+    treated as "not sleeping" so a non-sleep-capable server is never misjudged.
+    """
+    try:
+        resp = await http_client.get(base_url.rstrip("/") + "/is_sleeping")
+        if resp.status_code != 200:
+            return False
+        return bool(resp.json().get("is_sleeping", False))
+    except Exception:
+        return False

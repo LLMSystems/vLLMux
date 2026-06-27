@@ -32,6 +32,10 @@ from app.llmops.state import Desired, ModelKind, ModelState
 logger = logging.getLogger(__name__)
 
 # States the reconciler actively tracks (others are terminal/idle until acted on).
+# SLEEPING is deliberately excluded: a level-1-asleep instance keeps its process
+# alive but must not be health-probed (its /health may still 200 yet it can't
+# serve). It is left alone until a wake/stop request acts on it; only an
+# unexpected process exit (caught below, before this gate) still moves it.
 _LIVE_STATES = {ModelState.STARTING, ModelState.READY, ModelState.STOPPING}
 
 # (instance, from_state, to_state, detail)

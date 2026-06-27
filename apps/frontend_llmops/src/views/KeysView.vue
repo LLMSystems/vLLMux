@@ -6,7 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
 import { formatNumber, formatTime } from '@/lib/utils'
-import type { ApiKey, CreatedKey } from '@/types/api'
+import type { ApiKey, CreatedKey, QuotaPeriod } from '@/types/api'
 import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
@@ -21,6 +21,8 @@ const loading = ref(false)
 const locked = ref(false)
 const newName = ref('')
 const newRpm = ref<number | undefined>(undefined)
+const newQuota = ref<number | undefined>(undefined)
+const newPeriod = ref<QuotaPeriod>('total')
 const creating = ref(false)
 
 // One-time plaintext reveal after creation.
@@ -50,10 +52,17 @@ async function create() {
   if (!(await ensureUnlocked())) return
   creating.value = true
   try {
-    reveal.value = await api.createKey(name, newRpm.value && newRpm.value > 0 ? newRpm.value : null)
+    reveal.value = await api.createKey(
+      name,
+      newRpm.value && newRpm.value > 0 ? newRpm.value : null,
+      newQuota.value && newQuota.value > 0 ? newQuota.value : null,
+      newPeriod.value,
+    )
     revealOpen.value = true
     newName.value = ''
     newRpm.value = undefined
+    newQuota.value = undefined
+    newPeriod.value = 'total'
     await load()
   } catch (e) {
     toast.error(t('keys.createFailed'), {
@@ -121,14 +130,30 @@ onMounted(async () => {
       <!-- Create -->
       <Card class="p-5">
         <p class="mb-3 text-sm font-semibold">{{ $t('keys.createNew') }}</p>
-        <div class="flex items-end gap-2">
-          <label class="flex-1">
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="min-w-48 flex-1">
             <span class="text-xs text-muted-foreground">{{ $t('keys.nameLabel') }}</span>
             <Input v-model="newName" :placeholder="$t('keys.namePlaceholder')" class="mt-1" @keydown.enter="create" />
           </label>
-          <label class="w-32">
+          <label class="w-28">
             <span class="text-xs text-muted-foreground">{{ $t('keys.rateLimit') }}</span>
             <Input v-model.number="newRpm" type="number" min="1" :placeholder="$t('keys.ratePlaceholder')" class="mt-1" @keydown.enter="create" />
+          </label>
+          <label class="w-32">
+            <span class="text-xs text-muted-foreground">{{ $t('keys.tokenQuota') }}</span>
+            <Input v-model.number="newQuota" type="number" min="1" :placeholder="$t('keys.ratePlaceholder')" class="mt-1" @keydown.enter="create" />
+          </label>
+          <label class="w-28">
+            <span class="text-xs text-muted-foreground">{{ $t('keys.quotaPeriod') }}</span>
+            <select
+              v-model="newPeriod"
+              :disabled="!newQuota"
+              class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm text-foreground disabled:opacity-50"
+            >
+              <option value="total">{{ $t('keys.periodTotal') }}</option>
+              <option value="daily">{{ $t('keys.periodDaily') }}</option>
+              <option value="monthly">{{ $t('keys.periodMonthly') }}</option>
+            </select>
           </label>
           <Button :disabled="!newName.trim() || creating" @click="create">
             <Loader2 v-if="creating" class="size-4 animate-spin" /><Plus v-else class="size-4" />{{ $t('common.create') }}
@@ -149,6 +174,14 @@ onMounted(async () => {
                 <span class="truncate text-sm font-medium">{{ k.name }}</span>
                 <Badge v-if="k.revoked" variant="muted">{{ $t('keys.revoked') }}</Badge>
                 <Badge v-if="k.rpm_limit" variant="muted" class="tabular">{{ k.rpm_limit }}{{ $t('keys.perMin') }}</Badge>
+                <Badge
+                  v-if="k.token_quota"
+                  :variant="(k.quota_used ?? 0) >= k.token_quota ? 'failed' : 'muted'"
+                  class="tabular"
+                >
+                  {{ formatNumber(k.quota_used ?? 0, true) }}/{{ formatNumber(k.token_quota, true) }}
+                  {{ $t('keys.quotaPeriodShort.' + (k.quota_period || 'total')) }}
+                </Badge>
               </div>
               <span class="font-mono text-xs text-muted-foreground">{{ k.prefix }}</span>
             </div>

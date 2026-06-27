@@ -10,9 +10,9 @@ import StatusDot from '@/components/StatusDot.vue'
 import { useModelsStore } from '@/stores/models'
 import { useTrafficStore } from '@/stores/traffic'
 import { useModelControl } from '@/composables/useModelControl'
-import type { ModelState, ModelView } from '@/types/api'
+import type { GroupLoad, ModelState, ModelView } from '@/types/api'
 
-const props = defineProps<{ group: string; instances: ModelView[] }>()
+const props = defineProps<{ group: string; instances: ModelView[]; load?: GroupLoad }>()
 const emit = defineEmits<{ open: [key: string]; 'add-instance': [group: string] }>()
 
 const { t } = useI18n()
@@ -85,6 +85,7 @@ const countClass = computed(
       stopping: 'text-status-starting',
       failed: 'text-status-failed',
       stopped: 'text-muted-foreground',
+      sleeping: 'text-status-sleeping',
     })[headerState.value],
 )
 
@@ -179,6 +180,22 @@ const startLockTitle = computed(() =>
           class="px-1.5 py-0 text-[10px]"
         >
           GPU {{ uniformGpu }}
+        </Badge>
+        <Badge
+          v-if="load && load.asleep_replicas"
+          variant="sleeping"
+          class="tabular"
+          :title="$t('modelGroup.asleepTitle')"
+        >
+          {{ t('modelGroup.asleepCount', { n: load.asleep_replicas }) }}
+        </Badge>
+        <Badge
+          v-if="load && load.waiting_total > 0"
+          variant="starting"
+          class="tabular"
+          :title="$t('modelGroup.queueTitle')"
+        >
+          {{ t('modelGroup.queue', { n: Math.round(load.waiting_total) }) }}
         </Badge>
         <div class="flex items-center gap-1.5">
           <StatusDot :state="headerState" />

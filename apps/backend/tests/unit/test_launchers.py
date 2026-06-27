@@ -114,6 +114,31 @@ def test_no_pythonhashseed_without_kv_transfer():
     assert "PYTHONHASHSEED" not in spec.env
 
 
+def test_sleep_mode_sets_dev_mode_env_and_flag():
+    cfg = RootConfig.model_validate(
+        {
+            "server": {"host": "0.0.0.0", "port": 8887},
+            "LLM_engines": {
+                "M": {
+                    "instances": [{"id": "a", "host": "localhost", "port": 8000, "cuda_device": 0}],
+                    "model_config": {"model_tag": "org/m", "enable_sleep_mode": True},
+                }
+            },
+        }
+    )
+    spec = VllmLauncher().build_spec(cfg, "config.yaml", "M::a")
+    assert spec.sleep_enabled is True
+    assert spec.env.get("VLLM_SERVER_DEV_MODE") == "1"
+    assert "--enable-sleep-mode" in spec.command  # emitted by the CLI arg builder
+
+
+def test_no_sleep_mode_by_default():
+    spec = VllmLauncher().build_spec(FAKE_CONFIG, "config.yaml", "Qwen3-0.6B::qwen3")
+    assert spec.sleep_enabled is False
+    assert "VLLM_SERVER_DEV_MODE" not in spec.env
+    assert "--enable-sleep-mode" not in spec.command
+
+
 def test_routing_strategy_not_passed_to_vllm():
     # routing_strategy is a router-only knob riding the shared model_config; it
     # must never reach `vllm serve` (vLLM errors on the unknown arg).
