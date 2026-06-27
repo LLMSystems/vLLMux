@@ -122,6 +122,19 @@ export interface HealthZ {
   models: Record<string, number>
 }
 
+/** Per-group autoscaling policy (mirrors the backend AutoscaleConfig). */
+export interface AutoscaleConfig {
+  enabled: boolean
+  min_ready: number
+  min_warm: number
+  max_ready: number | null
+  scale_up_waiting: number
+  scale_up_window_s: number
+  sleep_after_s: number
+  stop_after_s: number
+  cooldown_s: number
+}
+
 export interface ConfigSummary {
   server: { host: string; port: number; uvicorn_log_level: string }
   LLM_engines: Record<
@@ -138,6 +151,8 @@ export interface ConfigSummary {
         lora_modules?: LoraModule[]
         kv_transfer_config?: KvTransferConfig | null
       }
+      /** Group-level autoscaling policy (null = not autoscaled). */
+      autoscale: AutoscaleConfig | null
     }
   >
   embedding_server: {

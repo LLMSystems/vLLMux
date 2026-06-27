@@ -45,6 +45,9 @@ class CreateModelRequest(BaseModel):
     instance: InstanceSpec
     # Full vLLM model_config (model_tag + any flags); extra keys allowed downstream.
     settings: dict[str, Any] = {}
+    # Group-level autoscaling policy. None clears it (the editor always sends the
+    # current state, so an off-toggle removes the block).
+    autoscale: dict[str, Any] | None = None
 
 
 @router.get("", response_model=list[ModelView])
@@ -77,7 +80,7 @@ async def create_model(body: CreateModelRequest, manager: ModelManager = Depends
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "settings.model_tag is required")
     try:
         inst = await manager.create_overlay_model(
-            body.group, body.instance.model_dump(), settings
+            body.group, body.instance.model_dump(), settings, autoscale=body.autoscale
         )
     except ModelConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
@@ -201,6 +204,36 @@ async def stop_model(key: str, manager: ModelManager = Depends(get_manager)):
         return ModelView.from_instance(await manager.stop(key))
     except ModelNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown model: {key}")
+
+
+class AutoscaleRequest(BaseModel):
+    """Group autoscale policy from the UI. enabled=false (or omitted) turns it off;
+    only the operator-facing knobs are exposed — timings keep their defaults."""
+    enabled: bool = False
+    min_ready: int = Field(default=1, ge=0)
+    max_ready: int | None = Field(default=None, ge=1)
+    min_warm: int | None = Field(default=None, ge=0)
+
+
+@router.put("/{group}/autoscale", dependencies=[Depends(require_admin)])
+async def set_group_autoscale(
+    group: str, body: AutoscaleRequest, manager: ModelManager = Depends(get_manager)
+):
+    """Enable/disable + tune a group's autoscaling. Does not require the group
+    stopped (autoscale is not a launch parameter)."""
+    payload = None
+    if body.enabled:
+        payload = {"enabled": True, "min_ready": body.min_ready}
+        if body.max_ready is not None:
+            payload["max_ready"] = body.max_ready
+        if body.min_warm is not None:
+            payload["min_warm"] = body.min_warm
+    try:
+        return {"group": group, "autoscale": await manager.set_autoscale(group, payload)}
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown group: {group}")
+    except Exception as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid autoscale config: {e}")
 
 
 @router.post("/{key}/sleep", response_model=ModelView,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Optional
 
 from app.core.settings import BackendSettings
 from app.llmops.instance import ModelInstance
@@ -407,12 +408,40 @@ class ModelManager:
         logger.info("Woke %s", key)
         return inst
 
+    async def set_autoscale(self, group: str, autoscale: Optional[dict]) -> Optional[dict]:
+        """Set (or clear, when None) a group's autoscale policy in the overlay.
+
+        Unlike model_config edits this does NOT require the instances stopped —
+        autoscale is not a launch parameter, and an autoscaled group can't be
+        stopped manually anyway, so toggling must work while it runs. Returns the
+        resolved policy (validated through the schema)."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+
+        if group not in self.config.LLM_engines:
+            raise ModelNotFound(group)
+        overlay = load_overlay(self.overlay_path)
+        entry = overlay.setdefault("LLM_engines", {}).setdefault(group, {})
+        if autoscale is None:
+            # Explicit-off: persist enabled:false so it overrides any base config.yaml
+            # policy (a bare pop would let the base re-enable it on the next merge).
+            entry["autoscale"] = {"enabled": False}
+        else:
+            entry["autoscale"] = autoscale
+        new_config = build_merged_config(self.config_path, overlay)  # validates
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+        resolved = new_config.LLM_engines[group].autoscale
+        logger.info("Set autoscale for %s -> enabled=%s",
+                    group, resolved.enabled if resolved else False)
+        return resolved.model_dump() if resolved else None
+
     # -- Dynamic models (overlay) ---------------------------------------------
 
     def _used_ports(self) -> set[int]:
         return {i.port for i in self.registry.values()}
 
-    async def create_overlay_model(self, group: str, instance: dict, model_config: dict):
+    async def create_overlay_model(self, group: str, instance: dict, model_config: dict,
+                                   autoscale: Optional[dict] = None):
         """Add a user-defined LLM instance: persist to the overlay, merge it into
         the live config, and register it (STOPPED) so it shows up immediately."""
         from app.services.overlay import build_merged_config, load_overlay, save_overlay
@@ -434,6 +463,8 @@ class ModelManager:
             entry.setdefault("instances", []).append(instance)
         else:
             engines[group] = {"instances": [instance], "model_config": model_config}
+        if autoscale is not None:
+            engines[group]["autoscale"] = autoscale
 
         # Validate the merged result before persisting anything.
         new_config = build_merged_config(self.config_path, overlay)

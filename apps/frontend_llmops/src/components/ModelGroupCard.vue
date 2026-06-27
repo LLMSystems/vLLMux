@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Box, ChevronDown, Loader2, Play, Plus, Power, RotateCw, Sparkles, Square } from '@lucide/vue'
+import { Box, ChevronDown, Gauge, Loader2, Play, Plus, Power, RotateCw, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import Card from '@/components/ui/Card.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import Tooltip from '@/components/ui/Tooltip.vue'
+import Dialog from '@/components/ui/Dialog.vue'
+import Input from '@/components/ui/Input.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import { useModelsStore } from '@/stores/models'
 import { useTrafficStore } from '@/stores/traffic'
 import { useModelControl } from '@/composables/useModelControl'
+import { useAuth } from '@/composables/useAuth'
+import { api } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import type { GroupLoad, ModelState, ModelView } from '@/types/api'
 
 const props = defineProps<{ group: string; instances: ModelView[]; load?: GroupLoad }>()
@@ -19,6 +24,49 @@ const { t } = useI18n()
 const models = useModelsStore()
 const traffic = useTrafficStore()
 const control = useModelControl()
+const { ensureUnlocked } = useAuth()
+
+// Group-level autoscaling policy (read from the static config summary). When on,
+// the autoscaler owns the instances and manual start/stop is disabled (409).
+const autoscale = computed(() => {
+  const k = props.instances[0]?.key
+  return k ? (models.engineConfig(k)?.autoscale ?? null) : null
+})
+const isAutoscaled = computed(() => !!autoscale.value?.enabled)
+
+const asOpen = ref(false)
+const asEnabled = ref(false)
+const asMinReady = ref(1)
+const asMaxReady = ref<number>(1)
+const asSaving = ref(false)
+
+function openAutoscale() {
+  const a = autoscale.value
+  asEnabled.value = !!a?.enabled
+  asMinReady.value = a?.min_ready ?? 1
+  asMaxReady.value = a?.max_ready ?? props.instances.length
+  asOpen.value = true
+}
+
+async function saveAutoscale() {
+  if (asSaving.value || !(await ensureUnlocked())) return
+  asSaving.value = true
+  try {
+    await api.setAutoscale(props.group, {
+      enabled: asEnabled.value,
+      min_ready: asMinReady.value,
+      max_ready: asMaxReady.value,
+    })
+    await models.loadConfig()
+    void models.refresh()
+    asOpen.value = false
+    toast.success(t(asEnabled.value ? 'modelGroup.autoscaleOn' : 'modelGroup.autoscaleOff', { group: props.group }))
+  } catch (e) {
+    toast.error(t('modelGroup.autoscaleFailed'), { description: String(e) })
+  } finally {
+    asSaving.value = false
+  }
+}
 
 const COLLAPSE_AT = 4
 const expanded = ref(false)
@@ -174,6 +222,19 @@ const startLockTitle = computed(() =>
         </div>
       </div>
       <div class="flex shrink-0 items-center gap-2">
+        <button
+          v-if="kind === 'llm'"
+          class="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+          :class="
+            isAutoscaled
+              ? 'border-[var(--chart-2)]/40 bg-[var(--chart-2)]/10 text-[var(--chart-2)]'
+              : 'border-border/60 text-muted-foreground hover:text-foreground'
+          "
+          :title="$t('modelGroup.autoscaleConfigure')"
+          @click.stop="openAutoscale"
+        >
+          <Gauge class="size-3" />{{ isAutoscaled ? $t('modelGroup.autoBadge') : $t('modelGroup.autoOff') }}
+        </button>
         <Badge
           v-if="uniformGpu !== null"
           variant="muted"
@@ -266,8 +327,8 @@ const startLockTitle = computed(() =>
             size="icon-sm"
             variant="ghost"
             class="text-status-ready hover:bg-status-ready/15 hover:text-status-ready"
-            :disabled="isBusy(model.key) || startLocked"
-            :title="startLockTitle"
+            :disabled="isBusy(model.key) || startLocked || isAutoscaled"
+            :title="isAutoscaled ? $t('modelGroup.autoscaledLocked') : startLockTitle"
             @click.stop="control.request(model.key, 'start')"
           >
             <Loader2 v-if="isBusy(model.key)" class="size-3.5 animate-spin" />
@@ -277,15 +338,17 @@ const startLockTitle = computed(() =>
             v-else
             size="icon-sm"
             variant="outline"
-            :disabled="!model.managed || model.state === 'stopping'"
+            :disabled="!model.managed || model.state === 'stopping' || isAutoscaled"
             :title="
-              !model.managed
-                ? t('modelGroup.externalNotManaged')
-                : model.state === 'failed'
-                  ? t('modelGroup.terminateHint')
-                  : model.state === 'starting'
-                    ? t('modelGroup.abortStartup')
-                    : t('modelGroup.stopHint')
+              isAutoscaled
+                ? $t('modelGroup.autoscaledLocked')
+                : !model.managed
+                  ? t('modelGroup.externalNotManaged')
+                  : model.state === 'failed'
+                    ? t('modelGroup.terminateHint')
+                    : model.state === 'starting'
+                      ? t('modelGroup.abortStartup')
+                      : t('modelGroup.stopHint')
             "
             @click.stop="control.request(model.key, 'stop')"
           >
@@ -331,37 +394,72 @@ const startLockTitle = computed(() =>
     </div>
 
     <div v-if="kind === 'llm' || instances.length > 1" class="flex gap-2 border-t border-border/40 p-3">
-      <template v-if="instances.length > 1">
+      <div
+        v-if="isAutoscaled"
+        class="flex flex-1 items-center justify-center gap-1.5 py-1 text-[11px] text-muted-foreground"
+      >
+        <Gauge class="size-3.5 text-[var(--chart-2)]" />{{ $t('modelGroup.autoscaledFooter') }}
+      </div>
+      <template v-else>
+        <template v-if="instances.length > 1">
+          <Button
+            size="sm"
+            variant="success"
+            class="flex-1"
+            :disabled="!startableKeys.length || startLocked"
+            :title="startLocked ? startLockTitle : t('modelGroup.startAll')"
+            @click="control.requestMany(startableKeys, 'start')"
+          >
+            <Play class="size-3.5" />{{ t('modelGroup.startAll') }}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            class="flex-1"
+            :disabled="!stoppableKeys.length"
+            @click="control.requestMany(stoppableKeys, 'stop')"
+          >
+            <Power class="size-3.5" />{{ t('modelGroup.stopAll') }}
+          </Button>
+        </template>
         <Button
-          size="sm"
-          variant="success"
-          class="flex-1"
-          :disabled="!startableKeys.length || startLocked"
-          :title="startLocked ? startLockTitle : t('modelGroup.startAll')"
-          @click="control.requestMany(startableKeys, 'start')"
-        >
-          <Play class="size-3.5" />{{ t('modelGroup.startAll') }}
-        </Button>
-        <Button
+          v-if="kind === 'llm'"
           size="sm"
           variant="outline"
-          class="flex-1"
-          :disabled="!stoppableKeys.length"
-          @click="control.requestMany(stoppableKeys, 'stop')"
+          :class="instances.length > 1 ? '' : 'flex-1'"
+          :title="t('modelGroup.addInstance')"
+          @click="emit('add-instance', group)"
         >
-          <Power class="size-3.5" />{{ t('modelGroup.stopAll') }}
+          <Plus class="size-3.5" />{{ t('modelGroup.addInstance') }}
         </Button>
       </template>
-      <Button
-        v-if="kind === 'llm'"
-        size="sm"
-        variant="outline"
-        :class="instances.length > 1 ? '' : 'flex-1'"
-        :title="t('modelGroup.addInstance')"
-        @click="emit('add-instance', group)"
-      >
-        <Plus class="size-3.5" />{{ t('modelGroup.addInstance') }}
-      </Button>
     </div>
   </Card>
+
+  <!-- Autoscale config -->
+  <Dialog v-model:open="asOpen" :title="$t('modelGroup.autoscaleTitle', { group })">
+    <div class="space-y-4">
+      <label class="flex items-center gap-3">
+        <input v-model="asEnabled" type="checkbox" class="size-4 accent-[var(--chart-2)]" />
+        <span class="text-sm font-medium">{{ $t('modelGroup.autoscaleEnable') }}</span>
+      </label>
+      <p class="text-[11px] text-muted-foreground">{{ $t('modelGroup.autoscaleHint') }}</p>
+      <div class="grid grid-cols-2 gap-3" :class="!asEnabled && 'pointer-events-none opacity-50'">
+        <label>
+          <span class="text-xs text-muted-foreground">{{ $t('modelGroup.minReady') }}</span>
+          <Input v-model.number="asMinReady" type="number" min="0" class="mt-1" />
+        </label>
+        <label>
+          <span class="text-xs text-muted-foreground">{{ $t('modelGroup.maxReady') }}</span>
+          <Input v-model.number="asMaxReady" type="number" min="1" class="mt-1" />
+        </label>
+      </div>
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" size="sm" @click="asOpen = false">{{ $t('common.cancel') }}</Button>
+        <Button size="sm" :disabled="asSaving" @click="saveAutoscale">
+          <Loader2 v-if="asSaving" class="size-4 animate-spin" />{{ $t('common.save') }}
+        </Button>
+      </div>
+    </div>
+  </Dialog>
 </template>

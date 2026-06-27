@@ -33,6 +33,24 @@ def test_new_group_is_added_whole():
     assert merged["LLM_engines"]["NewModel"]["instances"][0]["port"] == 9000
 
 
+def test_overlay_sets_autoscale_on_existing_group():
+    overlay = {"LLM_engines": {"Qwen3-0.6B": {"autoscale": {"enabled": True, "min_ready": 2}}}}
+    merged = merge_into(BASE, overlay)
+    grp = merged["LLM_engines"]["Qwen3-0.6B"]
+    assert grp["autoscale"] == {"enabled": True, "min_ready": 2}
+    # instances + model_config from the base survive an autoscale-only overlay.
+    assert len(grp["instances"]) == 2 and grp["model_config"]["model_tag"] == "Qwen/Qwen3-0.6B"
+
+
+def test_overlay_autoscale_replaces_base_policy():
+    base = {"LLM_engines": {"Q": {"instances": [{"id": "a", "port": 1}],
+                                  "model_config": {"model_tag": "o/q"},
+                                  "autoscale": {"enabled": True, "min_ready": 3}}}}
+    overlay = {"LLM_engines": {"Q": {"autoscale": {"enabled": False}}}}
+    merged = merge_into(base, overlay)
+    assert merged["LLM_engines"]["Q"]["autoscale"] == {"enabled": False}
+
+
 def test_new_instance_in_existing_group_is_appended():
     overlay = {"LLM_engines": {"Qwen3-0.6B": {"instances": [{"id": "c", "port": 8006}]}}}
     merged = merge_into(BASE, overlay)

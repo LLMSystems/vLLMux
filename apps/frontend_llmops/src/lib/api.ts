@@ -8,6 +8,7 @@ import type {
   DatasetDownloadJob,
   DownloadJob,
   EvalConfig,
+  AutoscaleConfig,
   EvalDataset,
   EvalDatasetPreview,
   GroupLoad,
@@ -129,6 +130,16 @@ export const api = {
     }),
   stopModel: (key: string) =>
     request<ModelView>(API_BASE, `/api/models/${enc(key)}/stop`, { method: 'POST' }),
+  /** Enable/disable + tune a group's autoscaling (no stop required). */
+  setAutoscale: (
+    group: string,
+    body: { enabled: boolean; min_ready?: number; max_ready?: number | null },
+  ) =>
+    request<{ group: string; autoscale: AutoscaleConfig | null }>(
+      API_BASE,
+      `/api/models/${enc(group)}/autoscale`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
   parseCommand: (command: string) =>
     request<ParsedModel>(API_BASE, '/api/models/parse', {
       method: 'POST',

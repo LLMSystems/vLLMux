@@ -78,6 +78,10 @@ def merge_into(base_raw: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
         if ov_cfg:
             base_cfg = base_group.setdefault("model_config", {})
             base_cfg.update(copy.deepcopy(ov_cfg))
+        # autoscale: a single policy object — the overlay replaces it wholesale
+        # (so the UI can switch it on or off regardless of what config.yaml declares).
+        if "autoscale" in entry:
+            base_group["autoscale"] = copy.deepcopy(entry["autoscale"])
         # instances: override by id, else append.
         base_instances = base_group.setdefault("instances", [])
         idx_by_id = {i.get("id"): n for n, i in enumerate(base_instances)}
