@@ -116,6 +116,9 @@ class Autoscaler:
 
     def __init__(self) -> None:
         self.timing: dict[str, GroupTiming] = {}
+        # Monotonic counters surfaced as Prometheus metrics (Phase 4).
+        self.action_counts: dict[tuple[str, str], int] = {}   # (group, verb) -> n
+        self.blocked_counts: dict[tuple[str, str], int] = {}  # (group, reason) -> n
 
     async def tick(self, app, manager) -> None:
         load_stats = getattr(app.state, "load_stats", {}) or {}
@@ -148,6 +151,9 @@ class Autoscaler:
                 await self._apply(manager, verb, key)
 
     async def _apply(self, manager, verb: str, key: str) -> None:
+        from app.llmops.manager import GpuUnavailable, VRAMInsufficient
+
+        group = key.partition("::")[0]
         try:
             if verb == "wake":
                 await manager.wake(key)
@@ -157,10 +163,16 @@ class Autoscaler:
                 await manager.sleep(key)
             elif verb == "stop":
                 await manager.stop(key)
+            self.action_counts[(group, verb)] = self.action_counts.get((group, verb), 0) + 1
             logger.info("autoscaler: %s %s", verb, key)
+        except (VRAMInsufficient, GpuUnavailable) as e:
+            # Wanted to scale up but the GPU can't take it — surface as a counter so
+            # an alert can fire ("autoscaler is stuck wanting capacity").
+            self.blocked_counts[(group, "vram")] = self.blocked_counts.get((group, "vram"), 0) + 1
+            logger.info("autoscaler: %s %s blocked by VRAM (%s)", verb, key, e)
         except Exception as e:
-            # VRAM preflight, sleep endpoint errors, etc. are expected back-pressure —
-            # log and let the next tick reassess rather than crash the loop.
+            # Sleep endpoint errors etc. are expected back-pressure — log and let
+            # the next tick reassess rather than crash the loop.
             logger.info("autoscaler: %s %s skipped (%s)", verb, key, e)
 
 

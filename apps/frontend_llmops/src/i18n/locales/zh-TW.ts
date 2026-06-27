@@ -181,6 +181,7 @@ export default {
 
   monitoring: {
     overview: '總覽',
+    autoscaling: '自動擴縮',
     vllmCapacity: 'vLLM 容量',
     vllmPerf: 'vLLM 效能',
     vllmQuery: 'vLLM 請求',

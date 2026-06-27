@@ -1,0 +1,98 @@
+# Provisioned Grafana alert rules for autoscaling (Phase 4).
+#
+# Same three-stage shape as vllm.yaml (A = Prometheus range query, B = reduce to
+# last value, C = threshold). Metrics come from the dashboard backend's /metrics
+# (job: llmops-backend). Thresholds are starting points — tune to your fleet.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Autoscaling
+    folder: Alerts
+    interval: 1m
+    rules:
+      - uid: autoscale-vram-blocked
+        title: Autoscaler blocked by VRAM
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The autoscaler wanted to add a replica but the VRAM pre-flight refused — the fleet is starved for GPU. Free a GPU or lower gpu_memory_utilization."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum by (group) (increase(llmops_autoscale_blocked_total{reason="vram"}[10m]))'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C
+
+      - uid: autoscale-saturated-at-max
+        title: Group saturated at max replicas
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth per replica is above the scale-up threshold but the group is already at max_ready — it can't scale further. Raise max_ready (add instances to the pool) or add GPU capacity."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(llmops_group_waiting_per_replica > llmops_group_scale_up_waiting) and (llmops_group_ready_replicas >= llmops_group_max_ready)'
+              instant: false
+              range: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C

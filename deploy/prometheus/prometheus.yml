@@ -27,6 +27,14 @@ scrape_configs:
         separator: "::"
         target_label: instance
 
+  # Autoscaling metrics from the dashboard backend (per-group replica counts,
+  # queue depth, scale actions). Prometheus shares the backend's netns, so the
+  # backend's own HTTP port resolves on localhost.
+  - job_name: llmops-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:5000"]
+
   # GPU telemetry (utilization, memory, temperature, power) from dcgm-exporter.
   # Reachable by service name on the compose network (prometheus shares the
   # backend's netns, which is attached to that network).

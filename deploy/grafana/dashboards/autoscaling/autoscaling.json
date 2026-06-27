@@ -1,0 +1,121 @@
+{
+  "uid": "llmops-autoscaling",
+  "title": "Autoscaling",
+  "tags": ["llmops", "autoscaling"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "group",
+        "label": "Group",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(llmops_group_autoscale_enabled, group)", "refId": "A" },
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Ready replicas",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "auto", "orientation": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_ready_replicas{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "ready" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Asleep replicas",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "auto", "orientation": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_asleep_replicas{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "asleep" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Queue depth (waiting)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 20 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "auto", "orientation": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_waiting_total{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "waiting" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Autoscale",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }, "mappings": [{ "type": "value", "options": { "0": { "text": "OFF" }, "1": { "text": "ON" } } }] }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value", "orientation": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_autoscale_enabled{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "enabled" }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Replica ladder (ready / asleep / stopped)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 30, "stacking": { "mode": "normal", "group": "A" }, "lineWidth": 1 } }, "overrides": [{ "matcher": { "id": "byName", "options": "ready" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }, { "matcher": { "id": "byName", "options": "asleep" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] }, { "matcher": { "id": "byName", "options": "stopped" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "gray" } }] }] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_ready_replicas{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "ready" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_asleep_replicas{group=\"$group\"}", "range": true, "refId": "B", "legendFormat": "asleep" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_stopped_replicas{group=\"$group\"}", "range": true, "refId": "C", "legendFormat": "stopped" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Queue per replica vs scale-up threshold",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [{ "matcher": { "id": "byName", "options": "scale-up threshold" }, "properties": [{ "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 }] }] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_waiting_per_replica{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "waiting / replica" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_scale_up_waiting{group=\"$group\"}", "range": true, "refId": "B", "legendFormat": "scale-up threshold" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Ready vs max_ready",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [{ "matcher": { "id": "byName", "options": "max_ready" }, "properties": [{ "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "custom.fillOpacity", "value": 0 }] }] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_ready_replicas{group=\"$group\"}", "range": true, "refId": "A", "legendFormat": "ready" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "llmops_group_max_ready{group=\"$group\"}", "range": true, "refId": "B", "legendFormat": "max_ready" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Scale actions & VRAM-blocked (5m)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 } }, "overrides": [{ "matcher": { "id": "byName", "options": "blocked (vram)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "increase(llmops_autoscale_actions_total{group=\"$group\"}[5m])", "range": true, "refId": "A", "legendFormat": "{{action}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "increase(llmops_autoscale_blocked_total{group=\"$group\",reason=\"vram\"}[5m])", "range": true, "refId": "B", "legendFormat": "blocked (vram)" }
+      ]
+    }
+  ]
+}

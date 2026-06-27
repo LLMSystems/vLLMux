@@ -189,6 +189,7 @@ export default {
   // ---- Monitoring ----
   monitoring: {
     overview: 'Overview',
+    autoscaling: 'Autoscaling',
     vllmCapacity: 'vLLM Capacity',
     vllmPerf: 'vLLM Performance',
     vllmQuery: 'vLLM Queries',

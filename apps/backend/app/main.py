@@ -23,6 +23,7 @@ from app.api import downloads as download_routes
 from app.api import embedding as embedding_routes
 from app.api import eval as eval_routes
 from app.api import lora as lora_routes
+from app.api import metrics as metrics_routes
 from app.api import models as model_routes
 from app.api import perf as perf_routes
 from app.api import observability as observability_routes
@@ -174,6 +175,8 @@ def create_app() -> FastAPI:
     app.include_router(embedding_routes.router, prefix="/api")
     app.include_router(perf_routes.router, prefix="/api")
     app.include_router(eval_routes.router, prefix="/api")
+    # Prometheus exposition at root /metrics (scraped by the bundled Prometheus).
+    app.include_router(metrics_routes.router)
 
     @app.get("/healthz", tags=["health"])
     async def healthz():
