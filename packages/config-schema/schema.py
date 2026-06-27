@@ -102,6 +102,9 @@ class LLMEngine(BaseModel):
     instances: list[InstanceConfig] = Field(default_factory=list)
     settings: EngineModelConfig = Field(alias="model_config")
     autoscale: Optional[AutoscaleConfig] = None
+    # Cross-model fallback chain (router-only): other group names to try, in order,
+    # when every instance of this group is unavailable. See docs/routing-strategies.md.
+    fallback: Optional[list[str]] = None
 
 
 class EmbeddingModelEntry(BaseModel):

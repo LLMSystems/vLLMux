@@ -58,3 +58,13 @@ def test_overlay_adds_new_group_whole():
     base = {"LLM_engines": {}}
     overlay = {"LLM_engines": {"New": {"instances": [{"id": "x", "port": 1}], "model_config": {}}}}
     assert "New" in merge_into(base, overlay)["LLM_engines"]
+
+
+def test_overlay_carries_fallback_onto_existing_group():
+    # A UI-set fallback (overlay-only) must reach the router, else cross-model
+    # fallback never fires for config.yaml-defined groups.
+    base = {"LLM_engines": {"A": {"instances": [{"id": "a", "port": 1}], "model_config": {}}}}
+    overlay = {"LLM_engines": {"A": {"fallback": ["B"]}}}
+    merged = merge_into(base, overlay)["LLM_engines"]["A"]
+    assert merged["fallback"] == ["B"]
+    assert merged["instances"][0]["port"] == 1  # base instances survive

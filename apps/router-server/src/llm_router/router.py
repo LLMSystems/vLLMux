@@ -13,7 +13,7 @@ from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
 from src.llm_router.auth import authenticate
 from src.llm_router.routing_strategies import (DEFAULT_STRATEGY, STRATEGIES,
                                                select_instance)
-from src.llm_router.lora import iter_models, resolve_model
+from src.llm_router.lora import build_route_chain, iter_models, resolve_model
 from src.llm_router.overlay import load_config_with_overlay
 
 logger = logging.getLogger(__name__)
@@ -289,9 +289,10 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
                 detail=f"Model '{requested}' is a pooling model (kind={resolved['kind']}); "
                        f"use /v1/embeddings or /v1/rerank.",
             )
-        model_key = resolved["route_key"]
-        model_cfg = resolved["model_cfg"]
-        request_json["model"] = resolved["forward_name"]
+        # Route chain: the resolved primary group, then its fallback groups —
+        # tried in order when a whole group is unavailable (all instances down /
+        # asleep), so a request degrades to another model instead of failing.
+        chain = build_route_chain(config, resolved)
 
         # For streaming, ask the backend to emit a final usage chunk so token
         # counts can be logged (otherwise streamed requests log no tokens).
@@ -304,68 +305,92 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
             request_json["stream_options"] = opts
 
         client = request.app.state.http_client
-        instances = model_cfg.get("instances", [])
-        # At most one failover hop per extra instance, capped so a bad request
-        # storming every backend stays bounded.
-        max_attempts = max(1, min(len(instances), 3))
-        tried: set[str] = set()
         response = None
+        last_exc: HTTPException | None = None
 
-        # Routing policy + the inputs the affinity strategies need (computed once;
-        # key extraction is skipped for strategies that don't use it).
-        strategy_name = _resolve_strategy(request.app, model_cfg)
-        session_key = _session_key(request, request_json) if strategy_name == "session_affinity" else None
-        prompt_prefix = _prompt_prefix(request_json) if strategy_name == "prefix_affinity" else None
+        for target in chain:
+            model_key = target["route_key"]
+            model_cfg = target["model_cfg"]
+            request_json["model"] = target["forward_name"]
+            instances = model_cfg.get("instances", [])
+            # At most one failover hop per extra instance, capped so a bad request
+            # storming every backend stays bounded.
+            max_attempts = max(1, min(len(instances), 3))
+            tried: set[str] = set()
 
-        for attempt in range(max_attempts):
-            instance = await select_instance(
-                request.app, model_key, model_cfg,
-                strategy=strategy_name, exclude=tried,
-                session_key=session_key, prompt_prefix=prompt_prefix,
-            )
-            instance_id = instance["id"]
-            tried.add(instance_id)
+            # Routing policy + the inputs the affinity strategies need (per group;
+            # key extraction is skipped for strategies that don't use it).
+            strategy_name = _resolve_strategy(request.app, model_cfg)
+            session_key = _session_key(request, request_json) if strategy_name == "session_affinity" else None
+            prompt_prefix = _prompt_prefix(request_json) if strategy_name == "prefix_affinity" else None
 
-            host = instance.get("host", "localhost")
-            port = instance["port"]
-            target_url = f"http://{host}:{port}{upstream_path}"
+            response = None
+            exhausted = False
+            for attempt in range(max_attempts):
+                try:
+                    instance = await select_instance(
+                        request.app, model_key, model_cfg,
+                        strategy=strategy_name, exclude=tried,
+                        session_key=session_key, prompt_prefix=prompt_prefix,
+                    )
+                except HTTPException as e:
+                    # No servable instance in this group (all down / asleep / tried):
+                    # exhaust it and let the chain try the next fallback group.
+                    last_exc = e
+                    exhausted = True
+                    break
+                instance_id = instance["id"]
+                tried.add(instance_id)
 
-            incr_inflight(request.app, model_key, instance_id)
-            inflight_counted = True
-            try:
-                stream_ctx = client.stream("POST", target_url, json=request_json)
-                response = await stream_ctx.__aenter__()
-                owns_stream = True
-            except Exception as e:
-                # Transport error before any byte reached the client: safe to
-                # fail over to another instance.
-                mark_backend_failure(
-                    request.app, model_key, instance_id, error=str(e), cooldown_seconds=10.0,
-                )
-                decr_inflight(request.app, model_key, instance_id)
-                inflight_counted = False
-                stream_ctx = None
-                if attempt < max_attempts - 1:
+                host = instance.get("host", "localhost")
+                port = instance["port"]
+                target_url = f"http://{host}:{port}{upstream_path}"
+
+                incr_inflight(request.app, model_key, instance_id)
+                inflight_counted = True
+                try:
+                    stream_ctx = client.stream("POST", target_url, json=request_json)
+                    response = await stream_ctx.__aenter__()
+                    owns_stream = True
+                except Exception as e:
+                    # Transport error before any byte reached the client: safe to
+                    # fail over to another instance, then to the next group.
+                    mark_backend_failure(
+                        request.app, model_key, instance_id, error=str(e), cooldown_seconds=10.0,
+                    )
+                    decr_inflight(request.app, model_key, instance_id)
+                    inflight_counted = False
+                    stream_ctx = None
+                    if attempt < max_attempts - 1:
+                        continue
+                    last_exc = HTTPException(status_code=503, detail="All backends unavailable")
+                    exhausted = True
+                    response = None
+                    break
+
+                # A 5xx means the backend failed but sent no usable body yet, so we
+                # can still fail over — unless this was our last attempt, in which
+                # case we surface the 5xx to the client.
+                if response.status_code >= 500 and attempt < max_attempts - 1:
+                    mark_backend_failure(
+                        request.app, model_key, instance_id,
+                        error=f"Received status code {response.status_code}",
+                        cooldown_seconds=10.0,
+                    )
+                    await stream_ctx.__aexit__(None, None, None)
+                    owns_stream = False
+                    stream_ctx = None
+                    decr_inflight(request.app, model_key, instance_id)
+                    inflight_counted = False
                     continue
-                raise HTTPException(status_code=503, detail="All backends unavailable")
 
-            # A 5xx means the backend failed but sent no usable body yet, so we
-            # can still fail over — unless this was our last attempt, in which
-            # case we surface the 5xx to the client.
-            if response.status_code >= 500 and attempt < max_attempts - 1:
-                mark_backend_failure(
-                    request.app, model_key, instance_id,
-                    error=f"Received status code {response.status_code}",
-                    cooldown_seconds=10.0,
-                )
-                await stream_ctx.__aexit__(None, None, None)
-                owns_stream = False
-                stream_ctx = None
-                decr_inflight(request.app, model_key, instance_id)
-                inflight_counted = False
-                continue
+                break  # got a response we'll serve (2xx/4xx, or final-attempt 5xx)
 
-            break  # got a response we'll serve (2xx/4xx, or final-attempt 5xx)
+            if response is not None and not exhausted:
+                break  # this group served — stop walking the fallback chain
+
+        if response is None:
+            raise last_exc or HTTPException(status_code=503, detail="All backends unavailable")
 
         if response.status_code < 500:
             mark_backend_success(request.app, model_key, instance_id)

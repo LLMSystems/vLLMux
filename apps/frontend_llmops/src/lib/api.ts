@@ -130,6 +130,13 @@ export const api = {
     }),
   stopModel: (key: string) =>
     request<ModelView>(API_BASE, `/api/models/${enc(key)}/stop`, { method: 'POST' }),
+  /** Set/clear a group's cross-model fallback chain (no stop required). */
+  setFallback: (group: string, fallback: string[]) =>
+    request<{ group: string; fallback: string[] | null }>(
+      API_BASE,
+      `/api/models/${enc(group)}/fallback`,
+      { method: 'PUT', body: JSON.stringify({ fallback }) },
+    ),
   /** Enable/disable + tune a group's autoscaling (no stop required). */
   setAutoscale: (
     group: string,

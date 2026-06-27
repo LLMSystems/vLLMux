@@ -120,6 +120,21 @@ CONFIG_2 = {
 }
 
 
+CONFIG_FB = {
+    "LLM_engines": {
+        "A": {
+            "instances": [{"id": "a1", "host": "localhost", "port": 9001}],
+            "model_config": {"model_tag": "org/a"},
+            "fallback": ["B"],
+        },
+        "B": {
+            "instances": [{"id": "b1", "host": "localhost", "port": 9002}],
+            "model_config": {"model_tag": "org/b"},
+        },
+    }
+}
+
+
 def build_client(config, http_client):
     app = FastAPI()
     app.include_router(llm_router)
@@ -205,6 +220,39 @@ def test_failover_on_transport_error():
     resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
     assert resp.status_code == 200
     assert len(http.calls) == 2
+    assert client.app.state.backend_inflight == {}
+
+
+def test_cross_group_fallback_serves_from_next_group():
+    # Group A's only instance is unreachable -> fall back to group B, which serves.
+    http = SequencedHTTPClient([ConnectionError("A down"), FakeResponse(status_code=200)])
+    client = build_client(CONFIG_FB, http)
+    resp = client.post("/v1/chat/completions", json={"model": "A", "prompt": "hi"})
+    assert resp.status_code == 200
+    assert len(http.calls) == 2
+    # Second hop went to B's port, forwarding B's own model_tag.
+    assert ":9002" in http.calls[1]["url"]
+    assert http.calls[1]["json"]["model"] == "org/b"
+    # Logged under the group that actually served (B); accounting balanced.
+    assert client.app.state.store.reqs[-1]["model_key"] == "B"
+    assert client.app.state.backend_inflight == {}
+
+
+def test_no_fallback_when_primary_serves():
+    http = SequencedHTTPClient([FakeResponse(status_code=200)])
+    client = build_client(CONFIG_FB, http)
+    resp = client.post("/v1/chat/completions", json={"model": "A", "prompt": "hi"})
+    assert resp.status_code == 200
+    assert len(http.calls) == 1 and ":9001" in http.calls[0]["url"]  # only A touched
+    assert client.app.state.store.reqs[-1]["model_key"] == "A"
+
+
+def test_fallback_chain_all_down_returns_503():
+    http = SequencedHTTPClient([ConnectionError("A"), ConnectionError("B")])
+    client = build_client(CONFIG_FB, http)
+    resp = client.post("/v1/chat/completions", json={"model": "A", "prompt": "hi"})
+    assert resp.status_code == 503
+    assert len(http.calls) == 2  # tried A then B
     assert client.app.state.backend_inflight == {}
 
 

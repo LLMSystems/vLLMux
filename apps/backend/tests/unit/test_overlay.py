@@ -51,6 +51,13 @@ def test_overlay_autoscale_replaces_base_policy():
     assert merged["LLM_engines"]["Q"]["autoscale"] == {"enabled": False}
 
 
+def test_overlay_sets_and_replaces_fallback_chain():
+    merged = merge_into(BASE, {"LLM_engines": {"Qwen3-0.6B": {"fallback": ["Other"]}}})
+    grp = merged["LLM_engines"]["Qwen3-0.6B"]
+    assert grp["fallback"] == ["Other"]
+    assert len(grp["instances"]) == 2  # base instances survive an autoscale/fallback-only overlay
+
+
 def test_new_instance_in_existing_group_is_appended():
     overlay = {"LLM_engines": {"Qwen3-0.6B": {"instances": [{"id": "c", "port": 8006}]}}}
     merged = merge_into(BASE, overlay)

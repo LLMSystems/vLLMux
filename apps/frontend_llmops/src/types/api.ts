@@ -153,6 +153,8 @@ export interface ConfigSummary {
       }
       /** Group-level autoscaling policy (null = not autoscaled). */
       autoscale: AutoscaleConfig | null
+      /** Cross-model fallback chain: other group names to try when this is down. */
+      fallback: string[] | null
     }
   >
   embedding_server: {

@@ -236,6 +236,26 @@ async def set_group_autoscale(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid autoscale config: {e}")
 
 
+class FallbackRequest(BaseModel):
+    """Group cross-model fallback chain (other group names, in order)."""
+    fallback: list[str] = Field(default_factory=list)
+
+
+@router.put("/{group}/fallback", dependencies=[Depends(require_admin)])
+async def set_group_fallback(
+    group: str, body: FallbackRequest, manager: ModelManager = Depends(get_manager)
+):
+    """Set/clear a group's cross-model fallback chain. No stop required."""
+    try:
+        return {"group": group, "fallback": await manager.set_fallback(group, body.fallback)}
+    except ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown group: {group}")
+    except ModelConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except Exception as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid fallback config: {e}")
+
+
 @router.post("/{key}/sleep", response_model=ModelView,
              dependencies=[Depends(require_admin)])
 async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(get_manager)):

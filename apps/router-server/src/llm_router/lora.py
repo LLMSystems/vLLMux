@@ -66,6 +66,28 @@ def resolve_model(config: dict, requested: str) -> Optional[dict]:
     return None
 
 
+def build_route_chain(config: dict, primary: dict) -> list[dict]:
+    """Ordered list of resolved targets to try: the primary, then its fallback
+    groups. Fallbacks come from the primary group's `fallback` list (group names),
+    each resolved and kept only if it exists and serves the same kind. Deduped and
+    loop-protected, so a request degrades to another model when the primary group
+    is fully down instead of failing outright. One level (a fallback's own
+    `fallback` is not followed) to keep the chain bounded and predictable.
+    """
+    chain = [primary]
+    seen = {primary["route_key"]}
+    engine = config.get("LLM_engines", {}).get(primary["route_key"], {})
+    for name in engine.get("fallback") or []:
+        if name in seen:
+            continue
+        target = resolve_model(config, name)
+        if target is None or target["kind"] != primary["kind"]:
+            continue
+        seen.add(target["route_key"])
+        chain.append(target)
+    return chain
+
+
 def iter_models(config: dict) -> list[dict[str, Any]]:
     """Flat /v1/models payload: every base group, plus each LoRA with a parent."""
     out: list[dict[str, Any]] = []

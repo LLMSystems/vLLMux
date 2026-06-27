@@ -32,6 +32,7 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
         settings_full = settings.model_dump()
         # Group-level autoscaling policy (same for every instance in the group).
         autoscale = engine.autoscale.model_dump() if engine.autoscale else None
+        fallback = list(engine.fallback) if engine.fallback else None
 
         for inst in engine.instances:
             inst_extra = _extra(inst)
@@ -51,6 +52,7 @@ def summarize_config(config: RootConfig) -> dict[str, Any]:
                 # Complete model_config for this instance (shared settings + overrides).
                 "settings": {**settings_full, **inst_extra},
                 "autoscale": autoscale,
+                "fallback": fallback,
             }
 
     def _emb_models(models) -> dict[str, Any]:

@@ -435,6 +435,29 @@ class ModelManager:
                     group, resolved.enabled if resolved else False)
         return resolved.model_dump() if resolved else None
 
+    async def set_fallback(self, group: str, fallback: Optional[list]) -> Optional[list]:
+        """Set (or clear, when None/empty) a group's cross-model fallback chain in
+        the overlay. Router-only and picked up on the next /reload, so no restart.
+        Validates each target exists; self-references are dropped."""
+        from app.services.overlay import build_merged_config, load_overlay, save_overlay
+
+        if group not in self.config.LLM_engines:
+            raise ModelNotFound(group)
+        chain = [g for g in (fallback or []) if g != group]
+        unknown = [g for g in chain if g not in self.config.LLM_engines]
+        if unknown:
+            raise ModelConflict(f"unknown fallback group(s): {', '.join(unknown)}")
+
+        overlay = load_overlay(self.overlay_path)
+        entry = overlay.setdefault("LLM_engines", {}).setdefault(group, {})
+        entry["fallback"] = chain  # [] clears it
+        new_config = build_merged_config(self.config_path, overlay)  # validates
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+        await self.trigger_router_reload()  # router resolves the chain on reload
+        logger.info("Set fallback for %s -> %s", group, chain or "(none)")
+        return new_config.LLM_engines[group].fallback
+
     # -- Dynamic models (overlay) ---------------------------------------------
 
     def _used_ports(self) -> set[int]:

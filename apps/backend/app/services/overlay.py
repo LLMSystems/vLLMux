@@ -82,6 +82,9 @@ def merge_into(base_raw: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
         # (so the UI can switch it on or off regardless of what config.yaml declares).
         if "autoscale" in entry:
             base_group["autoscale"] = copy.deepcopy(entry["autoscale"])
+        # fallback: a router-only group list — overlay replaces it wholesale too.
+        if "fallback" in entry:
+            base_group["fallback"] = copy.deepcopy(entry["fallback"])
         # instances: override by id, else append.
         base_instances = base_group.setdefault("instances", [])
         idx_by_id = {i.get("id"): n for n, i in enumerate(base_instances)}

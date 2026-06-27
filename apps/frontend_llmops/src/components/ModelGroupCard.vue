@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Box, ChevronDown, Gauge, Loader2, Play, Plus, Power, RotateCw, Sparkles, Square } from '@lucide/vue'
+import { Box, ChevronDown, Gauge, Loader2, Play, Plus, Power, RotateCw, Shuffle, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import Card from '@/components/ui/Card.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -65,6 +65,44 @@ async function saveAutoscale() {
     toast.error(t('modelGroup.autoscaleFailed'), { description: String(e) })
   } finally {
     asSaving.value = false
+  }
+}
+
+// Cross-model fallback chain: other group names to try when this group is down.
+const fallback = computed(() => {
+  const k = props.instances[0]?.key
+  return k ? (models.engineConfig(k)?.fallback ?? null) : null
+})
+const otherGroups = computed(() =>
+  [...new Set(Object.keys(models.config?.LLM_engines ?? {}).map((k) => k.split('::')[0] ?? k))].filter(
+    (g) => g !== props.group,
+  ),
+)
+const fbOpen = ref(false)
+const fbSelected = ref<string[]>([])
+const fbSaving = ref(false)
+
+function openFallback() {
+  fbSelected.value = [...(fallback.value ?? [])]
+  fbOpen.value = true
+}
+function toggleFb(g: string) {
+  const i = fbSelected.value.indexOf(g)
+  if (i >= 0) fbSelected.value.splice(i, 1)
+  else fbSelected.value.push(g) // selection order = fallback order
+}
+async function saveFallback() {
+  if (fbSaving.value || !(await ensureUnlocked())) return
+  fbSaving.value = true
+  try {
+    await api.setFallback(props.group, fbSelected.value)
+    await models.loadConfig()
+    fbOpen.value = false
+    toast.success(t('modelGroup.fallbackSaved', { group: props.group }))
+  } catch (e) {
+    toast.error(t('modelGroup.fallbackFailed'), { description: String(e) })
+  } finally {
+    fbSaving.value = false
   }
 }
 
@@ -234,6 +272,19 @@ const startLockTitle = computed(() =>
           @click.stop="openAutoscale"
         >
           <Gauge class="size-3" />{{ isAutoscaled ? $t('modelGroup.autoBadge') : $t('modelGroup.autoOff') }}
+        </button>
+        <button
+          v-if="kind === 'llm'"
+          class="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+          :class="
+            fallback && fallback.length
+              ? 'border-[var(--chart-3)]/40 bg-[var(--chart-3)]/10 text-[var(--chart-3)]'
+              : 'border-border/60 text-muted-foreground hover:text-foreground'
+          "
+          :title="fallback && fallback.length ? `${$t('modelGroup.fallbackTitleShort')}: ${fallback.join(' → ')}` : $t('modelGroup.fallbackConfigure')"
+          @click.stop="openFallback"
+        >
+          <Shuffle class="size-3" />{{ fallback && fallback.length ? $t('modelGroup.fallbackCount', { n: fallback.length }) : $t('modelGroup.fallbackOff') }}
         </button>
         <Badge
           v-if="uniformGpu !== null"
@@ -458,6 +509,41 @@ const startLockTitle = computed(() =>
         <Button variant="outline" size="sm" @click="asOpen = false">{{ $t('common.cancel') }}</Button>
         <Button size="sm" :disabled="asSaving" @click="saveAutoscale">
           <Loader2 v-if="asSaving" class="size-4 animate-spin" />{{ $t('common.save') }}
+        </Button>
+      </div>
+    </div>
+  </Dialog>
+
+  <!-- Cross-model fallback -->
+  <Dialog v-model:open="fbOpen" :title="$t('modelGroup.fallbackTitle', { group })">
+    <div class="space-y-4">
+      <p class="text-[11px] text-muted-foreground">{{ $t('modelGroup.fallbackHint') }}</p>
+      <p v-if="!otherGroups.length" class="text-sm text-muted-foreground">
+        {{ $t('modelGroup.fallbackNoGroups') }}
+      </p>
+      <div v-else class="flex flex-wrap gap-2">
+        <button
+          v-for="g in otherGroups"
+          :key="g"
+          class="flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm transition-colors"
+          :class="
+            fbSelected.includes(g)
+              ? 'border-[var(--chart-3)] bg-[var(--chart-3)]/10 text-[var(--chart-3)]'
+              : 'border-input text-muted-foreground hover:text-foreground'
+          "
+          @click="toggleFb(g)"
+        >
+          <span v-if="fbSelected.includes(g)" class="tabular text-xs font-semibold">{{ fbSelected.indexOf(g) + 1 }}</span>
+          {{ g }}
+        </button>
+      </div>
+      <p v-if="fbSelected.length" class="text-xs text-muted-foreground">
+        {{ $t('modelGroup.fallbackOrder') }}: <span class="font-mono text-foreground">{{ group }} → {{ fbSelected.join(' → ') }}</span>
+      </p>
+      <div class="flex justify-end gap-2">
+        <Button variant="outline" size="sm" @click="fbOpen = false">{{ $t('common.cancel') }}</Button>
+        <Button size="sm" :disabled="fbSaving" @click="saveFallback">
+          <Loader2 v-if="fbSaving" class="size-4 animate-spin" />{{ $t('common.save') }}
         </Button>
       </div>
     </div>

@@ -51,6 +51,13 @@ def merge_into(base: dict, overlay: dict) -> dict:
         ov_cfg = entry.get("model_config")
         if ov_cfg:
             base_group.setdefault("model_config", {}).update(copy.deepcopy(ov_cfg))
+        # Router-relevant group fields the UI sets via the overlay: `fallback`
+        # (cross-model chain the router resolves) replaces wholesale; `autoscale`
+        # is backend-only but carried for parity so both merges match.
+        if "fallback" in entry:
+            base_group["fallback"] = copy.deepcopy(entry["fallback"])
+        if "autoscale" in entry:
+            base_group["autoscale"] = copy.deepcopy(entry["autoscale"])
         base_instances = base_group.setdefault("instances", [])
         idx_by_id = {i.get("id"): n for n, i in enumerate(base_instances)}
         for inst in entry.get("instances", []):
