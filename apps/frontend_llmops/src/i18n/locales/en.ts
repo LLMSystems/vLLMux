@@ -58,6 +58,16 @@ export default {
   // ---- Sidebar ----
   sidebar: {
     console: 'Console',
+    section: {
+      operate: 'Operate',
+      lab: 'Lab',
+      library: 'Library',
+      admin: 'Admin',
+      system: 'System',
+    },
+    collapse: 'Collapse sidebar',
+    expand: 'Expand sidebar',
+    readonly: 'Read-only for your role',
     overview: 'Overview',
     models: 'Models',
     traffic: 'Traffic',

@@ -56,6 +56,16 @@ export default {
 
   sidebar: {
     console: '控制台',
+    section: {
+      operate: '運維',
+      lab: '實驗',
+      library: '資料庫',
+      admin: '管理',
+      system: '系統',
+    },
+    collapse: '收合側欄',
+    expand: '展開側欄',
+    readonly: '你的角色為唯讀',
     overview: '總覽',
     models: '模型',
     traffic: '流量',
