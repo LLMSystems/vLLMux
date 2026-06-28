@@ -47,6 +47,31 @@ async def reload_config(request: Request):
     return {"status": "reloaded", "groups": groups}
 
 
+@router.get("/health")
+async def health():
+    """Liveness probe: the process is up. No auth, no dependencies — for k8s
+    `livenessProbe` / load-balancer health checks. Restart the pod only if this
+    stops answering."""
+    return {"status": "ok"}
+
+
+@router.get("/ready")
+async def ready(request: Request):
+    """Readiness probe: the router has a loaded config and finished startup, so it
+    can resolve + route. Returns 503 until then so a load balancer holds traffic
+    during boot or a reload window (no auth — for k8s `readinessProbe`)."""
+    state = request.app.state
+    config = getattr(state, "config", None)
+    started = hasattr(state, "http_client")  # set in lifespan once startup is done
+    if not config or not started:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not ready",
+                     "reason": "config not loaded" if not config else "starting"},
+        )
+    return {"status": "ready", "groups": len(config.get("LLM_engines", {}))}
+
+
 @router.get("/routing")
 async def get_routing(request: Request):
     """Current global routing strategy + the selectable catalogue.
