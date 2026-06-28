@@ -169,6 +169,14 @@ class ModelManager:
             await self.store.set_instance_desired(key, desired)
         except Exception:
             logger.warning("Failed to persist desired=%s for %s", desired, key, exc_info=True)
+        # HA Phase 3b: claim this instance for this node when it should be live
+        # (running/asleep). Collapsed = the single local node owns everything; the
+        # scheduler (3c) will instead place it across nodes. Best-effort.
+        if desired != Desired.STOPPED.value and hasattr(self.store, "set_assignment"):
+            try:
+                await self.store.set_assignment(key, self.settings.instance_id)
+            except Exception:
+                logger.warning("Failed to assign %s to this node", key, exc_info=True)
 
     async def replay_desired(self) -> None:
         """On boot (after adopt_running): start instances whose persisted desired is
@@ -799,6 +807,11 @@ class ModelManager:
                 await self.store.delete_instance_desired(key)
             except Exception:
                 logger.warning("Failed to clear desired for deleted %s", key, exc_info=True)
+            if hasattr(self.store, "delete_assignment"):
+                try:
+                    await self.store.delete_assignment(key)
+                except Exception:
+                    logger.warning("Failed to clear assignment for deleted %s", key, exc_info=True)
         logger.info("Deleted dynamic model %s", key)
 
     # -- Config export / import (versioning) ----------------------------------

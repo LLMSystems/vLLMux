@@ -133,6 +133,13 @@ class BackendSettings:
     node_host: str = ""
     live_ttl: float = 30.0
 
+    # HA Phase 3b: node-agent heartbeat. node_id reuses instance_id (the same id
+    # used for the leader lease and live-address node_id). The agent re-registers
+    # its capacity every node_heartbeat_interval; a node whose row passes node_ttl
+    # is considered down by the scheduler.
+    node_heartbeat_interval: float = 10.0
+    node_ttl: float = 30.0
+
     @property
     def auth_enabled(self) -> bool:
         return bool(self.admin_token)
@@ -190,6 +197,8 @@ class BackendSettings:
             leader_lease_ttl=_env_float("LLMOPS_LEADER_LEASE_TTL", 15.0),
             node_host=os.environ.get("LLMOPS_NODE_HOST", "").strip(),
             live_ttl=_env_float("LLMOPS_LIVE_TTL", 30.0),
+            node_heartbeat_interval=_env_float("LLMOPS_NODE_HEARTBEAT_INTERVAL", 10.0),
+            node_ttl=_env_float("LLMOPS_NODE_TTL", 30.0),
             default_input_price=_env_float("LLMOPS_DEFAULT_INPUT_PRICE", 0.0),
             default_output_price=_env_float("LLMOPS_DEFAULT_OUTPUT_PRICE", 0.0),
             price_currency=os.environ.get("LLMOPS_PRICE_CURRENCY", "USD").strip() or "USD",

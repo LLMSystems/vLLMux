@@ -200,6 +200,27 @@ CREATE TABLE IF NOT EXISTS instances_live (
     state       TEXT,                     -- observed state, e.g. 'ready'
     expires_at  REAL    NOT NULL          -- epoch; self-expires so a stale row heals
 );
+
+-- HA Phase 3b: each node-agent (one per GPU host; collapsed into the backend on a
+-- single host) heartbeats its identity + capacity here. The scheduler reads it to
+-- place instances; a node whose heartbeat lapses is treated as gone. Runtime
+-- table, self-healing via the TTL — skipped by the sqlite->pg migration.
+CREATE TABLE IF NOT EXISTS nodes (
+    node_id     TEXT    PRIMARY KEY,      -- agent/replica id (== leader holder id)
+    hostname    TEXT,
+    capacity    TEXT,                     -- JSON: GPU inventory (index/name/mem)
+    expires_at  REAL    NOT NULL          -- epoch; lapsed => node considered down
+);
+
+-- HA Phase 3b: which node is responsible for running each instance. The control
+-- plane writes the assignment; the owning node-agent actuates it (collapsed: the
+-- single local node owns everything, so this mirrors the registry). Survives like
+-- desired state is per-deployment, so it is rebuilt on start — skipped by migration.
+CREATE TABLE IF NOT EXISTS assignments (
+    key         TEXT    PRIMARY KEY,      -- "group::instance_id"
+    node_id     TEXT    NOT NULL,         -- node responsible for this instance
+    updated_at  REAL    NOT NULL
+);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -826,6 +847,76 @@ class LLMOpsStore:
             }
             for r in await cur.fetchall()
         ]
+
+    # ---- Nodes registry + assignments (HA Phase 3b; scheduler placement) -------
+
+    async def upsert_node(
+        self, node_id: str, hostname: Optional[str], capacity: Optional[str],
+        ttl: float, ts: Optional[float] = None,
+    ) -> None:
+        """Register/refresh a node-agent's heartbeat + capacity (JSON)."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        await self._db.execute(
+            "INSERT INTO nodes (node_id, hostname, capacity, expires_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(node_id) DO UPDATE SET "
+            "hostname = excluded.hostname, capacity = excluded.capacity, "
+            "expires_at = excluded.expires_at",
+            (node_id, hostname, capacity, now + ttl),
+        )
+        await self._db.commit()
+
+    async def list_nodes(self, ts: Optional[float] = None) -> list[dict]:
+        """Nodes whose heartbeat hasn't lapsed."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        cur = await self._db.execute(
+            "SELECT node_id, hostname, capacity, expires_at FROM nodes WHERE expires_at > ?",
+            (now,),
+        )
+        return [
+            {"node_id": r["node_id"], "hostname": r["hostname"],
+             "capacity": r["capacity"], "expires_at": r["expires_at"]}
+            for r in await cur.fetchall()
+        ]
+
+    async def prune_nodes(self, ts: Optional[float] = None) -> int:
+        """Drop nodes whose heartbeat lapsed (housekeeping; reads already filter)."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        cur = await self._db.execute("DELETE FROM nodes WHERE expires_at <= ?", (now,))
+        await self._db.commit()
+        return cur.rowcount
+
+    async def set_assignment(self, key: str, node_id: str, ts: Optional[float] = None) -> None:
+        """Assign an instance to a node (the node-agent that should run it)."""
+        import time
+
+        await self._db.execute(
+            "INSERT INTO assignments (key, node_id, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET node_id = excluded.node_id, "
+            "updated_at = excluded.updated_at",
+            (key, node_id, ts if ts is not None else time.time()),
+        )
+        await self._db.commit()
+
+    async def delete_assignment(self, key: str) -> None:
+        await self._db.execute("DELETE FROM assignments WHERE key = ?", (key,))
+        await self._db.commit()
+
+    async def list_assignments(self, node_id: Optional[str] = None) -> dict[str, str]:
+        """All assignments as {key: node_id}, or only those for `node_id`."""
+        if node_id is None:
+            cur = await self._db.execute("SELECT key, node_id FROM assignments")
+        else:
+            cur = await self._db.execute(
+                "SELECT key, node_id FROM assignments WHERE node_id = ?", (node_id,)
+            )
+        return {r["key"]: r["node_id"] for r in await cur.fetchall()}
 
     async def prune_audit(self, max_rows: int = 50_000) -> int:
         """Cap the audit table to its most recent ``max_rows`` rows. Returns the

@@ -424,3 +424,33 @@ async def test_prune_instances_live_deletes_expired_rows(store):
     assert deleted == 2
     rows = await store.list_instances_live(ts=1020.0)
     assert {r["key"] for r in rows} == {"G::c"}
+
+
+@pytest.mark.asyncio
+async def test_nodes_upsert_list_expire_prune(store):
+    await store.upsert_node("n1", "host1", '[{"index":0}]', ttl=10, ts=1000.0)
+    await store.upsert_node("n2", "host2", None, ttl=10, ts=1000.0)
+    rows = await store.list_nodes(ts=1005.0)
+    by_id = {r["node_id"]: r for r in rows}
+    assert by_id.keys() == {"n1", "n2"}
+    assert by_id["n1"]["hostname"] == "host1" and by_id["n1"]["capacity"] == '[{"index":0}]'
+    # Re-register refreshes the lease + capacity.
+    await store.upsert_node("n1", "host1", '[{"index":0},{"index":1}]', ttl=10, ts=1008.0)
+    rows = await store.list_nodes(ts=1012.0)  # n2 (exp 1010) gone, n1 (exp 1018) stays
+    assert {r["node_id"] for r in rows} == {"n1"}
+    assert await store.prune_nodes(ts=1012.0) == 1  # removes lapsed n2
+    assert {r["node_id"] for r in await store.list_nodes(ts=1012.0)} == {"n1"}
+
+
+@pytest.mark.asyncio
+async def test_assignments_set_list_delete(store):
+    await store.set_assignment("G::a", "n1")
+    await store.set_assignment("G::b", "n1")
+    await store.set_assignment("H::c", "n2")
+    assert await store.list_assignments() == {"G::a": "n1", "G::b": "n1", "H::c": "n2"}
+    assert await store.list_assignments(node_id="n1") == {"G::a": "n1", "G::b": "n1"}
+    # Re-assigning moves an instance to another node (idempotent upsert).
+    await store.set_assignment("G::a", "n2")
+    assert await store.list_assignments(node_id="n2") == {"G::a": "n2", "H::c": "n2"}
+    await store.delete_assignment("G::a")
+    assert "G::a" not in await store.list_assignments()
