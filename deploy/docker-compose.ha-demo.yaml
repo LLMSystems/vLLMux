@@ -1,0 +1,47 @@
+# Leader-election failover demo: two backend replicas share one Postgres; only
+# the lease holder runs the control loops. Kill the leader and watch the standby
+# take over within ~LLMOPS_LEADER_LEASE_TTL seconds.
+#
+#   docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml up -d
+#   docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml logs -f backend-a backend-b
+#   # find the leader, then:  docker kill hademo-backend-a-1   (or -b)
+#   docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml down -v
+#
+# Headless: no GPU, no published ports, no vLLM spawned (replay disabled). It only
+# demonstrates control-plane leadership, not inference.
+
+x-backend: &backend
+  image: llmops-engine:latest
+  working_dir: /app/apps/backend
+  command: uvicorn main:app --host 0.0.0.0 --port 5000
+  environment:
+    - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+    - LLMOPS_DB_URL=postgresql://llmops:llmops@ha-postgres:5432/llmops
+    - LLMOPS_LEADER_LEASE_TTL=10
+    - LLMOPS_REPLAY_DESIRED=false
+    - LLMOPS_OVERLAY_PATH=/tmp/dynamic_models.json
+    - LLMOPS_PROMETHEUS_SD_PATH=/tmp/targets.json
+  volumes:
+    - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml:ro
+  depends_on:
+    ha-postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  ha-postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=llmops
+      - POSTGRES_PASSWORD=llmops
+      - POSTGRES_DB=llmops
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmops"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  backend-a:
+    <<: *backend
+  backend-b:
+    <<: *backend

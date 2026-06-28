@@ -135,6 +135,58 @@ and reuses it for the session. Set `LLMOPS_REQUIRE_API_KEY=true` on the router t
 require a bearer token (the admin token, or an API key minted on the **API Keys**
 page) for all `/v1/*` inference. Both default to off for local dev.
 
+## High availability (multi-replica, optional)
+
+The default is single-machine SQLite, zero config. For a control plane that
+survives a crash, point the shared store at **Postgres** and run **multiple
+backend replicas**. Design + phases: [ha-phase2-design_zh-CN.md](ha-phase2-design_zh-CN.md).
+
+**1. Bring up Postgres and switch to it.** The compose ships a profile-gated
+`postgres` service (off by default):
+
+```bash
+# deploy/.env:
+LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+LLMOPS_SESSION_SECRET=<long random>   # required for replicas (shared SSO session)
+
+docker compose -f deploy/docker-compose.yaml --profile ha up -d
+```
+
+All store data (keys / audit / config versions / cost / request logs / desired)
+then lives in Postgres. Note: it's a **fresh empty DB** — existing SQLite data
+isn't migrated automatically yet. Unset `LLMOPS_DB_URL` to go back to SQLite,
+unchanged.
+
+**2. Leader election is automatic.** In Postgres mode the backend elects a
+leader: **only the leader runs the singleton loops** (reconcile / autoscale /
+prune); others stand by. If the leader dies, a standby steals the expired lease
+within ~`LLMOPS_LEADER_LEASE_TTL` (default 15s). Nothing to switch on.
+
+| Var | Default | Meaning |
+|---|---|---|
+| `LLMOPS_DB_URL` | empty | set = Postgres = HA; empty = single-machine SQLite |
+| `LLMOPS_SESSION_SECRET` | empty | **required** for replicas (shared so they trust each other's SSO sessions) |
+| `LLMOPS_LEADER_LEASE_TTL` | `15` | lease seconds (failover speed vs heartbeat rate) |
+| `LLMOPS_INSTANCE_ID` | `hostname:pid` | replica id — auto-unique, leave unset |
+
+**3. How many replicas is your call** — a deployment choice, not automatic. The
+bundled `docker-compose.yaml` is single-backend by design (the router shares its
+netns to reach localhost vLLM, and host ports are fixed), so it isn't meant for
+`--scale`. In production use **k8s** (one backend per Pod, same `LLMOPS_DB_URL` +
+`LLMOPS_SESSION_SECRET`, an LB in front) or a customised compose. Managing models
+across **multiple GPU hosts** is Phase 3 (not built); today's multi-replica is
+"standby takeover on one host pool", not multi-node scheduling.
+
+**Verify failover** with the headless demo compose (2 replicas + its own Postgres):
+
+```bash
+docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml up -d
+docker exec hademo-ha-postgres-1 psql -U llmops -d llmops -c "SELECT * FROM leader_lease;"
+docker kill hademo-backend-a-1          # kill the leader (or -b)
+# wait ~TTL, re-check leader_lease: holder changed; the standby logs "Control loops started"
+docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml down -v
+```
+
 ## Manual / development run
 
 Run the three pieces yourself (Python deps in the repo-root `.venv`):

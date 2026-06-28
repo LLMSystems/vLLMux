@@ -126,6 +126,55 @@ token 並在 session 內沿用。在 router 設定 `LLMOPS_REQUIRE_API_KEY=true`
 `/v1/*` 推理都帶 bearer token（admin token，或在 **API 金鑰** 頁建立的金鑰）。兩者預設
 關閉，方便本機開發。
 
+## 高可用（HA / 多副本，選用）
+
+預設是**單機 SQLite**,零設定。要往「控制平面不中斷」走,把共用 store 換成 **Postgres**,
+就能跑**多個 backend 副本**;設計與分階段見
+[ha-phase2-design_zh-CN.md](ha-phase2-design_zh-CN.md)。
+
+**1. 開 Postgres + 切過去。** compose 內建一個 profile 控制的 `postgres` 服務(預設不啟動):
+
+```bash
+# deploy/.env:
+LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+LLMOPS_SESSION_SECRET=<長隨機字串>   # 多副本必設（共享 SSO session）
+
+docker compose -f deploy/docker-compose.yaml --profile ha up -d
+```
+
+切過去後,**所有 store 資料(金鑰/稽核/設定版本/成本/推理紀錄/desired)都寫 Postgres**。
+注意:這是**全新的空 DB**,舊 SQLite 資料不會自動搬(遷移腳本待補)。不設 `LLMOPS_DB_URL`
+就回到 SQLite,行為完全不變。
+
+**2. Leader election 是自動的。** 一旦走 Postgres,backend 就會競選 leader —— **只有 leader
+跑那些單例背景迴圈(reconcile / autoscale / prune)**,其餘副本待命。leader 掛掉,待命副本會在
+約 `LLMOPS_LEADER_LEASE_TTL`(預設 15s)內搶下過期租約接手。**你不用「開」它,設 Postgres 就有。**
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `LLMOPS_DB_URL` | 空 | 設了 = Postgres = HA 模式;空 = SQLite 單機 |
+| `LLMOPS_SESSION_SECRET` | 空 | 多副本**必設**(各副本共享同一把才能互認 SSO session) |
+| `LLMOPS_LEADER_LEASE_TTL` | `15` | 租約秒數(接管速度 vs 心跳頻率) |
+| `LLMOPS_INSTANCE_ID` | `hostname:pid` | 副本識別,**自動唯一,免設** |
+
+**3. 「跑幾個副本」由你決定。** 這是部署層的事,不是自動的:
+- 內建的 `deploy/docker-compose.yaml` 是**單一 backend**設計(router 共用其 netns 以連 localhost
+  的 vLLM、port 固定發佈),不適合直接 `--scale`。生產要多副本通常用 **k8s**(每個 Pod 一個
+  backend,同一個 `LLMOPS_DB_URL` + `LLMOPS_SESSION_SECRET`,前面放 LB),或自訂一份去掉
+  `container_name`/固定 port、前置 LB 的 compose。
+- **跨多台 GPU 主機**(每台各自起 vLLM)屬 Phase 3(control-plane / node-agent 拆分),尚未實作;
+  目前的多副本定位是「**同一主機池上的待命接管**」,不是多節點排程。
+
+**驗證 leader / 故障接管。** 用內附的 demo compose(headless,2 副本 + 自帶 Postgres):
+
+```bash
+docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml up -d
+docker exec hademo-ha-postgres-1 psql -U llmops -d llmops -c "SELECT * FROM leader_lease;"  # 誰是 leader
+docker kill hademo-backend-a-1    # kill 掉 leader（或 -b）
+# 等 ~TTL 秒，再查 leader_lease：holder 換人；待命副本日誌出現 "Control loops started"
+docker compose -p hademo -f deploy/docker-compose.ha-demo.yaml down -v
+```
+
 ## 手動 / 開發啟動
 
 也可自行啟動三個部分（Python 依賴在 repo 根目錄的 `.venv`）：
