@@ -19,7 +19,7 @@ const route = useRoute()
 const models = useModelsStore()
 const resources = useResourcesStore()
 const { isDark, toggle } = useTheme()
-const { me, authEnabled, ensureUnlocked, logout, refreshMe } = useAuth()
+const { me, authRequired, ensureUnlocked, logout, refreshMe } = useAuth()
 
 const roleVariant: Record<Role, 'default' | 'ready' | 'muted'> = {
   admin: 'default',
@@ -30,8 +30,8 @@ const roleVariant: Record<Role, 'default' | 'ready' | 'muted'> = {
 async function signIn() {
   await ensureUnlocked()
 }
-function signOut() {
-  logout()
+async function signOut() {
+  await logout()
   void refreshMe()
 }
 
@@ -125,7 +125,7 @@ function toggleLocale() {
         </div>
         <Badge v-if="me.role" :variant="roleVariant[me.role]" class="text-[10px]">{{ me.role }}</Badge>
         <Button
-          v-if="authEnabled"
+          v-if="authRequired"
           variant="ghost"
           size="icon-sm"
           :title="$t('statusBar.signOut')"
@@ -135,7 +135,7 @@ function toggleLocale() {
         </Button>
       </div>
       <Button
-        v-else-if="authEnabled"
+        v-else-if="authRequired"
         variant="ghost"
         size="icon-sm"
         :title="$t('statusBar.signIn')"

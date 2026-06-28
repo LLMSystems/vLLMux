@@ -335,6 +335,54 @@ export interface ConfigDiff {
   to: { label: string; text: string }
 }
 
+/** Per-1M-token price for a model (route/group name). */
+export interface ModelPrice {
+  model: string
+  input_price: number
+  output_price: number
+  currency: string
+  updated_at: number
+}
+
+export interface PriceList {
+  currency: string
+  default_input_price: number
+  default_output_price: number
+  prices: ModelPrice[]
+}
+
+export interface CostModelRow {
+  model: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  input_price: number
+  output_price: number
+  priced: boolean
+  cost: number
+}
+
+export interface CostKeyRow {
+  name: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost: number
+}
+
+/** Cost dashboard payload (GET /api/cost/summary). */
+export interface CostSummary {
+  currency: string
+  total_cost: number
+  default_input_price: number
+  default_output_price: number
+  any_unpriced: boolean
+  by_model: CostModelRow[]
+  by_key: CostKeyRow[]
+}
+
 /** Per-group live load (autoscaling signal), keyed by group name in the API. */
 export interface GroupLoad {
   group: string

@@ -8,6 +8,7 @@ import type { Me, Role } from '@/types/api'
 // enforces what each may do; the role here only tailors the UI chrome.
 const token = ref(getAdminToken())
 const authEnabled = ref<boolean | null>(null) // null = not yet queried
+const ssoEnabled = ref(false)
 const me = ref<Me | null>(null)
 const dialogOpen = ref(false)
 let resolver: ((ok: boolean) => void) | null = null
@@ -23,16 +24,27 @@ const RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 }
 export function useAuth() {
   async function refreshStatus() {
     try {
-      authEnabled.value = (await api.authStatus()).auth_enabled
+      const s = await api.authStatus()
+      authEnabled.value = s.auth_enabled
+      ssoEnabled.value = !!s.sso_enabled
     } catch {
       authEnabled.value = false // backend unreachable — don't block the UI
+      ssoEnabled.value = false
     }
     await refreshMe()
   }
 
-  /** Resolve the current token's identity (or clear it if invalid/absent). */
+  // Auth is required when a token is configured OR SSO is on. SSO sessions live
+  // in an HttpOnly cookie (JS can't read it), so "logged in" is driven by whether
+  // /api/me resolves an identity, not by a local token.
+  const authRequired = computed(() => authEnabled.value === true || ssoEnabled.value)
+  const signedIn = computed(() => !!me.value?.actor)
+
+  /** Resolve the current identity from a token OR an SSO cookie. */
   async function refreshMe() {
-    if (authEnabled.value && !token.value) {
+    // With a token-only setup and no token, there's nothing to resolve. With SSO
+    // we always ask — the session cookie (if any) is sent automatically.
+    if (authEnabled.value && !ssoEnabled.value && !token.value) {
       me.value = null
       return
     }
@@ -43,16 +55,21 @@ export function useAuth() {
     }
   }
 
-  const needsUnlock = computed(() => authEnabled.value === true && !token.value)
+  const needsUnlock = computed(() => authRequired.value && !signedIn.value)
 
-  /** Resolve true once the operator is unlocked, opening the dialog if needed. */
+  /** Resolve true once unlocked; opens the token dialog (which also offers SSO). */
   async function ensureUnlocked(): Promise<boolean> {
     if (authEnabled.value === null) await refreshStatus()
-    if (!authEnabled.value || token.value) return true
+    if (!authRequired.value || token.value || signedIn.value) return true
     dialogOpen.value = true
     return new Promise<boolean>((res) => {
       resolver = res
     })
+  }
+
+  /** Full-page redirect into the IdP; returns to `next` after login. */
+  function loginSso(next: string) {
+    window.location.href = `${api.base}/api/auth/sso/login?next=${encodeURIComponent(next)}`
   }
 
   /** Sign in with a candidate token of any role; on success store it. */
@@ -74,7 +91,14 @@ export function useAuth() {
     resolver = null
   }
 
-  function logout() {
+  async function logout() {
+    if (ssoEnabled.value) {
+      try {
+        await api.ssoLogout() // clear the HttpOnly session cookie server-side
+      } catch {
+        /* best-effort */
+      }
+    }
     token.value = ''
     me.value = null
     clearAdminToken()
@@ -89,6 +113,9 @@ export function useAuth() {
 
   return {
     authEnabled,
+    ssoEnabled,
+    authRequired,
+    signedIn,
     dialogOpen,
     needsUnlock,
     me,
@@ -100,6 +127,7 @@ export function useAuth() {
     refreshStatus,
     refreshMe,
     ensureUnlocked,
+    loginSso,
     submitToken,
     cancel,
     logout,

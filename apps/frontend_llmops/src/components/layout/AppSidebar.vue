@@ -8,6 +8,7 @@ import {
   Bell,
   BookOpen,
   ClipboardCheck,
+  Coins,
   Cpu,
   Database,
   Eye,
@@ -86,6 +87,13 @@ const sections = computed<{ key: string; items: NavItem[] }[]>(() => {
       key: 'admin',
       items: [
         { to: '/keys', label: t('sidebar.keys'), icon: KeyRound },
+        // Cost is operator-readable; admin-only to set prices.
+        canOperate.value && {
+          to: '/cost',
+          label: t('sidebar.cost'),
+          icon: Coins,
+          hint: !isAdmin.value,
+        },
         isAdmin.value && { to: '/operators', label: t('sidebar.operators'), icon: Users },
         isAdmin.value && { to: '/audit', label: t('sidebar.audit'), icon: ScrollText },
         isAdmin.value && { to: '/notifications', label: t('sidebar.notifications'), icon: Bell },

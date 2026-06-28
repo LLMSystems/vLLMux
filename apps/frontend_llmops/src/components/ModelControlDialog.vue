@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Lock } from '@lucide/vue'
+import { useRoute } from 'vue-router'
+import { KeyRound, Lock, LogIn } from '@lucide/vue'
 import Dialog from '@/components/ui/Dialog.vue'
 import Input from '@/components/ui/Input.vue'
 import Button from '@/components/ui/Button.vue'
 import { useAuth } from '@/composables/useAuth'
 
-const { dialogOpen, submitToken, cancel } = useAuth()
+const route = useRoute()
+const { dialogOpen, ssoEnabled, submitToken, cancel, loginSso } = useAuth()
 const token = ref('')
 const error = ref(false)
 const busy = ref(false)
@@ -37,7 +39,21 @@ async function confirm() {
         <Lock class="size-4" />
         <span>{{ $t('modelControl.description') }}</span>
       </p>
+
+      <!-- SSO: the primary path when configured. -->
+      <template v-if="ssoEnabled">
+        <Button class="w-full" @click="loginSso(route.fullPath)">
+          <LogIn class="size-4" />{{ $t('modelControl.ssoSignIn') }}
+        </Button>
+        <div class="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span class="h-px flex-1 bg-border" />{{ $t('modelControl.orToken') }}<span class="h-px flex-1 bg-border" />
+        </div>
+      </template>
+
       <div>
+        <label class="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <KeyRound class="size-3.5" />{{ $t('modelControl.tokenLabel') }}
+        </label>
         <Input
           v-model="token"
           type="password"

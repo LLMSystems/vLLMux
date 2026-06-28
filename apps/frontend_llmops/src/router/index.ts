@@ -94,6 +94,12 @@ const router = createRouter({
       component: () => import('@/views/NotificationsView.vue'),
     },
     {
+      path: '/cost',
+      name: 'cost',
+      meta: { title: 'cost' },
+      component: () => import('@/views/CostView.vue'),
+    },
+    {
       path: '/config',
       name: 'config',
       meta: { title: 'config' },

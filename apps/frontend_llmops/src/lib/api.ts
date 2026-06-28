@@ -6,7 +6,9 @@ import type {
   ConfigDiff,
   ConfigSummary,
   ConfigVersion,
+  CostSummary,
   ImportSummary,
+  PriceList,
   CreatedKey,
   CreatedOperator,
   CreateModelPayload,
@@ -241,7 +243,9 @@ export const api = {
     }),
 
   // ---- Auth + API keys ------------------------------------------------------
-  authStatus: () => request<{ auth_enabled: boolean }>(API_BASE, '/api/auth/status'),
+  authStatus: () =>
+    request<{ auth_enabled: boolean; sso_enabled?: boolean }>(API_BASE, '/api/auth/status'),
+  ssoLogout: () => request<{ ok: boolean }>(API_BASE, '/api/auth/sso/logout', { method: 'POST' }),
   /** Validate a candidate admin token (not the stored one). */
   authVerify: async (token: string): Promise<boolean> => {
     try {
@@ -324,6 +328,23 @@ export const api = {
     const qs = q.toString()
     return request<AuditEntry[]>(API_BASE, `/api/audit${qs ? `?${qs}` : ''}`)
   },
+
+  // ---- Cost dashboard ------------------------------------------------------
+  costSummary: (since?: number, until?: number) => {
+    const q = new URLSearchParams()
+    if (since != null) q.set('since', String(since))
+    if (until != null) q.set('until', String(until))
+    const qs = q.toString()
+    return request<CostSummary>(API_BASE, `/api/cost/summary${qs ? `?${qs}` : ''}`)
+  },
+  listPrices: () => request<PriceList>(API_BASE, '/api/cost/prices'),
+  setPrice: (model: string, input_price: number, output_price: number, currency?: string) =>
+    request<unknown>(API_BASE, `/api/cost/prices/${enc(model)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ input_price, output_price, currency }),
+    }),
+  deletePrice: (model: string) =>
+    request<null>(API_BASE, `/api/cost/prices/${enc(model)}`, { method: 'DELETE' }),
 
   // ---- Config versioning (export / import / history / rollback) ------------
   exportConfig: () =>
