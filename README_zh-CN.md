@@ -40,7 +40,7 @@
 - **Playground** — OpenAI 相容的 chat（串流）／completions／embeddings／reranking。
 - **壓測與評測** — LLM 壓測（並發、到達率、SLA 自動調優）＋ 30+ 個準確度資料集與 LLM-as-judge。
 - **資料庫** — 在 UI 瀏覽／預下載 HF 權重與資料集；工具調用 parser 助手；LoRA 支援。
-- **安全性** — 管理員權杖控管操作，並可發行／撤銷 API 金鑰，帶 per-key 用量歸屬、速率上限與 **token 額度**（總量／每日／每月）。
+- **多使用者與稽核** — 以具名 operator 憑證做角色控管（`viewer`／`operator`／`admin`），並有脫敏的**稽核日誌**記錄每次變更；另可發行／撤銷 API 金鑰，帶 per-key 用量歸屬、速率上限與 **token 額度**（總量／每日／每月）。env 管理員權杖與本機 dev 開放模式維持不變。
 
 完整說明見 [docs/features_zh-CN.md](docs/features_zh-CN.md)。
 

@@ -11,7 +11,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.services import lora_service
 
 router = APIRouter(tags=["lora"])
@@ -41,7 +41,7 @@ async def list_lora_downloads(request: Request):
 
 
 @router.post("/lora/downloads", status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def start_lora_download(body: LoraDownloadRequest, request: Request):
     try:
         return _manager(request).start(body.repo_id, body.name)
@@ -50,7 +50,7 @@ async def start_lora_download(body: LoraDownloadRequest, request: Request):
 
 
 @router.delete("/lora/{name}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_adapter(name: str, request: Request):
     loop = asyncio.get_event_loop()
     try:

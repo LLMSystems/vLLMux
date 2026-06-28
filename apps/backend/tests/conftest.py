@@ -173,6 +173,22 @@ class FakeStore:
                 return True
         return False
 
+    async def set_operator_role(self, operator_id, role):
+        for o in self.operators:
+            if o["id"] == operator_id and not o["revoked"]:
+                o["role"] = role
+                return True
+        return False
+
+    async def rotate_operator_token(self, operator_id, token_hash, prefix):
+        for o in self.operators:
+            if o["id"] == operator_id and not o["revoked"]:
+                o["token_hash"] = token_hash
+                o["prefix"] = prefix
+                o["last_used_at"] = None
+                return True
+        return False
+
     # -- Audit --
     async def record_audit(self, actor, method, path, status, role=None, target=None,
                            detail=None, source_ip=None, ts=None):
@@ -183,7 +199,7 @@ class FakeStore:
         })
 
     async def list_audit(self, actor=None, action=None, target=None, since=None,
-                         until=None, limit=200):
+                         until=None, before=None, limit=200):
         rows = [
             r for r in self.audit
             if (actor is None or r["actor"] == actor)
@@ -191,6 +207,7 @@ class FakeStore:
             and (target is None or r["target"] == target)
             and (since is None or r["ts"] >= since)
             and (until is None or r["ts"] <= until)
+            and (before is None or r["id"] < before)
         ]
         return list(reversed(rows))[:limit]
 

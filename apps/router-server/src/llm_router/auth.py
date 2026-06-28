@@ -139,6 +139,13 @@ async def authenticate(request: Request) -> str | None:
             else None
         )
         if op is not None:
+            # Viewers are read-only on the control plane and may not run inference.
+            if op.get("role") == "viewer":
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    "viewer role cannot run inference",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             name = op["label"]
             _cache[key_hash] = (None, name, None, None, None, now + _CACHE_TTL)
             return name

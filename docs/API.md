@@ -352,6 +352,46 @@ curl -s http://localhost:5000/healthz
 
 ---
 
+### 1.10 認證、角色與稽核
+
+控制 API 用 token 認證（`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`）。
+角色單調：`viewer ⊂ operator ⊂ admin`。解析規則依序為：
+
+1. 未設 env `LLMOPS_ADMIN_TOKEN` 且尚無任何 operator → 視為 local-dev（admin），API 開放。
+2. token 命中某把未撤銷的 operator 憑證 → 該 operator 的角色。
+3. token 等於 env `LLMOPS_ADMIN_TOKEN` → 永遠 admin（啟動／救援後門）。
+4. 否則 → 401。
+
+路由所需最低角色：唯讀 `GET` 不限；模型啟停／編輯／擴縮／eval／benchmark／下載 = `operator`；
+使用者與金鑰管理、稽核 = `admin`。權限不足回 **403**，未認證回 **401**。
+
+| 端點 | 角色 | 說明 |
+|---|---|---|
+| `GET /api/me` | 任一（已認證） | 回傳 `{actor, role}`；未認證 401 |
+| `GET /api/auth/status` | 公開 | `{auth_enabled}`，供前端決定是否要求登入 |
+| `GET /api/operators` | admin | 列出使用者（不回 token hash） |
+| `POST /api/operators` | admin | 建立使用者 `{label, role}`，**回傳一次性明文 token**（`sk-op-…`） |
+| `PATCH /api/operators/{id}` | admin | 改角色 `{role}`，即時生效（含 router） |
+| `POST /api/operators/{id}/rotate` | admin | 重新產生 token，舊的立即失效；回傳一次性明文 |
+| `DELETE /api/operators/{id}` | admin | 撤銷使用者 |
+| `GET /api/audit` | admin | 稽核日誌，新到舊；query：`actor`、`action`（path 子字串）、`target`、`since`、`until`（epoch 秒）、`before`（id 游標分頁）、`limit` |
+| `GET /api/keys` · `POST /api/keys` · `DELETE /api/keys/{id}` | admin | API 金鑰管理（用於 router 推理） |
+
+稽核每筆記錄 `actor / role / method / path / target / status / 脫敏 body / source_ip`；保留筆數上限由
+`LLMOPS_*`（`audit_max_rows`，預設 50000）控制，每小時裁剪。Router 推理也接受登入的
+operator/admin token（依 label 歸屬，不限流），但 **viewer 不能推理（403）**。
+
+```bash
+# 建立一個 operator，取得一次性 token
+curl -s -X POST http://localhost:5000/api/operators \
+  -H "X-Admin-Token: $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"label":"alice","role":"operator"}'
+# 查稽核（admin）
+curl -s "http://localhost:5000/api/audit?actor=alice&limit=50" -H "X-Admin-Token: $ADMIN"
+```
+
+---
+
 ## 2. LLM Router Server
 
 OpenAI 相容端點，提供統一入口並對多實例做 load-aware 路由。請求 body 的 `model` 欄位填**群組名**（如 `Qwen3-0.6B`），Router 會自動選最低負載的實例並改寫成後端的 `model_tag`。

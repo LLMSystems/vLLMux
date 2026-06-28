@@ -22,11 +22,29 @@ const locked = ref(false)
 const denied = ref(false)
 const filterActor = ref('')
 const filterAction = ref('')
+const since = ref('') // datetime-local
+const until = ref('')
+const PAGE = 100
+const reachedEnd = ref(false)
 
 const methodVariant = (m: string) =>
   m === 'DELETE' ? 'failed' : m === 'POST' ? 'ready' : 'starting'
 const statusVariant = (s: number) =>
   s >= 500 ? 'failed' : s >= 400 ? 'starting' : 'ready'
+
+const toEpoch = (v: string): number | undefined =>
+  v ? Math.floor(new Date(v).getTime() / 1000) : undefined
+
+async function fetchPage(before?: number): Promise<AuditEntry[]> {
+  return api.listAudit({
+    actor: filterActor.value.trim() || undefined,
+    action: filterAction.value.trim() || undefined,
+    since: toEpoch(since.value),
+    until: toEpoch(until.value),
+    before,
+    limit: PAGE,
+  })
+}
 
 async function load() {
   if (!(await ensureUnlocked())) {
@@ -36,16 +54,29 @@ async function load() {
   locked.value = false
   loading.value = true
   try {
-    rows.value = await api.listAudit({
-      actor: filterActor.value.trim() || undefined,
-      action: filterAction.value.trim() || undefined,
-      limit: 300,
-    })
+    const page = await fetchPage()
+    rows.value = page
+    reachedEnd.value = page.length < PAGE
     denied.value = false
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) locked.value = true
     else if (e instanceof ApiError && e.status === 403) denied.value = true
     else toast.error(t('audit.loadFailed'), { description: String(e) })
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadMore() {
+  const last = rows.value[rows.value.length - 1]
+  if (!last || loading.value) return
+  loading.value = true
+  try {
+    const page = await fetchPage(last.id)
+    rows.value = rows.value.concat(page)
+    reachedEnd.value = page.length < PAGE
+  } catch (e) {
+    toast.error(t('audit.loadFailed'), { description: String(e) })
   } finally {
     loading.value = false
   }
@@ -66,14 +97,22 @@ onMounted(async () => {
         <h1 class="flex items-center gap-2 text-lg font-semibold"><ScrollText class="size-5" />{{ $t('audit.title') }}</h1>
         <p class="mt-0.5 text-sm text-muted-foreground">{{ $t('audit.description') }}</p>
       </div>
-      <div class="flex items-end gap-2">
+      <div class="flex flex-wrap items-end gap-2">
         <label>
           <span class="text-xs text-muted-foreground">{{ $t('audit.filterActor') }}</span>
-          <Input v-model="filterActor" :placeholder="$t('audit.actorPlaceholder')" class="mt-1 w-36" @keydown.enter="load" />
+          <Input v-model="filterActor" :placeholder="$t('audit.actorPlaceholder')" class="mt-1 w-32" @keydown.enter="load" />
         </label>
         <label>
           <span class="text-xs text-muted-foreground">{{ $t('audit.filterAction') }}</span>
-          <Input v-model="filterAction" :placeholder="$t('audit.actionPlaceholder')" class="mt-1 w-40" @keydown.enter="load" />
+          <Input v-model="filterAction" :placeholder="$t('audit.actionPlaceholder')" class="mt-1 w-36" @keydown.enter="load" />
+        </label>
+        <label>
+          <span class="text-xs text-muted-foreground">{{ $t('audit.since') }}</span>
+          <Input v-model="since" type="datetime-local" class="mt-1 w-44" />
+        </label>
+        <label>
+          <span class="text-xs text-muted-foreground">{{ $t('audit.until') }}</span>
+          <Input v-model="until" type="datetime-local" class="mt-1 w-44" />
         </label>
         <Button size="sm" :disabled="loading" @click="load">
           <Loader2 v-if="loading" class="size-4 animate-spin" />{{ $t('audit.apply') }}
@@ -139,6 +178,12 @@ onMounted(async () => {
           </tbody>
         </table>
         <p v-else-if="!loading" class="px-5 py-10 text-center text-sm text-muted-foreground">{{ $t('audit.none') }}</p>
+      </div>
+      <div v-if="hasRows" class="flex items-center justify-center border-t border-border/60 px-5 py-3">
+        <Button v-if="!reachedEnd" size="sm" variant="outline" :disabled="loading" @click="loadMore">
+          <Loader2 v-if="loading" class="size-4 animate-spin" />{{ $t('audit.loadMore') }}
+        </Button>
+        <span v-else class="text-xs text-muted-foreground">{{ $t('audit.end') }}</span>
       </div>
     </Card>
   </div>

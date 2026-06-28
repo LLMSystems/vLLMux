@@ -50,6 +50,18 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+async def _audit_prune_loop(store, max_rows: int, interval: float = 3600.0) -> None:
+    """Cap the audit log to ``max_rows`` rows, hourly, so it can't grow forever."""
+    while True:
+        try:
+            deleted = await store.prune_audit(max_rows=max_rows)
+            if deleted:
+                logger.info("Pruned %d old audit rows (cap %d)", deleted, max_rows)
+        except Exception:
+            logger.exception("Audit prune failed")
+        await asyncio.sleep(interval)
+
+
 async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
     """Refresh the GPU-process inventory in the background."""
     loop = asyncio.get_event_loop()
@@ -136,6 +148,7 @@ async def lifespan(app: FastAPI):
             load_monitor_loop(app, registry, http_client, router_url, settings.load_poll_interval)
         ),
         asyncio.create_task(autoscaler_loop(app, manager, settings.autoscale_interval)),
+        asyncio.create_task(_audit_prune_loop(store, settings.audit_max_rows)),
     ]
     logger.info("Reconciler + GPU poller + load monitor + autoscaler started")
 

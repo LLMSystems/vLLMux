@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.eval.manager import EvalError
 from app.services import eval_reports
 from app.services.dataset_service import (EVAL_CATALOG, cached_size,
@@ -117,7 +117,7 @@ async def get_config(request: Request):
     return {"concurrency_budget": em.concurrency_budget, "used_budget": em.used_budget}
 
 
-@router.patch("/config", dependencies=[Depends(require_admin)])
+@router.patch("/config", dependencies=[Depends(require_operator)])
 async def set_config(body: EvalConfig, request: Request):
     """Adjust the shared concurrency budget at runtime (not persisted across
     restart). Raising it lets more queued evals start immediately."""
@@ -127,7 +127,7 @@ async def set_config(body: EvalConfig, request: Request):
     return {"concurrency_budget": em.concurrency_budget, "used_budget": em.used_budget}
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin)])
+@router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_operator)])
 async def start_run(body: EvalRequest, request: Request):
     by_key = {d["key"]: d for d in EVAL_CATALOG}
     unknown = [d for d in body.datasets if d not in by_key]
@@ -220,7 +220,7 @@ async def get_run_sample(run_id: int, index: int, request: Request, dataset: str
     return s
 
 
-@router.post("/{run_id}/cancel", dependencies=[Depends(require_admin)])
+@router.post("/{run_id}/cancel", dependencies=[Depends(require_operator)])
 async def cancel_run(run_id: int, request: Request):
     if not await _em(request).cancel(run_id):
         raise HTTPException(status.HTTP_409_CONFLICT, "run is not active")
@@ -228,7 +228,7 @@ async def cancel_run(run_id: int, request: Request):
 
 
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_run(run_id: int, request: Request):
     if not await _store(request).delete_eval_run(run_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown eval run: {run_id}")

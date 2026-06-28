@@ -41,6 +41,8 @@ class BackendSettings:
     autoscale_interval: float = 5.0
     # SQLite telemetry DB path. None -> let LLMOpsStore use its shared default.
     db_path: Optional[str] = None
+    # Cap on retained audit-log rows; the oldest are pruned hourly past this.
+    audit_max_rows: int = 50_000
     # Pre-flight VRAM check before starting a model (blocks likely-OOM starts).
     vram_guard: bool = True
     # Auto-restart a managed model that crashes while desired=running.

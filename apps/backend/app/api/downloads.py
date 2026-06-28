@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.services import hf_service
 
 router = APIRouter(tags=["downloads"])
@@ -30,7 +30,7 @@ async def get_cache(request: Request):
 
 
 @router.delete("/cache/{repo_id:path}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_cached_model(repo_id: str, request: Request):
     import asyncio
 
@@ -49,7 +49,7 @@ async def list_downloads(request: Request):
 
 
 @router.post("/downloads", status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def start_download(body: DownloadRequest, request: Request):
     try:
         return _manager(request).start(body.repo_id)

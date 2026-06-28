@@ -269,14 +269,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ label, role }),
     }),
+  updateOperatorRole: (id: number, role: Role) =>
+    request<{ id: number; role: Role }>(API_BASE, `/api/operators/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
+  rotateOperator: (id: number) =>
+    request<{ id: number; prefix: string; token: string }>(
+      API_BASE,
+      `/api/operators/${id}/rotate`,
+      { method: 'POST' },
+    ),
   revokeOperator: (id: number) =>
     request<null>(API_BASE, `/api/operators/${id}`, { method: 'DELETE' }),
 
   // ---- Audit log -----------------------------------------------------------
-  listAudit: (params?: { actor?: string; action?: string; limit?: number }) => {
+  listAudit: (params?: {
+    actor?: string
+    action?: string
+    since?: number
+    until?: number
+    before?: number
+    limit?: number
+  }) => {
     const q = new URLSearchParams()
     if (params?.actor) q.set('actor', params.actor)
     if (params?.action) q.set('action', params.action)
+    if (params?.since) q.set('since', String(params.since))
+    if (params?.until) q.set('until', String(params.until))
+    if (params?.before) q.set('before', String(params.before))
     if (params?.limit) q.set('limit', String(params.limit))
     const qs = q.toString()
     return request<AuditEntry[]>(API_BASE, `/api/audit${qs ? `?${qs}` : ''}`)

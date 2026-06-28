@@ -359,6 +359,26 @@ class LLMOpsStore:
         await self._db.commit()
         return cur.rowcount > 0
 
+    async def set_operator_role(self, operator_id: int, role: str) -> bool:
+        cur = await self._db.execute(
+            "UPDATE operators SET role = ? WHERE id = ? AND revoked = 0",
+            (role, operator_id),
+        )
+        await self._db.commit()
+        return cur.rowcount > 0
+
+    async def rotate_operator_token(
+        self, operator_id: int, token_hash: str, prefix: str
+    ) -> bool:
+        """Replace an operator's token (revokes the old one immediately)."""
+        cur = await self._db.execute(
+            "UPDATE operators SET token_hash = ?, prefix = ?, last_used_at = NULL "
+            "WHERE id = ? AND revoked = 0",
+            (token_hash, prefix, operator_id),
+        )
+        await self._db.commit()
+        return cur.rowcount > 0
+
     # ---- Audit log (control-plane mutations) -----------------------------
 
     async def record_audit(
@@ -379,10 +399,11 @@ class LLMOpsStore:
     async def list_audit(
         self, actor: Optional[str] = None, action: Optional[str] = None,
         target: Optional[str] = None, since: Optional[float] = None,
-        until: Optional[float] = None, limit: int = 200,
+        until: Optional[float] = None, before: Optional[int] = None, limit: int = 200,
     ) -> list[dict]:
         """Audit entries, newest first, with optional filters. ``action`` matches
-        the path substring (e.g. 'autoscale'); ``actor``/``target`` are exact."""
+        the path substring (e.g. 'autoscale'); ``actor``/``target`` are exact;
+        ``before`` is an id cursor (rows with a smaller id) for pagination."""
         where: list[str] = []
         params: list = []
         if actor is not None:
@@ -395,6 +416,8 @@ class LLMOpsStore:
             where.append("ts >= ?"); params.append(since)
         if until is not None:
             where.append("ts <= ?"); params.append(until)
+        if before is not None:
+            where.append("id < ?"); params.append(before)
         clause = (" WHERE " + " AND ".join(where)) if where else ""
         params.append(max(1, min(limit, 1000)))
         cur = await self._db.execute(

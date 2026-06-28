@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.deps import get_manager
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.llmops.manager import ModelConflict, ModelManager, ModelNotFound
 
 router = APIRouter(prefix="/embedding", tags=["embedding"])
@@ -19,7 +19,7 @@ class UpdateEmbeddingModel(BaseModel):
     settings: dict[str, Any]
 
 
-@router.put("/models", dependencies=[Depends(require_admin)])
+@router.put("/models", dependencies=[Depends(require_operator)])
 async def update_embedding_model(
     body: UpdateEmbeddingModel, manager: ModelManager = Depends(get_manager)
 ):

@@ -101,6 +101,10 @@ class CreateOperatorRequest(BaseModel):
     role: Role = Role.OPERATOR
 
 
+class UpdateOperatorRequest(BaseModel):
+    role: Role
+
+
 @router.get("/me")
 async def whoami(request: Request, _: None = Depends(require_viewer)):
     """The caller's resolved identity + role (drives the UI's chrome/permissions)."""
@@ -127,6 +131,28 @@ async def create_operator(body: CreateOperatorRequest, request: Request):
     }
 
 
+@router.patch("/operators/{operator_id}", dependencies=[Depends(require_admin)])
+async def update_operator(operator_id: int, body: UpdateOperatorRequest, request: Request):
+    """Change an operator's role (takes effect immediately, incl. the router)."""
+    if not await _store(request).set_operator_role(operator_id, body.role.value):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"unknown or revoked operator: {operator_id}"
+        )
+    return {"id": operator_id, "role": body.role.value}
+
+
+@router.post("/operators/{operator_id}/rotate", dependencies=[Depends(require_admin)])
+async def rotate_operator(operator_id: int, request: Request):
+    """Issue a fresh token for an operator; the old one stops working at once.
+    The new plaintext is returned **once**."""
+    plaintext, token_hash, prefix = generate_operator_token()
+    if not await _store(request).rotate_operator_token(operator_id, token_hash, prefix):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"unknown or revoked operator: {operator_id}"
+        )
+    return {"id": operator_id, "prefix": prefix, "token": plaintext}
+
+
 @router.delete("/operators/{operator_id}", status_code=status.HTTP_204_NO_CONTENT,
                dependencies=[Depends(require_admin)])
 async def revoke_operator(operator_id: int, request: Request):
@@ -146,9 +172,12 @@ async def list_audit(
     target: str | None = None,
     since: float | None = None,
     until: float | None = None,
+    before: int | None = None,
     limit: int = 200,
 ):
-    """Control-plane change history (newest first), with optional filters."""
+    """Control-plane change history (newest first), with optional filters.
+    ``before`` is an id cursor for pagination (rows older than that id)."""
     return await _store(request).list_audit(
-        actor=actor, action=action, target=target, since=since, until=until, limit=limit
+        actor=actor, action=action, target=target, since=since, until=until,
+        before=before, limit=limit,
     )

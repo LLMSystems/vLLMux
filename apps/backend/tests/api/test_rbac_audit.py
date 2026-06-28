@@ -38,6 +38,27 @@ def test_operators_crud_and_hash_never_leaks(auth_client):
     assert auth_client.delete(f"/api/operators/{oid}", headers=ADMIN).status_code == 404
 
 
+def test_operator_role_change_takes_effect(auth_client):
+    token, oid = _mint(auth_client, "bob", "viewer")
+    # As a viewer, bob cannot control models.
+    assert auth_client.post(f"/api/models/{KEY}/start", headers=_bearer(token)).status_code == 403
+    # Promote to operator.
+    r = auth_client.patch(f"/api/operators/{oid}", json={"role": "operator"}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["role"] == "operator"
+    assert auth_client.post(f"/api/models/{KEY}/start", headers=_bearer(token)).status_code == 202
+
+
+def test_operator_token_rotation_invalidates_old(auth_client):
+    token, oid = _mint(auth_client, "carol", "operator")
+    rot = auth_client.post(f"/api/operators/{oid}/rotate", headers=ADMIN)
+    assert rot.status_code == 200
+    new_token = rot.json()["token"]
+    assert new_token.startswith("sk-op-") and new_token != token
+    # Old token no longer authenticates; new one does.
+    assert auth_client.get("/api/me", headers=_bearer(token)).status_code == 401
+    assert auth_client.get("/api/me", headers=_bearer(new_token)).json()["actor"] == "carol"
+
+
 def test_operators_management_is_admin_only(auth_client):
     op_token, _ = _mint(auth_client, "op", "operator")
     # An operator may not list or mint operators (admin surface).

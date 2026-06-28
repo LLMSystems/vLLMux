@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, Loader2, Lock, Plus, ShieldAlert, Trash2, Users } from '@lucide/vue'
+import { Copy, Loader2, Lock, Plus, RotateCw, ShieldAlert, Trash2, Users } from '@lucide/vue'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/composables/useAuth'
 import { toast } from '@/lib/toast'
@@ -25,9 +25,10 @@ const newLabel = ref('')
 const newRole = ref<Role>('operator')
 const creating = ref(false)
 
-// One-time plaintext reveal after creation.
+// One-time plaintext reveal after creation / rotation.
 const reveal = ref<CreatedOperator | null>(null)
 const revealOpen = ref(false)
+const revealRotated = ref(false)
 
 const roleVariant: Record<Role, 'default' | 'ready' | 'muted'> = {
   admin: 'default',
@@ -61,6 +62,7 @@ async function create() {
   creating.value = true
   try {
     reveal.value = await api.createOperator(label, newRole.value)
+    revealRotated.value = false
     revealOpen.value = true
     newLabel.value = ''
     newRole.value = 'operator'
@@ -82,6 +84,31 @@ async function revoke(o: Operator) {
     await load()
   } catch (e) {
     toast.error(t('operators.revokeFailed'), { description: String(e) })
+  }
+}
+
+async function changeRole(o: Operator, role: Role) {
+  if (role === o.role || !(await ensureUnlocked())) return
+  try {
+    await api.updateOperatorRole(o.id, role)
+    toast.success(t('operators.roleChanged', { label: o.label, role }))
+    await load()
+  } catch (e) {
+    toast.error(t('operators.roleChangeFailed'), { description: String(e) })
+    await load() // revert the select to the server value
+  }
+}
+
+async function rotate(o: Operator) {
+  if (!(await ensureUnlocked())) return
+  try {
+    const res = await api.rotateOperator(o.id)
+    reveal.value = { id: o.id, label: o.label, role: o.role, prefix: res.prefix, token: res.token }
+    revealRotated.value = true
+    revealOpen.value = true
+    await load()
+  } catch (e) {
+    toast.error(t('operators.rotateFailed'), { description: String(e) })
   }
 }
 
@@ -168,15 +195,36 @@ onMounted(async () => {
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate text-sm font-medium">{{ o.label }}</span>
-                <Badge :variant="roleVariant[o.role]">{{ $t('operators.role' + o.role.charAt(0).toUpperCase() + o.role.slice(1)) }}</Badge>
                 <Badge v-if="o.revoked" variant="muted">{{ $t('operators.revoked') }}</Badge>
               </div>
               <span class="font-mono text-xs text-muted-foreground">{{ o.prefix }}</span>
             </div>
-            <div class="hidden text-right text-xs text-muted-foreground sm:block">
+            <!-- Role (editable in place) -->
+            <select
+              v-if="!o.revoked"
+              :value="o.role"
+              class="h-8 rounded-md border border-input bg-background/40 px-2 text-xs text-foreground"
+              :title="$t('operators.role')"
+              @change="changeRole(o, ($event.target as HTMLSelectElement).value as Role)"
+            >
+              <option value="viewer">{{ $t('operators.roleViewer') }}</option>
+              <option value="operator">{{ $t('operators.roleOperator') }}</option>
+              <option value="admin">{{ $t('operators.roleAdmin') }}</option>
+            </select>
+            <Badge v-else :variant="roleVariant[o.role]">{{ o.role }}</Badge>
+            <div class="hidden text-right text-xs text-muted-foreground lg:block">
               <p>{{ $t('operators.created') }}{{ formatTime(o.created_at) }}</p>
               <p>{{ $t('operators.lastUsed') }}{{ o.last_used_at ? formatTime(o.last_used_at) : '—' }}</p>
             </div>
+            <Button
+              v-if="!o.revoked"
+              size="icon-sm"
+              variant="ghost"
+              :title="$t('operators.rotateTitle')"
+              @click="rotate(o)"
+            >
+              <RotateCw class="size-4" />
+            </Button>
             <Button
               v-if="!o.revoked"
               size="icon-sm"
@@ -193,7 +241,7 @@ onMounted(async () => {
     </template>
 
     <!-- One-time reveal -->
-    <Dialog v-model:open="revealOpen" :title="$t('operators.created2')">
+    <Dialog v-model:open="revealOpen" :title="$t(revealRotated ? 'operators.rotated' : 'operators.created2')">
       <div class="space-y-4">
         <div class="flex items-center gap-3">
           <UserAvatar v-if="reveal" :seed="reveal.label" :size="40" />

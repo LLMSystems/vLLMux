@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.services import dataset_service
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -35,7 +35,7 @@ async def list_downloads(request: Request):
 
 
 @router.post("/download", status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def start_download(body: DatasetDownloadRequest, request: Request):
     try:
         return _manager(request).start(body.key)
@@ -44,7 +44,7 @@ async def start_download(body: DatasetDownloadRequest, request: Request):
 
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_dataset(key: str, request: Request):
     loop = asyncio.get_event_loop()
     try:

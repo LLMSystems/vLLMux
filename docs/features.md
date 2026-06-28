@@ -100,7 +100,20 @@
 ## UX & security
 
 - Light / dark theme, dense "control-room" interface.
-- **Admin-token-gated control** (start / stop / add / edit / remove) and **API-key
-  management** — mint/revoke keys that authenticate router inference, with per-key
-  usage attribution in the request log, a per-minute **rate limit**, and a **token
-  quota** (total / daily / monthly) enforced at the router (429 once over).
+- **Multi-user RBAC** — named **operator credentials** with a role
+  (`viewer` ⊂ `operator` ⊂ `admin`): viewers read, operators drive models
+  (start/stop/scale/eval/…), admins also manage users & keys. The env
+  `LLMOPS_ADMIN_TOKEN` stays as the always-admin bootstrap/rescue token, and with
+  no users configured the API is open as local-dev — so existing single-token and
+  dev setups are unchanged. Admins can change a user's role or rotate its token in
+  place; signed-in users get a DiceBear avatar + role badge. See
+  [rbac-audit-design_zh-CN.md](rbac-audit-design_zh-CN.md).
+- **Audit log** — every control-plane mutation (who / what / when / result, body
+  redacted) is recorded and browsable (filter by actor/action, time range,
+  pagination), distinct from the inference request log and the state-transition
+  timeline; retained rows are capped and pruned hourly.
+- **API-key management** — mint/revoke keys that authenticate router inference, with
+  per-key usage attribution in the request log, a per-minute **rate limit**, and a
+  **token quota** (total / daily / monthly) enforced at the router (429 once over).
+  A signed-in operator/admin token can also drive the Playground directly (viewers
+  cannot run inference).

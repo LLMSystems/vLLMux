@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.perf.manager import PerfBusy, PerfError
 
 router = APIRouter(prefix="/perf", tags=["perf"])
@@ -66,7 +66,7 @@ async def list_runs(request: Request, limit: int = 50):
     return {"busy": _pm(request).busy, "runs": await _store(request).list_perf_runs(limit)}
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin)])
+@router.post("", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_operator)])
 async def start_run(body: PerfRequest, request: Request):
     if body.mode == "sla":
         if not body.sla_params:
@@ -142,7 +142,7 @@ async def get_run_report(run_id: int, request: Request):
     return FileResponse(path, media_type="text/html")
 
 
-@router.post("/{run_id}/cancel", dependencies=[Depends(require_admin)])
+@router.post("/{run_id}/cancel", dependencies=[Depends(require_operator)])
 async def cancel_run(run_id: int, request: Request, force: bool = False):
     """Stop a running load test. force=true SIGKILLs immediately (for a wedged
     run) instead of the default SIGTERM-then-SIGKILL grace."""
@@ -152,7 +152,7 @@ async def cancel_run(run_id: int, request: Request, force: bool = False):
 
 
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_run(run_id: int, request: Request):
     if not await _store(request).delete_perf_run(run_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown perf run: {run_id}")

@@ -146,6 +146,19 @@ def test_enabled_accepts_operator_token_and_attributes_label(monkeypatch):
     assert store.reqs[-1]["api_key_name"] == "alice"
 
 
+def test_enabled_rejects_viewer_operator_token(monkeypatch):
+    """A viewer is read-only and may not run inference (403)."""
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore(operators={_hash("sk-op-v"): {"label": "val", "role": "viewer"}})
+    client = _client(store)
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-op-v"},
+    )
+    assert r.status_code == 403
+
+
 def test_enabled_rejects_unknown_token(monkeypatch):
     monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
     monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)

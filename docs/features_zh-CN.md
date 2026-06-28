@@ -79,6 +79,15 @@
 ## 使用體驗與安全
 
 - 明暗雙主題、資訊密集的「控制室」介面。
-- **管理員權杖控管**控制操作（啟動／停止／新增／編輯／移除），以及 **API 金鑰管理** —
-  發行／撤銷用於 router 推理的金鑰，含 per-key 用量歸屬、每分鐘**速率上限**，以及在 router
-  強制的 **token 額度**（總量／每日／每月，超額回 429）。
+- **多使用者 RBAC** — 具名 **operator 憑證**帶角色（`viewer` ⊂ `operator` ⊂ `admin`）：
+  viewer 唯讀、operator 操作模型（啟停／擴縮／評測…）、admin 另可管理使用者與金鑰。env
+  `LLMOPS_ADMIN_TOKEN` 保留為永遠 admin 的啟動／救援後門；未建立任何使用者時 API 以
+  local-dev 開放——既有單一 token 與 dev 部署完全不受影響。admin 可就地改使用者角色或
+  重新產生 token；登入者顯示 DiceBear 頭像與角色徽章。見
+  [rbac-audit-design_zh-CN.md](rbac-audit-design_zh-CN.md)。
+- **稽核日誌** — 每筆控制平面變更（誰／做什麼／何時／結果，body 已脫敏）都會記錄並可瀏覽
+  （依操作者／動作、時間範圍篩選，可分頁），與推理 request log、狀態轉移時間軸彼此區隔；
+  保留筆數有上限，每小時裁剪。
+- **API 金鑰管理** — 發行／撤銷用於 router 推理的金鑰，含 per-key 用量歸屬、每分鐘
+  **速率上限**，以及在 router 強制的 **token 額度**（總量／每日／每月，超額回 429）。
+  登入的 operator／admin token 也能直接用 Playground 推理（viewer 不能推理）。
