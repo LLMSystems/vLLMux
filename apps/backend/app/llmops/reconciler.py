@@ -23,6 +23,7 @@ import time
 from typing import Optional
 
 from app.core.settings import BackendSettings
+from app.llmops.events import emit_transition
 from app.llmops.instance import ModelInstance
 from app.llmops.process import read_log_tail, terminate_process_group
 from app.llmops.probes import is_ready
@@ -89,6 +90,7 @@ def _check_process_exit(inst: ModelInstance) -> Optional[Transition]:
         tail = read_log_tail(inst.log_path) if inst.log_path else ""
         detail = f"process exited (rc={rc})" + (f"\n{tail}" if tail else "")
         inst.last_error = detail
+        inst.was_failed = True
         inst.set_state(ModelState.FAILED)
     inst.proc = None
     inst.pid = None
@@ -134,6 +136,7 @@ async def _reconcile_instance(
                     "and /health never returned 200"
                 )
                 inst.last_error = detail
+                inst.was_failed = True
                 # Kill the (likely hung) process so FAILED is honest — no orphan
                 # left loading and holding the GPU.
                 proc = inst.proc
@@ -152,17 +155,12 @@ async def _reconcile_instance(
     return []
 
 
-async def _persist(store, transitions: list[Transition]) -> None:
-    """Best-effort write of captured transitions; telemetry never breaks ops."""
-    if store is None or not transitions:
+async def _persist(store, transitions: list[Transition], notifier=None, settings=None) -> None:
+    """Funnel captured transitions through persist + alert; never breaks ops."""
+    if not transitions:
         return
     for inst, frm, to, detail in transitions:
-        try:
-            await store.record_model_event(
-                inst.key, inst.kind.value, frm.value, to.value, detail
-            )
-        except Exception:
-            logger.exception("Failed to record model event for %s", inst.key)
+        await emit_transition(store, notifier, settings, inst, frm, to, detail)
 
 
 async def _process_restarts(registry: ModelRegistry, settings: BackendSettings, store, manager) -> None:
@@ -193,7 +191,8 @@ async def _process_restarts(registry: ModelRegistry, settings: BackendSettings, 
 
 
 async def reconcile_once(
-    registry: ModelRegistry, http_client, settings: BackendSettings, store=None, manager=None
+    registry: ModelRegistry, http_client, settings: BackendSettings, store=None,
+    manager=None, notifier=None,
 ) -> None:
     """One reconciliation pass over every registered instance."""
     async with registry.lock:
@@ -202,7 +201,7 @@ async def reconcile_once(
             *(_reconcile_instance(inst, http_client, settings) for inst in instances)
         )
     transitions = [t for sub in results for t in sub]
-    await _persist(store, transitions)
+    await _persist(store, transitions, notifier, settings)
     # An LLM instance that just turned READY may be a newly-added overlay
     # instance the router doesn't know about yet. Nudge it to re-read config so
     # the instance joins its load-balancing pool — only now that it's actually
@@ -226,7 +225,7 @@ async def reconcile_once(
 
 
 async def adopt_running(
-    registry: ModelRegistry, http_client, settings: BackendSettings, store=None
+    registry: ModelRegistry, http_client, settings: BackendSettings, store=None, notifier=None
 ) -> None:
     """Boot-time adoption: mark already-healthy backends as READY (unmanaged).
 
@@ -243,16 +242,17 @@ async def adopt_running(
                 inst.set_state(ModelState.READY)
                 logger.info("Adopted already-running instance: %s", inst.key)
                 transitions.append((inst, prev, ModelState.READY, "adopted (external)"))
-    await _persist(store, transitions)
+    await _persist(store, transitions, notifier, settings)
 
 
 async def reconcile_loop(
-    registry: ModelRegistry, http_client, settings: BackendSettings, store=None, manager=None
+    registry: ModelRegistry, http_client, settings: BackendSettings, store=None,
+    manager=None, notifier=None,
 ) -> None:
     """Background task: reconcile forever at the configured interval."""
     while True:
         try:
-            await reconcile_once(registry, http_client, settings, store, manager)
+            await reconcile_once(registry, http_client, settings, store, manager, notifier)
         except Exception:  # never let the loop die
             logger.exception("reconcile pass failed")
         await asyncio.sleep(settings.poll_interval)

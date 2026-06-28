@@ -37,6 +37,7 @@
 - **跨 instance KV cache 共享** — 在模型編輯器逐群組開關：各副本透過共享 store（vLLM `OffloadingConnector`）互相重用算過的 KV,相同前綴不必重算（實測外部 prefix cache 命中率約 99%、暖過的 prompt TTFT 降 31%）。流量頁與系統拓撲會標示哪些群組共用、哪些各自獨立。
 - **即時觀測** — SSE 狀態、動畫系統拓撲圖與 router 負載平衡圖、每模型用量／延遲／錯誤統計。
 - **內建 Grafana 監控** — Prometheus 自動發現每個運行中的實例；總覽／容量／效能／GPU／主機 dashboards 嵌入應用內，含 SLO 門檻線與告警。
+- **生命週期告警** — 離散的模型事件（崩潰、退避用盡、復原）推到 Slack／Discord／通用 webhook，含每個 sink 自訂嚴重度門檻與 per-model 去重；用環境變數或 admin「通知」頁（含一鍵測試）設定。與 Grafana 指標告警互補。
 - **Playground** — OpenAI 相容的 chat（串流）／completions／embeddings／reranking。
 - **壓測與評測** — LLM 壓測（並發、到達率、SLA 自動調優）＋ 30+ 個準確度資料集與 LLM-as-judge。
 - **資料庫** — 在 UI 瀏覽／預下載 HF 權重與資料集；工具調用 parser 助手；LoRA 支援。

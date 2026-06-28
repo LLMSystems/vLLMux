@@ -133,6 +133,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+
+CREATE TABLE IF NOT EXISTS alert_sinks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    type         TEXT    NOT NULL,            -- slack | discord | webhook
+    url          TEXT    NOT NULL,
+    min_severity TEXT    NOT NULL DEFAULT 'info',
+    created_at   REAL    NOT NULL
+);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -426,6 +434,39 @@ class LLMOpsStore:
             tuple(params),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+    # ---- Alert sinks (notification destinations) -------------------------
+
+    async def create_alert_sink(
+        self, type: str, url: str, min_severity: str = "info", ts: Optional[float] = None
+    ) -> int:
+        import time
+
+        cur = await self._db.execute(
+            "INSERT INTO alert_sinks (type, url, min_severity, created_at) VALUES (?, ?, ?, ?)",
+            (type, url, min_severity, ts or time.time()),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def list_alert_sinks(self) -> list[dict]:
+        cur = await self._db.execute(
+            "SELECT id, type, url, min_severity, created_at FROM alert_sinks ORDER BY id"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_alert_sink(self, sink_id: int) -> Optional[dict]:
+        cur = await self._db.execute(
+            "SELECT id, type, url, min_severity, created_at FROM alert_sinks WHERE id = ?",
+            (sink_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def delete_alert_sink(self, sink_id: int) -> bool:
+        cur = await self._db.execute("DELETE FROM alert_sinks WHERE id = ?", (sink_id,))
+        await self._db.commit()
+        return cur.rowcount > 0
 
     async def prune_audit(self, max_rows: int = 50_000) -> int:
         """Cap the audit table to its most recent ``max_rows`` rows. Returns the

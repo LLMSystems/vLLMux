@@ -36,6 +36,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 - **Cross-instance KV-cache sharing** — toggle it per model group in the editor: instances offload/load KV blocks to a shared store (vLLM `OffloadingConnector`) so a prefix computed on one replica is reused by another (verified ~99% external prefix-cache hit, 31% lower TTFT on a warmed prompt). Traffic & topology views show which groups pool KV vs keep their own.
 - **Live observability** — SSE status, animated system-topology & router-balancing graphs, per-model usage / latency / error stats.
 - **Bundled Grafana monitoring** — Prometheus auto-discovers every running instance; Overview / Capacity / Performance / GPU / Host dashboards embedded in-app, with SLO thresholds & alerts.
+- **Lifecycle alerting** — discrete model events (crash, restart-budget exhausted, recovered) pushed to Slack / Discord / a generic webhook, with per-sink severity floors and per-model cooldown; configured via env or the admin **Notifications** page (one-click test). Complements Grafana's metric alerts.
 - **Playground** — OpenAI-compatible chat (streaming) / completions / embeddings / reranking, with reasoning display.
 - **Benchmark & evaluate** — evalscope load tests (concurrency, arrival-rate, SLA auto-tune) plus 30+ accuracy datasets with LLM-as-judge.
 - **Libraries** — browse / pre-download HF model weights & datasets from the UI; tool-calling parser helper; LoRA support.

@@ -17,9 +17,13 @@
   - **GPU**（DCGM）與 **Host**（Node Exporter）
 
   同一批 dashboards 也嵌入控制台的 **監控** 分頁，含 SLO 門檻線與模型生命週期標註。
-- **告警**：已 provision 的 vLLM 告警規則（target down、TTFT p95、KV cache、請求排隊）
-  路由到一個 webhook contact point —— 在 `deploy/.env` 設 `GRAFANA_ALERT_WEBHOOK`
-  （Slack/Discord/通用）並重啟 Grafana 即可收到通知。
+- **告警（兩條互補通道）**：
+  - **Grafana**（指標/門檻）：已 provision 的 vLLM 規則（target down、TTFT p95、KV cache、
+    請求排隊、autoscaling VRAM-blocked / 撐滿上限）路由到 webhook contact point ——
+    在 `deploy/.env` 設 `GRAFANA_ALERT_WEBHOOK`（Slack/Discord/通用）並重啟 Grafana。
+  - **Backend Notifier**（離散生命週期事件）：模型崩潰、退避用盡、復原，推到 Slack/Discord/
+    webhook。用 `LLMOPS_ALERT_*` env 或控制台 **通知** 頁（含一鍵測試）設定。
+    見 [alerting-design_zh-CN.md](alerting-design_zh-CN.md)。兩條可指同一個 Slack channel。
 
 ```bash
 curl http://localhost:9090/api/v1/targets        # prometheus：scrape target 健康狀態

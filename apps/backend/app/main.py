@@ -16,6 +16,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import alerts as alert_routes
 from app.api import auth as auth_routes
 from app.api import config as config_routes
 from app.api import datasets as dataset_routes
@@ -36,6 +37,7 @@ from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
 from app.llmops.autoscaler import autoscaler_loop
 from app.llmops.load_monitor import load_monitor_loop
+from app.llmops.notifier import build_notifier, refresh_sinks
 from app.llmops.reconciler import adopt_running, reconcile_loop
 from app.llmops.state import ModelState
 from app.eval.manager import EvalManager
@@ -97,9 +99,10 @@ async def lifespan(app: FastAPI):
     # passes it) still falls back instead of yielding "" — an empty router_url
     # would no-op router reloads and the load-monitor scrape.
     router_url = os.environ.get("LLMOPS_ROUTER_URL") or "http://127.0.0.1:8887"
+    notifier = build_notifier(http_client, settings)
     manager = ModelManager(
         registry, launchers, http_client, config, config_path, settings, store=store,
-        overlay_path=ov_path, router_url=router_url,
+        overlay_path=ov_path, router_url=router_url, notifier=notifier,
     )
 
     app.state.config = config
@@ -107,6 +110,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.http_client = http_client
     app.state.store = store
+    app.state.notifier = notifier
     app.state.registry = registry
     app.state.manager = manager
     app.state.gpu_processes = []
@@ -132,9 +136,12 @@ async def lifespan(app: FastAPI):
             "Set it to require an admin token for start/stop/add/edit/remove."
         )
 
+    # Layer DB-configured alert sinks onto the env ones before any alert fires.
+    await refresh_sinks(notifier, settings, store)
+
     # Adopt anything already healthy before starting the loops, so state is
     # honest from the first response.
-    await adopt_running(registry, http_client, settings, store)
+    await adopt_running(registry, http_client, settings, store, notifier)
 
     # Seed the Prometheus file_sd targets file (covering adopted-ready instances)
     # so monitoring has a valid file from t=0, before the first state transition.
@@ -142,7 +149,7 @@ async def lifespan(app: FastAPI):
 
     app.state.load_stats = {}
     tasks = [
-        asyncio.create_task(reconcile_loop(registry, http_client, settings, store, manager)),
+        asyncio.create_task(reconcile_loop(registry, http_client, settings, store, manager, notifier)),
         asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
         asyncio.create_task(
             load_monitor_loop(app, registry, http_client, router_url, settings.load_poll_interval)
@@ -185,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(config_routes.router, prefix="/api")
     app.include_router(observability_routes.router, prefix="/api")
     app.include_router(auth_routes.router, prefix="/api")
+    app.include_router(alert_routes.router, prefix="/api")
     app.include_router(download_routes.router, prefix="/api")
     app.include_router(lora_routes.router, prefix="/api")
     app.include_router(dataset_routes.router, prefix="/api")

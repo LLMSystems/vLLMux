@@ -67,6 +67,9 @@ class ModelInstance:
     # Auto-restart bookkeeping (managed by the reconciler).
     restart_count: int = 0
     next_restart_at: Optional[float] = None
+    # Set when the instance enters FAILED; lets the next READY emit a
+    # `model_recovered` alert (cleared on READY). See app/llmops/events.py.
+    was_failed: bool = False
 
     # Startup progress tracking: the reconciler watches the log file growing while
     # STARTING so a slow weight download/load isn't mistaken for a hang. The

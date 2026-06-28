@@ -285,6 +285,18 @@ export interface CreatedOperator {
   token: string
 }
 
+export type SinkType = 'slack' | 'discord' | 'webhook'
+export type Severity = 'info' | 'warning' | 'error' | 'critical'
+
+/** A notification destination (GET /api/alerts/sinks). URL is masked. */
+export interface AlertSink {
+  id: number | null // null = env-configured (built-in, not editable)
+  type: SinkType
+  url_preview: string
+  min_severity: Severity
+  source: 'env' | 'db'
+}
+
 /** One control-plane mutation in the audit trail (GET /api/audit). */
 export interface AuditEntry {
   id: number

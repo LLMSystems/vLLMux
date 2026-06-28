@@ -54,6 +54,7 @@ class FakeHTTPClient:
 
     def __init__(self, healthy_ports=()):
         self.healthy_ports = set(healthy_ports)
+        self.posts = []  # (url, json) — e.g. alert sends
 
     async def get(self, url, *args, **kwargs):
         # url looks like http://localhost:8002/health
@@ -61,6 +62,10 @@ class FakeHTTPClient:
         if port in self.healthy_ports:
             return _FakeResponse(200)
         raise ConnectionError("refused")
+
+    async def post(self, url, json=None, timeout=None, *args, **kwargs):
+        self.posts.append((url, json))
+        return _FakeResponse(200)
 
 
 class FakeProc:
@@ -93,6 +98,7 @@ class FakeStore:
         self.api_keys = []  # list of dicts (incl. key_hash)
         self.operators = []  # list of dicts (incl. token_hash)
         self.audit = []  # list of dicts
+        self.alert_sinks = []  # list of dicts
 
     async def record_model_event(self, key, kind, from_state, to_state, detail=None, ts=None):
         self.events.append((key, kind, from_state, to_state, detail))
@@ -197,6 +203,26 @@ class FakeStore:
             "method": method, "path": path, "target": target, "status": status,
             "detail": detail, "source_ip": source_ip,
         })
+
+    # -- Alert sinks --
+    async def create_alert_sink(self, type, url, min_severity="info", ts=None):
+        sid = len(self.alert_sinks) + 1
+        self.alert_sinks.append({
+            "id": sid, "type": type, "url": url, "min_severity": min_severity,
+            "created_at": ts or 0.0,
+        })
+        return sid
+
+    async def list_alert_sinks(self):
+        return [dict(s) for s in self.alert_sinks]
+
+    async def get_alert_sink(self, sink_id):
+        return next((dict(s) for s in self.alert_sinks if s["id"] == sink_id), None)
+
+    async def delete_alert_sink(self, sink_id):
+        before = len(self.alert_sinks)
+        self.alert_sinks = [s for s in self.alert_sinks if s["id"] != sink_id]
+        return len(self.alert_sinks) < before
 
     async def list_audit(self, actor=None, action=None, target=None, since=None,
                          until=None, before=None, limit=200):
@@ -353,9 +379,12 @@ def app(monkeypatch):
     application.state.settings = settings
     application.state.http_client = http_client
     application.state.store = store
+    from app.llmops.notifier import build_notifier
+    application.state.notifier = build_notifier(http_client, settings)
     application.state.registry = registry
     application.state.manager = ModelManager(
-        registry, launchers, http_client, FAKE_CONFIG, "config.yaml", settings, store=store
+        registry, launchers, http_client, FAKE_CONFIG, "config.yaml", settings, store=store,
+        notifier=application.state.notifier,
     )
     application.state.gpu_processes = []
     application.state.download_manager = DownloadManager()

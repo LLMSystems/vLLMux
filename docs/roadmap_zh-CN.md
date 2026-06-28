@@ -68,12 +68,18 @@
 已有跨實例 KV cache 共享，但沒有「相同請求直接回快取」。
 對 RAG / 重複 prompt 場景能直接省算力與延遲。先做精確比對快取，再考慮語意快取。
 
-### 5. 生命週期事件告警（Slack / Webhook / Email） — `半成品`
+### 5. 生命週期事件告警（Slack / Discord / Webhook） — `已完成`
 
-已有:backend `alert_webhook`(model_failed 推送)+ Grafana 告警(autoscaling Phase 4
-新增「擴容被 VRAM 卡住」「撐滿上限仍積壓」兩條 + 既有 vLLM 告警)。
-剩:把 Grafana contact point 從佔位 URL 接到真的 Slack/webhook,以及把更多生命週期事件
-(崩潰、退避用盡)統一推送。`model_events` 表已是現成的事件源。
+兩條互補通道:
+- **Backend Notifier**(離散事件)—— 統一事件漏斗
+  ([events.py](../apps/backend/app/llmops/events.py))讓 manager 與 reconciler 共用,
+  **修好「reconciler 偵測到的崩潰不會告警」的漏洞**;事件 `model_failed` / `model_gave_up`
+  (退避用盡)/ `model_recovered`,推到 Slack / Discord / 通用 webhook
+  ([notifier.py](../apps/backend/app/llmops/notifier.py)),含 severity 門檻與 per-(model,event)
+  去重。env(`LLMOPS_ALERT_*`)或 admin「通知」頁(含一鍵測試)皆可設定。
+- **Grafana**(指標告警)—— 既有規則 + contact point(`GRAFANA_ALERT_WEBHOOK`)。
+
+見 [alerting-design_zh-CN.md](alerting-design_zh-CN.md)。Email(SMTP)未做,未來加一個 sink 類型即可。
 
 ### 6. 多使用者 + 稽核日誌（RBAC / SSO） — `規劃中`
 

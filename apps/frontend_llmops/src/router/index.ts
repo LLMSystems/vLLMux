@@ -88,6 +88,12 @@ const router = createRouter({
       component: () => import('@/views/AuditView.vue'),
     },
     {
+      path: '/notifications',
+      name: 'notifications',
+      meta: { title: 'notifications' },
+      component: () => import('@/views/NotificationsView.vue'),
+    },
+    {
       path: '/usage',
       name: 'usage',
       meta: { title: 'usage' },

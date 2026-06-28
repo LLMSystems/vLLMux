@@ -214,3 +214,52 @@ async def test_adopt_running_marks_healthy_unmanaged():
     assert adopted.desired == Desired.RUNNING
 
     assert reg.get(UNHEALTHY).state == ModelState.STOPPED
+
+
+# -- alerting: the core fix — a reconciler-detected crash now fires an alert ----
+
+class _CollectingNotifier:
+    def __init__(self):
+        self.events = []
+
+    async def notify(self, ev):
+        self.events.append(ev)
+
+
+async def test_reconciler_crash_fires_alert():
+    """The gap this closes: a crash detected by the reconciler (not the manager)
+    must dispatch an alert, attributed model_failed, and arm a restart."""
+    reg = _registry()
+    inst = reg.get(HEALTHY)
+    inst.state = ModelState.READY
+    inst.managed = True
+    inst.desired = Desired.RUNNING
+    inst.proc = FakeProc(returncode=139)  # crashed
+
+    notifier = _CollectingNotifier()
+    await reconcile_once(reg, FakeHTTPClient(healthy_ports={8002}), _settings(),
+                         notifier=notifier)
+    assert inst.state == ModelState.FAILED
+    assert [e.event for e in notifier.events] == ["model_failed"]
+    assert notifier.events[0].severity == "error"
+
+
+async def test_reconciler_gave_up_when_restart_budget_exhausted():
+    """Once the restart budget is spent and nothing is armed, the crash escalates
+    to model_gave_up (critical)."""
+    settings = BackendSettings(max_restarts=3)
+    reg = _registry()
+    inst = reg.get(HEALTHY)
+    inst.state = ModelState.READY
+    inst.managed = True
+    inst.desired = Desired.RUNNING
+    inst.restart_count = 3            # budget already spent
+    inst.proc = FakeProc(returncode=1)
+
+    notifier = _CollectingNotifier()
+    await reconcile_once(reg, FakeHTTPClient(healthy_ports={8002}), settings,
+                         notifier=notifier)
+    assert inst.state == ModelState.FAILED
+    assert inst.next_restart_at is None  # not re-armed
+    assert [e.event for e in notifier.events] == ["model_gave_up"]
+    assert notifier.events[0].severity == "critical"

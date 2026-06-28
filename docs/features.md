@@ -54,6 +54,11 @@
 - Per-model usage (count, error rate, p50/p95 latency, tokens), request log, and a
   state-transition event timeline.
 - GPU / CPU / memory monitoring plus a GPU-process inventory.
+- **Lifecycle alerting** — discrete model events (crash, restart-budget exhausted,
+  recovered) pushed to Slack / Discord / a generic webhook, with a severity floor
+  and per-model cooldown so a crash-loop can't spam. Configured via `LLMOPS_ALERT_*`
+  env or the admin **Notifications** page (with a one-click test push); complements
+  Grafana's metric alerts. See [alerting-design_zh-CN.md](alerting-design_zh-CN.md).
 
 ## Playground
 

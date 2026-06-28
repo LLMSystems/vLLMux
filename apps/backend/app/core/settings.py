@@ -54,8 +54,15 @@ class BackendSettings:
     # Shared admin token gating control/write operations + API-key management.
     # Empty -> auth disabled (dev mode): writes are open and a warning is logged.
     admin_token: str = ""
-    # Optional webhook URL; a JSON alert is POSTed when a model enters FAILED.
+    # Lifecycle-alert sinks (any subset; empty -> alerting disabled). The generic
+    # webhook keeps its historical name; Slack/Discord get formatted messages.
     alert_webhook: str = ""
+    alert_slack_webhook: str = ""
+    alert_discord_webhook: str = ""
+    # Global severity floor (info|warning|error|critical) and per-(model,event)
+    # cooldown so a crash-looping model can't spam the channel.
+    alert_min_severity: str = "error"
+    alert_cooldown_s: float = 300.0
     # Optional path for the Prometheus file_sd targets file. The backend rewrites
     # it whenever the set of ready vLLM instances changes, so Prometheus can
     # scrape a dynamic fleet without config edits. Empty -> feature disabled.
@@ -75,6 +82,10 @@ class BackendSettings:
         return cls(
             admin_token=os.environ.get("LLMOPS_ADMIN_TOKEN", "").strip(),
             alert_webhook=os.environ.get("LLMOPS_ALERT_WEBHOOK", "").strip(),
+            alert_slack_webhook=os.environ.get("LLMOPS_ALERT_SLACK_WEBHOOK", "").strip(),
+            alert_discord_webhook=os.environ.get("LLMOPS_ALERT_DISCORD_WEBHOOK", "").strip(),
+            alert_min_severity=os.environ.get("LLMOPS_ALERT_MIN_SEVERITY", "error").strip() or "error",
+            alert_cooldown_s=_env_float("LLMOPS_ALERT_COOLDOWN_S", 300.0),
             prometheus_sd_path=os.environ.get("LLMOPS_PROMETHEUS_SD_PATH", "").strip(),
             poll_interval=_env_float("LLMOPS_POLL_INTERVAL", 2.0),
             start_timeout=_env_float("LLMOPS_START_TIMEOUT", 300.0),

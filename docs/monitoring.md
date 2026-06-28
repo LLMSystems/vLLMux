@@ -20,9 +20,16 @@ The stack bundles a full **Prometheus → Grafana** pipeline, no manual setup.
 
   The same dashboards are embedded in the dashboard's **Monitoring** tab, with SLO
   threshold lines and model-lifecycle annotations.
-- **Alerting**: provisioned vLLM alert rules (target down, TTFT p95, KV cache,
-  request queueing) route to a webhook contact point — set `GRAFANA_ALERT_WEBHOOK` in
-  `deploy/.env` (Slack/Discord/generic) and restart Grafana to receive them.
+- **Alerting (two complementary channels)**:
+  - **Grafana** (metric/threshold): provisioned vLLM rules (target down, TTFT p95,
+    KV cache, request queueing, autoscaling VRAM-blocked / saturated) route to a
+    webhook contact point — set `GRAFANA_ALERT_WEBHOOK` in `deploy/.env`
+    (Slack/Discord/generic) and restart Grafana.
+  - **Backend Notifier** (discrete lifecycle events): model crash, restart-budget
+    exhausted, recovered — pushed to Slack/Discord/webhook, configured via
+    `LLMOPS_ALERT_*` env or the console's **Notifications** page (with a test push).
+    See [alerting-design_zh-CN.md](alerting-design_zh-CN.md). Both can target the
+    same Slack channel.
 
 ```bash
 curl http://localhost:9090/api/v1/targets        # prometheus: scrape target health

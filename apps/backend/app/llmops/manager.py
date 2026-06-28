@@ -14,6 +14,7 @@ import time
 from typing import Optional
 
 from app.core.settings import BackendSettings
+from app.llmops.events import emit_transition
 from app.llmops.instance import ModelInstance
 from app.llmops.launchers import Launcher
 from app.llmops.process import spawn_process, terminate_process_group
@@ -85,6 +86,7 @@ class ModelManager:
         store=None,
         overlay_path=None,
         router_url=None,
+        notifier=None,
     ) -> None:
         self.registry = registry
         self._launchers: dict[ModelKind, Launcher] = {l.kind: l for l in launchers}
@@ -93,6 +95,7 @@ class ModelManager:
         self.config_path = config_path
         self.settings = settings
         self.store = store
+        self.notifier = notifier
         self.overlay_path = overlay_path
         # Used to nudge the router to re-read config/overlay when an instance
         # becomes routable (e.g. a newly-added overlay instance turns READY).
@@ -105,37 +108,11 @@ class ModelManager:
         return inst
 
     async def _record(self, inst, from_state, to_state, detail=None) -> None:
-        """Persist a state transition. Best-effort: telemetry never breaks ops."""
-        if to_state == ModelState.FAILED and getattr(self.settings, "alert_webhook", ""):
-            asyncio.create_task(self._fire_alert(inst, detail))
-        if self.store is None:
-            return
-        try:
-            await self.store.record_model_event(
-                inst.key,
-                inst.kind.value,
-                from_state.value if from_state else None,
-                to_state.value,
-                detail,
-            )
-        except Exception:
-            logger.exception("Failed to record model event for %s", inst.key)
-
-    async def _fire_alert(self, inst, detail) -> None:
-        """POST a JSON alert to the configured webhook when a model fails.
-        Best-effort and fire-and-forget — never blocks or breaks the state machine."""
-        payload = {
-            "event": "model_failed",
-            "model": inst.key,
-            "kind": inst.kind.value,
-            "error": detail or inst.last_error,
-            "restart_count": inst.restart_count,
-            "ts": time.time(),
-        }
-        try:
-            await self.http_client.post(self.settings.alert_webhook, json=payload, timeout=5.0)
-        except Exception:
-            logger.warning("Alert webhook POST failed for %s", inst.key)
+        """Persist a state transition + dispatch any alert, via the shared funnel.
+        Best-effort: telemetry/alerts never break ops."""
+        await emit_transition(
+            self.store, self.notifier, self.settings, inst, from_state, to_state, detail
+        )
 
     async def trigger_router_reload(self) -> bool:
         """Best-effort: ask the router to re-read config + overlay so a

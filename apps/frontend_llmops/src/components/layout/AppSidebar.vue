@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import {
   Activity,
   ArrowLeftRight,
+  Bell,
   BookOpen,
   ClipboardCheck,
   Cpu,
@@ -74,6 +75,7 @@ const nav = computed(() => {
       ? [
           { to: '/operators', label: t('sidebar.operators'), icon: Users },
           { to: '/audit', label: t('sidebar.audit'), icon: ScrollText },
+          { to: '/notifications', label: t('sidebar.notifications'), icon: Bell },
         ]
       : []),
     { to: '/usage', label: t('sidebar.usage'), icon: BookOpen },

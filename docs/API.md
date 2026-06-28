@@ -390,6 +390,27 @@ curl -s -X POST http://localhost:5000/api/operators \
 curl -s "http://localhost:5000/api/audit?actor=alice&limit=50" -H "X-Admin-Token: $ADMIN"
 ```
 
+### 1.11 通知（生命週期告警）
+
+離散事件（`model_failed` / `model_gave_up` / `model_recovered`）推到 Slack / Discord /
+通用 webhook，與 Grafana 指標告警互補。sink 可用 `LLMOPS_ALERT_*` env（內建、不可改）或
+下列 API（存 DB、即時生效）設定。皆 `require_admin`。
+
+| 端點 | 說明 |
+|---|---|
+| `GET /api/alerts/sinks` | 列出 env + DB sink；URL 只回**遮罩**版（`url_preview`）+ `source`（env/db） |
+| `POST /api/alerts/sinks` | 新增 DB sink：`{type: slack\|discord\|webhook, url, min_severity}` |
+| `DELETE /api/alerts/sinks/{id}` | 移除 DB sink（env sink 不可刪） |
+| `POST /api/alerts/test` | 送測試推播：`{id}` 測單一 sink，省略則測全部；回各 sink `{type, ok, error?}` |
+
+```bash
+curl -s -X POST http://localhost:5000/api/alerts/sinks -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"slack","url":"https://hooks.slack.com/services/…","min_severity":"error"}'
+curl -s -X POST http://localhost:5000/api/alerts/test -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
 ---
 
 ## 2. LLM Router Server

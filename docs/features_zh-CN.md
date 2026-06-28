@@ -42,6 +42,10 @@
   顯示佇列／睡眠徽章。
 - 每模型用量（次數、錯誤率、p50/p95 延遲、tokens）、請求日誌、狀態轉移事件時間軸。
 - GPU／CPU／記憶體監控，以及 GPU 進程清單。
+- **生命週期告警** — 離散的模型事件（崩潰、退避用盡、復原）推到 Slack／Discord／通用
+  webhook，含 severity 門檻與 per-model 去重，避免崩潰迴圈洗版。用 `LLMOPS_ALERT_*` 環境變數
+  或 admin「通知」頁（含一鍵測試）設定；與 Grafana 指標告警互補。見
+  [alerting-design_zh-CN.md](alerting-design_zh-CN.md)。
 
 ## Playground
 

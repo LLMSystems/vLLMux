@@ -1,4 +1,5 @@
 import type {
+  AlertSink,
   ApiKey,
   AuditEntry,
   CacheInfo,
@@ -9,6 +10,8 @@ import type {
   Me,
   Operator,
   Role,
+  Severity,
+  SinkType,
   DatasetCacheInfo,
   DatasetDownloadJob,
   DownloadJob,
@@ -282,6 +285,22 @@ export const api = {
     ),
   revokeOperator: (id: number) =>
     request<null>(API_BASE, `/api/operators/${id}`, { method: 'DELETE' }),
+
+  // ---- Alert sinks (notifications) -----------------------------------------
+  listAlertSinks: () => request<AlertSink[]>(API_BASE, '/api/alerts/sinks'),
+  createAlertSink: (type: SinkType, url: string, min_severity: Severity) =>
+    request<AlertSink>(API_BASE, '/api/alerts/sinks', {
+      method: 'POST',
+      body: JSON.stringify({ type, url, min_severity }),
+    }),
+  deleteAlertSink: (id: number) =>
+    request<null>(API_BASE, `/api/alerts/sinks/${id}`, { method: 'DELETE' }),
+  testAlertSinks: (id?: number) =>
+    request<{ results: { type: string; ok: boolean; error?: string }[] }>(
+      API_BASE,
+      '/api/alerts/test',
+      { method: 'POST', body: JSON.stringify(id != null ? { id } : {}) },
+    ),
 
   // ---- Audit log -----------------------------------------------------------
   listAudit: (params?: {

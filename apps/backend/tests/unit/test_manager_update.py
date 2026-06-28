@@ -141,6 +141,8 @@ async def test_edit_embedding_rejected_while_running(tmp_path):
 async def test_alert_webhook_fires_on_failed(tmp_path):
     import asyncio
 
+    from app.llmops.notifier import build_notifier
+
     mgr, _ = _manager(tmp_path)
     posts: list = []
 
@@ -148,8 +150,8 @@ async def test_alert_webhook_fires_on_failed(tmp_path):
         async def post(self, url, json=None, timeout=None):
             posts.append((url, json))
 
-    mgr.http_client = _Client()
     mgr.settings = BackendSettings(alert_webhook="http://hook/alert")
+    mgr.notifier = build_notifier(_Client(), mgr.settings)
 
     inst = mgr.registry.get("Qwen3-0.6B::a")
     await mgr._record(inst, ModelState.STARTING, ModelState.FAILED, "process exited (rc=1)")
@@ -163,6 +165,8 @@ async def test_alert_webhook_fires_on_failed(tmp_path):
 async def test_no_alert_when_webhook_unset(tmp_path):
     import asyncio
 
+    from app.llmops.notifier import build_notifier
+
     mgr, _ = _manager(tmp_path)
     posts: list = []
 
@@ -170,7 +174,8 @@ async def test_no_alert_when_webhook_unset(tmp_path):
         async def post(self, url, json=None, timeout=None):
             posts.append(url)
 
-    mgr.http_client = _Client()  # settings.alert_webhook is "" by default
+    # No sink URLs configured -> notifier has no sinks -> nothing is sent.
+    mgr.notifier = build_notifier(_Client(), mgr.settings)
     inst = mgr.registry.get("Qwen3-0.6B::a")
     await mgr._record(inst, ModelState.STARTING, ModelState.FAILED, "boom")
     await asyncio.sleep(0)
