@@ -37,6 +37,10 @@
   when every instance of the group is unavailable the router routes the request to the
   next compatible group (response reflects the model that actually served) instead of
   failing.
+- **Router health probes** — `GET /health` (liveness, always 200) and `GET /ready`
+  (readiness, 200 once config is loaded and startup finished, else 503), both
+  auth-free, so k8s probes / load balancers hold traffic correctly during boot or a
+  reload window.
 
 ## Observability
 
@@ -113,6 +117,12 @@
   dev setups are unchanged. Admins can change a user's role or rotate its token in
   place; signed-in users get a DiceBear avatar + role badge. See
   [rbac-audit-design_zh-CN.md](rbac-audit-design_zh-CN.md).
+- **SSO login (OIDC)** — sign in with a corporate IdP (Google / Entra / Okta / any
+  OIDC provider); the IdP's email / groups map to a role, and the session lives in
+  a signed HttpOnly cookie. Humans use SSO, machines / CI keep using tokens — both
+  flow through the same authorization model. Configuring OIDC closes the open
+  local-dev backdoor and makes auth required; disabled by default (unchanged until
+  you set an issuer). See [sso-design_zh-CN.md](sso-design_zh-CN.md).
 - **Audit log** — every control-plane mutation (who / what / when / result, body
   redacted) is recorded and browsable (filter by actor/action, time range,
   pagination), distinct from the inference request log and the state-transition
@@ -122,6 +132,10 @@
   **token quota** (total / daily / monthly) enforced at the router (429 once over).
   A signed-in operator/admin token can also drive the Playground directly (viewers
   cannot run inference).
+- **Cost dashboard** — a per-model price table (per-1M-token input/output prices,
+  admin-editable) turns `prompt`/`completion` token usage into **cost**; the Cost page
+  shows total spend plus per-model and per-key breakdowns over a chosen time range,
+  flagging models that fall back to the default price. `/api/cost/*`.
 - **Config versioning / export-import** — the dynamic-model overlay (where every
   runtime change lives; `config.yaml` stays read-only) can be **exported** as a
   portable backup file and **imported** to restore it wholesale (schema-validated

@@ -27,6 +27,9 @@
   手動啟停停用）。見 [autoscaling-design_zh-CN.md](autoscaling-design_zh-CN.md)。
 - **跨模型 fallback** — 群組可設 `fallback` 鏈；該群組所有實例不可用時，router 改路由到
   下一個相容群組（回應反映實際服務的模型），而非直接失敗。
+- **Router 健康探針** — `GET /health`(liveness,永遠 200)與 `GET /ready`(readiness,
+  config 載入 + 啟動完成才 200,否則 503),皆免 auth,供 k8s 探針 / 負載器在啟動 / reload
+  期間正確探活。
 
 ## 觀測性
 
@@ -89,12 +92,19 @@
   local-dev 開放——既有單一 token 與 dev 部署完全不受影響。admin 可就地改使用者角色或
   重新產生 token；登入者顯示 DiceBear 頭像與角色徽章。見
   [rbac-audit-design_zh-CN.md](rbac-audit-design_zh-CN.md)。
+- **SSO 登入(OIDC)** — 可用公司 IdP(Google / Entra / Okta / 任何 OIDC)登入,
+  IdP 的 email / groups 映射成角色;session 走自簽 HttpOnly cookie。人走 SSO、機器 / CI 仍用
+  token,兩者並存於同一授權模型。設定 OIDC 即關閉 open-dev 後門、使驗證成為必要。預設關閉
+  (未設 issuer 行為不變)。見 [sso-design_zh-CN.md](sso-design_zh-CN.md)。
 - **稽核日誌** — 每筆控制平面變更（誰／做什麼／何時／結果，body 已脫敏）都會記錄並可瀏覽
   （依操作者／動作、時間範圍篩選，可分頁），與推理 request log、狀態轉移時間軸彼此區隔；
   保留筆數有上限，每小時裁剪。
 - **API 金鑰管理** — 發行／撤銷用於 router 推理的金鑰，含 per-key 用量歸屬、每分鐘
   **速率上限**，以及在 router 強制的 **token 額度**（總量／每日／每月，超額回 429）。
   登入的 operator／admin token 也能直接用 Playground 推理（viewer 不能推理）。
+- **成本 dashboard** — 每模型定價表（每 100 萬 tokens 的輸入／輸出價,admin 可改）把
+  `prompt`／`completion` token 用量換算成 **成本**;「成本」頁顯示總花費與 per-model／
+  per-key 明細,可選時間範圍;未定價模型用預設價並標示。`/api/cost/*`。
 - **設定版本化 / 匯出匯入** — 動態模型 overlay（所有 runtime 改動所在；`config.yaml` 唯讀）
   可一鍵**匯出**成可攜檔備份、**匯入**整份還原（先 schema 驗證；有 instance 在跑會擋下，
   可強制）。每次會改 overlay 的請求都**自動快照**並歸屬操作者；「設定版本」頁可看歷史、

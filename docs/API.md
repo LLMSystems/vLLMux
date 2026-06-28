@@ -354,13 +354,14 @@ curl -s http://localhost:5000/healthz
 
 ### 1.10 認證、角色與稽核
 
-控制 API 用 token 認證（`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`）。
-角色單調：`viewer ⊂ operator ⊂ admin`。解析規則依序為：
+控制 API 用 token 認證（`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`）,
+**或** SSO session cookie（見下）。角色單調：`viewer ⊂ operator ⊂ admin`。解析規則依序為：
 
-1. 未設 env `LLMOPS_ADMIN_TOKEN` 且尚無任何 operator → 視為 local-dev（admin），API 開放。
-2. token 命中某把未撤銷的 operator 憑證 → 該 operator 的角色。
-3. token 等於 env `LLMOPS_ADMIN_TOKEN` → 永遠 admin（啟動／救援後門）。
-4. 否則 → 401。
+1. 未設 env `LLMOPS_ADMIN_TOKEN`、未啟用 SSO 且尚無任何 operator → local-dev（admin），開放。
+2. 有效的 SSO session cookie → 該使用者(email)與映射角色。
+3. token 命中某把未撤銷的 operator 憑證 → 該 operator 的角色。
+4. token 等於 env `LLMOPS_ADMIN_TOKEN` → 永遠 admin（啟動／救援後門）。
+5. 否則 → 401。
 
 路由所需最低角色：唯讀 `GET` 不限；模型啟停／編輯／擴縮／eval／benchmark／下載 = `operator`；
 使用者與金鑰管理、稽核 = `admin`。權限不足回 **403**，未認證回 **401**。
@@ -368,7 +369,10 @@ curl -s http://localhost:5000/healthz
 | 端點 | 角色 | 說明 |
 |---|---|---|
 | `GET /api/me` | 任一（已認證） | 回傳 `{actor, role}`；未認證 401 |
-| `GET /api/auth/status` | 公開 | `{auth_enabled}`，供前端決定是否要求登入 |
+| `GET /api/auth/status` | 公開 | `{auth_enabled, sso_enabled}`，供前端決定要求 token 還是提供 SSO |
+| `GET /api/auth/sso/login?next=` | 公開 | 啟動 OIDC 登入(PKCE),307 導向 IdP;`next` 限站內路徑 |
+| `GET /api/auth/sso/callback` | 公開 | IdP 回呼:驗 state/token/id_token、映射角色、簽 session cookie、導回 `next` |
+| `POST /api/auth/sso/logout` | 公開 | 清除 session cookie |
 | `GET /api/operators` | admin | 列出使用者（不回 token hash） |
 | `POST /api/operators` | admin | 建立使用者 `{label, role}`，**回傳一次性明文 token**（`sk-op-…`） |
 | `PATCH /api/operators/{id}` | admin | 改角色 `{role}`，即時生效（含 router） |
@@ -429,6 +433,25 @@ overlay 的請求都自動快照（內容相同則去重）。
 curl -s http://localhost:5000/api/config/export -H "X-Admin-Token: $ADMIN" > backup.json
 curl -s -X POST http://localhost:5000/api/config/import -H "X-Admin-Token: $ADMIN" \
   -H 'Content-Type: application/json' --data @backup.json
+```
+
+### 1.13 成本（cost dashboard）
+
+成本 = token 用量 × 每模型定價（每 100 萬 tokens,分輸入/輸出）。未定價模型用預設值
+（`LLMOPS_DEFAULT_INPUT_PRICE` / `LLMOPS_DEFAULT_OUTPUT_PRICE`，預設 0）。讀取開放
+（同 `/usage`）；改定價 `require_admin`。
+
+| 端點 | 權限 | 說明 |
+|---|---|---|
+| `GET /api/cost/summary?since=&until=` | 開放 | 回傳 `{currency, total_cost, any_unpriced, by_model[], by_key[]}`;`by_model` 每列含 token 拆分、單價、`priced`、`cost` |
+| `GET /api/cost/prices` | 開放 | 目前定價表 + 預設價 + 幣別 |
+| `PUT /api/cost/prices/{model}` | admin | 設定/更新某模型(群組名)定價:`{input_price, output_price, currency?}`(每 1M tokens,須 ≥ 0) |
+| `DELETE /api/cost/prices/{model}` | admin | 移除定價(回退到預設) |
+
+```bash
+curl -s -X PUT http://localhost:5000/api/cost/prices/Qwen3-0.6B -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' -d '{"input_price":0.5,"output_price":1.5}'
+curl -s "http://localhost:5000/api/cost/summary"
 ```
 
 ---
@@ -542,6 +565,20 @@ curl -s http://localhost:8887/metrics
 ```
 
 > 負載分數權重：waiting ×10、running ×3、kv_cache ×100、inflight ×5（越低越優先）；連不上的後端給 `inf` 分數（fail-open）。
+
+### 2.8 `GET /health` · `GET /ready`（探針）
+
+供 k8s / 負載器探活,皆**免 auth**。
+
+| 端點 | 回應 | 用途 |
+|---|---|---|
+| `GET /health` | 永遠 `200 {"status":"ok"}` | liveness —— 進程活著就回 200,不依賴 config(`livenessProbe`) |
+| `GET /ready` | config 已載入且啟動完成 → `200 {"status":"ready","groups":N}`;否則 `503` | readiness —— 啟動 / reload 期間先回 503,讓 LB 暫不送流量(`readinessProbe`) |
+
+```bash
+curl -s http://localhost:8887/health
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8887/ready
+```
 
 ---
 

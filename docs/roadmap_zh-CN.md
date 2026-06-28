@@ -10,14 +10,16 @@
 
 ## 🔴 高優先（與現有設計天然接得上）
 
-### 1. Token 額度與成本預算（per-key budget / cost） — `已完成`（token 額度;成本估算待補）
+### 1. Token 額度與成本預算（per-key budget / cost） — `已完成`
 
 現況：`auth.py` 已有 `rpm_limit`（速率限制）+ `request_logs` 的 per-key 用量歸屬，
 但只有「速率」沒有「總量」。
 
-要補：
+已補：
 - 每把 API key 的 **token 額度**（總量 / 每日 / 每月），超額即拒（HTTP 429）。
-- 每模型定價表 → 把 `total_tokens` 換算成 **成本**，做 cost dashboard。
+- 每模型定價表（`model_prices`，每 100 萬 tokens 的輸入/輸出價）→ 把
+  `prompt/completion_tokens` 換算成 **成本**,「成本」頁顯示 per-model / per-key 花費與總計
+  (定價 admin 可改、讀取開放;未定價模型用預設值)。`/api/cost/*`。
 
 為什麼：多人共用同一個 cluster 時，「誰用了多少、誰該被擋」是最常見的需求。
 `request_logs` 已有 `total_tokens` 與 `api_key_name`，只需在 `api_keys` 加額度欄位、
@@ -87,11 +89,17 @@
 團隊使用時缺：多帳號 / 角色，以及「誰在何時 start/stop/edit 了哪顆模型」的稽核軌跡
 （`model_events` 已有雛形，補上操作者欄位即可）。
 
+**SSO 登入(C-2,RBAC Phase 3)已完成**:OIDC(Authorization Code + PKCE,手寫 PyJWT)
+登入,IdP 的 email / groups → 角色(admin/operator/viewer),session 走自簽 HS256 cookie,
+接進同一個 `resolve_actor`(SSO 與既有 token 並存,機器仍用 token)。設定 OIDC 即關閉
+open-dev 後門。`/api/auth/sso/*`,見 [sso-design_zh-CN.md](sso-design_zh-CN.md)。
+
 ---
 
 ## 🟢 加分項
 
-- **Router 自身 `/health`、`/ready`**：給 k8s / 負載器探活（目前有 `/metrics` 但無健康探針端點）。
+- ✅ **Router 自身 `/health`、`/ready`** — `已完成`：`/health` liveness(永遠 200)、`/ready`
+  readiness(config 載入 + 啟動完成才 200,否則 503),皆免 auth,供 k8s 探針 / 負載器探活。
 - ✅ **設定版本化 / 匯出匯入** — `已完成`：overlay 可一鍵匯出備份、匯入還原；每次變更自動快照,
   可在「設定版本」頁看歷史、diff 與一鍵回滾（匯出 operator、匯入/回滾 admin）。
   見 [config-versioning-design_zh-CN.md](config-versioning-design_zh-CN.md)。
@@ -102,9 +110,9 @@
 
 ## 進度
 
-- ✅ **#1 token 額度**（成本估算待補）
+- ✅ **#1 token 額度 + 成本 dashboard**
 - ✅ **#2 autoscaling**（Phase 0–4：sleep 暖待命 → 負載訊號 → 控制迴圈 → 管理 UI → 監控/告警）
 - ✅ **#3 跨模型 fallback**（model 別名待補）
 - 半成品 **#5 告警通路**（Grafana 告警已有，contact point 待接）
 
-下一步建議：**#4 回應快取** 或 **#6 RBAC/SSO**；或回頭補 #1 成本估算 / #3 model 別名。
+下一步建議：**#4 回應快取**（技術深度）或 **SSO 登入**（企業化）；或補 #3 model 別名。
