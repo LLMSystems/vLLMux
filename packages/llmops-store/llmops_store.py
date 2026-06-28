@@ -166,6 +166,12 @@ CREATE TABLE IF NOT EXISTS config_versions (
     overlay   TEXT    NOT NULL       -- full overlay JSON snapshot
 );
 CREATE INDEX IF NOT EXISTS idx_config_versions_ts ON config_versions(ts);
+
+CREATE TABLE IF NOT EXISTS instance_desired (
+    key        TEXT    PRIMARY KEY,       -- "group::instance_id"
+    desired    TEXT    NOT NULL,          -- running | asleep | stopped
+    updated_at REAL    NOT NULL
+);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -619,6 +625,39 @@ class LLMOpsStore:
         )
         await self._db.commit()
         return cur.rowcount
+
+    async def get_current_overlay(self) -> Optional[dict]:
+        """The current dynamic-model overlay = the newest config-version snapshot
+        (every overlay change is snapshotted, and prune keeps the newest). None if
+        nothing has been recorded yet. Lets a fresh replica / restart hydrate the
+        overlay from the shared DB instead of a local file (HA)."""
+        import json
+
+        cur = await self._db.execute(
+            "SELECT overlay FROM config_versions ORDER BY id DESC LIMIT 1"
+        )
+        row = await cur.fetchone()
+        return json.loads(row["overlay"]) if row else None
+
+    # ---- Desired instance state (persisted for restart/replica replay) ----
+
+    async def set_instance_desired(self, key: str, desired: str, ts: Optional[float] = None) -> None:
+        import time
+
+        await self._db.execute(
+            "INSERT INTO instance_desired (key, desired, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET desired=excluded.desired, updated_at=excluded.updated_at",
+            (key, desired, ts or time.time()),
+        )
+        await self._db.commit()
+
+    async def list_instance_desired(self) -> dict[str, str]:
+        cur = await self._db.execute("SELECT key, desired FROM instance_desired")
+        return {r["key"]: r["desired"] for r in await cur.fetchall()}
+
+    async def delete_instance_desired(self, key: str) -> None:
+        await self._db.execute("DELETE FROM instance_desired WHERE key = ?", (key,))
+        await self._db.commit()
 
     async def prune_audit(self, max_rows: int = 50_000) -> int:
         """Cap the audit table to its most recent ``max_rows`` rows. Returns the

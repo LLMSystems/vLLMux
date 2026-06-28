@@ -16,7 +16,8 @@ from src.llm_router.auth import authenticate
 from src.llm_router.routing_strategies import (DEFAULT_STRATEGY, STRATEGIES,
                                                select_instance)
 from src.llm_router.lora import build_route_chain, iter_models, resolve_model
-from src.llm_router.overlay import load_config_with_overlay
+from src.llm_router.overlay import (hydrate_overlay_from_store,
+                                    load_config_with_overlay)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ async def reload_config(request: Request):
     path = getattr(request.app.state, "config_path", None)
     if not path:
         raise HTTPException(status_code=500, detail="config_path not set on app.state")
+    # HA: pull the latest overlay from the shared DB before re-reading it, so a
+    # router on a different host sees the backend's change (no-op for SQLite).
+    await hydrate_overlay_from_store(getattr(request.app.state, "store", None))
     request.app.state.config = load_config_with_overlay(path)
     groups = list(request.app.state.config.get("LLM_engines", {}).keys())
     logger.info("Config reloaded via /reload: %d groups", len(groups))

@@ -60,6 +60,13 @@ async def lifespan(app: FastAPI):
     # must match the backend; default resolves to <repo>/data/llmops.db.
     app.state.store = await LLMOpsStore(os.environ.get("LLMOPS_DB_PATH")).init()
 
+    # HA: on a fresh replica, pull the current overlay from the shared DB and
+    # re-resolve config so we route to dynamically-added models (no-op for SQLite).
+    from src.llm_router.overlay import hydrate_overlay_from_store
+
+    if await hydrate_overlay_from_store(app.state.store):
+        app.state.config = load_config_with_overlay(app.state.config_path)
+
     metrics_task = asyncio.create_task(poll_metrics_forever(app, interval=1.0))
     app.state.metrics_task = metrics_task
     try:

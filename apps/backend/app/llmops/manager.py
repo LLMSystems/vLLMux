@@ -160,6 +160,39 @@ class ModelManager:
         except Exception:
             logger.warning("Drain of %s failed (%s/drain); stopping anyway", key, self.router_url)
 
+    async def _persist_desired(self, key: str, desired: str) -> None:
+        """Persist a user's desired state so a restart / new replica can replay it.
+        Best-effort: telemetry must never break a control action."""
+        if self.store is None:
+            return
+        try:
+            await self.store.set_instance_desired(key, desired)
+        except Exception:
+            logger.warning("Failed to persist desired=%s for %s", desired, key, exc_info=True)
+
+    async def replay_desired(self) -> None:
+        """On boot (after adopt_running): start instances whose persisted desired is
+        RUNNING but which are currently STOPPED/FAILED — so a backend restart (or a
+        replica taking over) restores what the user asked to be running. Sleeping is
+        not auto-replayed (it needs a live process to sleep). Best-effort per model."""
+        if self.store is None:
+            return
+        try:
+            desired = await self.store.list_instance_desired()
+        except Exception:
+            logger.warning("Failed to read desired state for replay", exc_info=True)
+            return
+        for key, want in desired.items():
+            inst = self.registry.get(key)
+            if inst is None or want != Desired.RUNNING.value:
+                continue
+            if inst.state in (ModelState.STOPPED, ModelState.FAILED):
+                try:
+                    logger.info("Replaying desired=running for %s", key)
+                    await self.start(key)
+                except Exception:
+                    logger.warning("Desired replay failed to start %s", key, exc_info=True)
+
     async def _undrain_instance(self, key: str) -> None:
         """Clear any stale drain mark when (re)starting an instance. Best-effort."""
         if not self.router_url:
@@ -315,6 +348,7 @@ class ModelManager:
             inst.touch()
         # Clear any leftover drain mark so a restarted instance rejoins the pool.
         await self._undrain_instance(key)
+        await self._persist_desired(key, Desired.RUNNING.value)
         logger.info("Started %s (pid=%s)", key, proc.pid)
         return inst
 
@@ -340,6 +374,7 @@ class ModelManager:
                     new_state = ModelState.STOPPED
                 if new_state is not None and new_state != prev:
                     await self._record(inst, prev, new_state)
+                await self._persist_desired(key, Desired.STOPPED.value)
                 return inst
         await self._record(inst, prev, ModelState.STOPPING)
 
@@ -356,6 +391,7 @@ class ModelManager:
             inst.pid = None
             inst.set_state(ModelState.STOPPED)
         await self._record(inst, ModelState.STOPPING, ModelState.STOPPED)
+        await self._persist_desired(key, Desired.STOPPED.value)
         logger.info("Stopped %s", key)
         return inst
 
@@ -397,6 +433,7 @@ class ModelManager:
             inst.last_error = None
             inst.set_state(ModelState.SLEEPING)
         await self._record(inst, prev, ModelState.SLEEPING, f"sleep level={level}")
+        await self._persist_desired(key, Desired.ASLEEP.value)
         # Drop it from the router's pool + Prometheus scrape while asleep.
         await self.trigger_router_reload()
         await self.write_prometheus_targets()
@@ -430,6 +467,7 @@ class ModelManager:
             inst.last_error = None
             inst.set_state(ModelState.READY)
         await self._record(inst, prev, ModelState.READY, "wake_up")
+        await self._persist_desired(key, Desired.RUNNING.value)
         # Rejoin the router pool + Prometheus scrape now that it serves again.
         await self.trigger_router_reload()
         await self.write_prometheus_targets()
@@ -756,6 +794,11 @@ class ModelManager:
         self.config = build_merged_config(self.config_path, overlay)
         async with self.registry.lock:
             self.registry.remove(key)
+        if self.store is not None:
+            try:
+                await self.store.delete_instance_desired(key)
+            except Exception:
+                logger.warning("Failed to clear desired for deleted %s", key, exc_info=True)
         logger.info("Deleted dynamic model %s", key)
 
     # -- Config export / import (versioning) ----------------------------------

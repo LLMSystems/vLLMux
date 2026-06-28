@@ -72,3 +72,24 @@ def merge_into(base: dict, overlay: dict) -> dict:
 def load_config_with_overlay(config_path: str) -> dict:
     """Base config.yaml (validated) + dynamic-model overlay, as a plain dict."""
     return merge_into(load_config(config_path), load_overlay())
+
+
+async def hydrate_overlay_from_store(store, path: str | None = None) -> bool:
+    """HA: refresh the local overlay file from the shared DB so the router routes
+    to dynamically-added models even on a different host. No-op outside Postgres
+    mode (where the file is already the shared truth). Best-effort."""
+    if store is None or getattr(store, "db_url", None) is None:
+        return False
+    try:
+        overlay = await store.get_current_overlay()
+    except Exception:
+        return False
+    if overlay is None:
+        return False
+    p = path or overlay_path()
+    tmp = f"{p}.tmp"
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(overlay, f, ensure_ascii=False)
+    os.replace(tmp, p)
+    return True

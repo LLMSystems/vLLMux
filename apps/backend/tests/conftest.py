@@ -281,6 +281,28 @@ class FakeStore:
             m["total_tokens"] += r.get("total_tokens") or 0
         return list(agg.values())
 
+    # -- Desired instance state (HA replay) --
+    def __init_desired(self):
+        if not hasattr(self, "desired"):
+            self.desired = {}
+
+    async def set_instance_desired(self, key, desired, ts=None):
+        self.__init_desired()
+        self.desired[key] = desired
+
+    async def list_instance_desired(self):
+        self.__init_desired()
+        return dict(self.desired)
+
+    async def delete_instance_desired(self, key):
+        self.__init_desired()
+        self.desired.pop(key, None)
+
+    async def get_current_overlay(self):
+        self.__init_cv()
+        import json as _json
+        return _json.loads(self.config_versions[-1]["overlay"]) if self.config_versions else None
+
     # -- Config versions --
     def __init_cv(self):
         if not hasattr(self, "config_versions"):

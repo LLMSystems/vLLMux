@@ -330,3 +330,21 @@ async def test_token_usage_by_model_and_key(store):
     by_key = await store.token_usage_by_key()
     k1a = next(r for r in by_key if r["name"] == "k1" and r["model_key"] == "A")
     assert k1a["prompt_tokens"] == 300 and k1a["requests"] == 2
+
+
+async def test_instance_desired_upsert_list_delete(store):
+    await store.set_instance_desired("G::a", "running", ts=1.0)
+    await store.set_instance_desired("G::b", "asleep", ts=1.0)
+    assert await store.list_instance_desired() == {"G::a": "running", "G::b": "asleep"}
+    await store.set_instance_desired("G::a", "stopped", ts=2.0)  # upsert
+    assert (await store.list_instance_desired())["G::a"] == "stopped"
+    await store.delete_instance_desired("G::a")
+    assert await store.list_instance_desired() == {"G::b": "asleep"}
+
+
+async def test_get_current_overlay_is_latest_snapshot(store):
+    assert await store.get_current_overlay() is None
+    await store.record_config_version('{"LLM_engines": {"A": {}}}', "h1", ts=1.0)
+    await store.record_config_version('{"LLM_engines": {"A": {}, "B": {}}}', "h2", ts=2.0)
+    ov = await store.get_current_overlay()
+    assert set(ov["LLM_engines"]) == {"A", "B"}  # newest snapshot

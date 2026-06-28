@@ -48,7 +48,7 @@ from app.services.dataset_downloads import DatasetDownloadManager
 from app.services.downloads import DownloadManager
 from app.services.lora_downloads import LoraDownloadManager
 from app.services.gpu_service import get_gpu_processes_with_info
-from app.services.overlay import build_merged_config, overlay_path
+from app.services.overlay import build_merged_config, hydrate_overlay_from_store, overlay_path
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -96,8 +96,6 @@ async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
 async def lifespan(app: FastAPI):
     config_path = get_config_path()
     ov_path = overlay_path()
-    # Base config.yaml + dynamically-added models (overlay), merged into one view.
-    config = build_merged_config(config_path)
     settings = BackendSettings.from_env()
 
     http_client = httpx.AsyncClient(
@@ -106,6 +104,12 @@ async def lifespan(app: FastAPI):
     )
 
     store = await LLMOpsStore(settings.db_path).init()
+    # HA: in Postgres mode, refresh the local overlay file from the shared DB so a
+    # fresh replica / restart sees dynamically-added models (no-op for SQLite).
+    await hydrate_overlay_from_store(store, ov_path)
+
+    # Base config.yaml + dynamically-added models (overlay), merged into one view.
+    config = build_merged_config(config_path)
 
     launchers = [VllmLauncher(), EmbeddingLauncher()]
     registry = build_registry(config, config_path, launchers)
@@ -165,6 +169,12 @@ async def lifespan(app: FastAPI):
     # Adopt anything already healthy before starting the loops, so state is
     # honest from the first response.
     await adopt_running(registry, http_client, settings, store, notifier)
+
+    # Restore the user's desired state: start models that should be running but
+    # aren't (a crash/restart, or a replica taking over). Skips anything adopt
+    # already found alive. Gated so a single-machine dev box can opt out.
+    if settings.replay_desired:
+        await manager.replay_desired()
 
     # Seed the Prometheus file_sd targets file (covering adopted-ready instances)
     # so monitoring has a valid file from t=0, before the first state transition.

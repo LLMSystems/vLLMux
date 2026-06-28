@@ -113,6 +113,23 @@ def merge_into(base_raw: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
     return merged
 
 
+async def hydrate_overlay_from_store(store, path: str | None = None) -> bool:
+    """HA: write the shared DB's current overlay to the local file so the sync
+    load_overlay() / build_merged_config() see it. No-op outside Postgres mode (the
+    SQLite file is already the shared truth on a single machine). Best-effort:
+    returns False and leaves the file untouched on any error."""
+    if store is None or getattr(store, "db_url", None) is None:
+        return False
+    try:
+        overlay = await store.get_current_overlay()
+    except Exception:
+        return False
+    if overlay is None:
+        return False
+    save_overlay(overlay, path)
+    return True
+
+
 def build_merged_config(config_path: str | None = None, overlay: dict | None = None) -> RootConfig:
     """Load config.yaml, merge the overlay, return a validated RootConfig."""
     path = config_path or get_config_path()

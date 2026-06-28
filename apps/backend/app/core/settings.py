@@ -71,6 +71,10 @@ class BackendSettings:
     price_currency: str = "USD"
     # Pre-flight VRAM check before starting a model (blocks likely-OOM starts).
     vram_guard: bool = True
+    # On boot, restart models whose persisted desired state is RUNNING but which
+    # aren't (after a restart or replica takeover). Disable for a dev box that
+    # shouldn't auto-start models on every backend restart.
+    replay_desired: bool = True
     # Auto-restart a managed model that crashes while desired=running.
     auto_restart: bool = True
     # Max consecutive auto-restarts before giving up (budget resets once READY).
@@ -171,6 +175,7 @@ class BackendSettings:
             default_output_price=_env_float("LLMOPS_DEFAULT_OUTPUT_PRICE", 0.0),
             price_currency=os.environ.get("LLMOPS_PRICE_CURRENCY", "USD").strip() or "USD",
             vram_guard=_env_bool("LLMOPS_VRAM_GUARD", True),
+            replay_desired=_env_bool("LLMOPS_REPLAY_DESIRED", True),
             auto_restart=_env_bool("LLMOPS_AUTO_RESTART", True),
             max_restarts=int(_env_float("LLMOPS_MAX_RESTARTS", 3)),
             restart_backoff_base=_env_float("LLMOPS_RESTART_BACKOFF", 5.0),
