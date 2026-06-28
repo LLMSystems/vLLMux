@@ -411,6 +411,26 @@ curl -s -X POST http://localhost:5000/api/alerts/test -H "X-Admin-Token: $ADMIN"
   -H 'Content-Type: application/json' -d '{}'
 ```
 
+### 1.12 設定版本化（匯出 / 匯入 / 回滾）
+
+動態模型 overlay（所有 runtime 改動所在；`config.yaml` 唯讀）可備份、版本化、回滾。每次會改
+overlay 的請求都自動快照（內容相同則去重）。
+
+| 端點 | 權限 | 說明 |
+|---|---|---|
+| `GET /api/config/export` | operator | 回傳 `{version, exported_at, overlay}`，可存成檔備份 |
+| `POST /api/config/import` | admin | 整份替換 overlay；body 接受 export wrapper 或裸 overlay。`?force=true` 略過 running 防呆。先驗證（失敗 400），有受影響 instance 在跑回 409。回 `{applied, added, removed, changed}` |
+| `GET /api/config/versions` | operator | 版本歷史（僅 metadata），`before` 為 id 游標分頁；每筆帶 `is_current` |
+| `GET /api/config/versions/{id}` | operator | 取單版完整 overlay 快照 |
+| `GET /api/config/versions/{id}/diff` | operator | 該版 vs 目前（或 `?against={id}` vs 另一版）的並排文字 |
+| `POST /api/config/versions/{id}/rollback` | admin | 以該版 overlay 重新匯入（本身也是一次變更 → 產生新版本，可前滾）。`?force=true` 同 import |
+
+```bash
+curl -s http://localhost:5000/api/config/export -H "X-Admin-Token: $ADMIN" > backup.json
+curl -s -X POST http://localhost:5000/api/config/import -H "X-Admin-Token: $ADMIN" \
+  -H 'Content-Type: application/json' --data @backup.json
+```
+
 ---
 
 ## 2. LLM Router Server

@@ -81,7 +81,7 @@
 
 見 [alerting-design_zh-CN.md](alerting-design_zh-CN.md)。Email(SMTP)未做,未來加一個 sink 類型即可。
 
-### 6. 多使用者 + 稽核日誌（RBAC / SSO） — `規劃中`
+### 6. 多使用者 + 稽核日誌（RBAC / SSO） — `已完成`
 
 現況：單一 admin token 控管所有操作。
 團隊使用時缺：多帳號 / 角色，以及「誰在何時 start/stop/edit 了哪顆模型」的稽核軌跡
@@ -92,7 +92,9 @@
 ## 🟢 加分項
 
 - **Router 自身 `/health`、`/ready`**：給 k8s / 負載器探活（目前有 `/metrics` 但無健康探針端點）。
-- **設定版本化 / 匯出匯入**：overlay 改動可回滾、可備份。
+- ✅ **設定版本化 / 匯出匯入** — `已完成`：overlay 可一鍵匯出備份、匯入還原；每次變更自動快照,
+  可在「設定版本」頁看歷史、diff 與一鍵回滾（匯出 operator、匯入/回滾 admin）。
+  見 [config-versioning-design_zh-CN.md](config-versioning-design_zh-CN.md)。
 - **多模態 Playground**：目前 Playground 偏文字向（chat / completions / embed / rerank），缺 vision 圖片輸入。
 - **OpenAI `/v1/batch` 離線批次**：大量離線推理。
 

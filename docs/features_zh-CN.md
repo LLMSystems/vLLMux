@@ -95,3 +95,8 @@
 - **API 金鑰管理** — 發行／撤銷用於 router 推理的金鑰，含 per-key 用量歸屬、每分鐘
   **速率上限**，以及在 router 強制的 **token 額度**（總量／每日／每月，超額回 429）。
   登入的 operator／admin token 也能直接用 Playground 推理（viewer 不能推理）。
+- **設定版本化 / 匯出匯入** — 動態模型 overlay（所有 runtime 改動所在；`config.yaml` 唯讀）
+  可一鍵**匯出**成可攜檔備份、**匯入**整份還原（先 schema 驗證；有 instance 在跑會擋下，
+  可強制）。每次會改 overlay 的請求都**自動快照**並歸屬操作者；「設定版本」頁可看歷史、
+  並排 **diff** 與**一鍵回滾**到任一版（回滾本身也記成新版本,可前滾）。匯出 operator、
+  匯入／回滾 admin。見 [config-versioning-design_zh-CN.md](config-versioning-design_zh-CN.md)。

@@ -122,3 +122,12 @@
   **token quota** (total / daily / monthly) enforced at the router (429 once over).
   A signed-in operator/admin token can also drive the Playground directly (viewers
   cannot run inference).
+- **Config versioning / export-import** — the dynamic-model overlay (where every
+  runtime change lives; `config.yaml` stays read-only) can be **exported** as a
+  portable backup file and **imported** to restore it wholesale (schema-validated
+  first; refused if an affected instance is running, unless forced). Every request
+  that changes the overlay is **auto-snapshotted** and attributed to its actor; the
+  **Config Versions** page shows the history, a side-by-side **diff** and **one-click
+  rollback** to any past version (a rollback is itself recorded as a new version, so
+  you can roll forward). Export is operator-gated; import/rollback are admin-gated.
+  See [config-versioning-design_zh-CN.md](config-versioning-design_zh-CN.md).

@@ -41,6 +41,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 - **Benchmark & evaluate** — evalscope load tests (concurrency, arrival-rate, SLA auto-tune) plus 30+ accuracy datasets with LLM-as-judge.
 - **Libraries** — browse / pre-download HF model weights & datasets from the UI; tool-calling parser helper; LoRA support.
 - **Multi-user & audit** — role-based control (`viewer`/`operator`/`admin`) via named operator credentials, with a redacted **audit log** of every change; plus mint/revoke API keys with per-key usage attribution, rate limits and **token quotas** (total / daily / monthly). The env admin token and open local-dev still work unchanged.
+- **Config versioning & backup** — the dynamic-model overlay (where every runtime change lives) is snapshotted on each mutation; export it as a portable file, import to restore, and roll back to any past version with a side-by-side diff — all from the admin **Config Versions** page. `config.yaml` is never rewritten.
 
 See [docs/features.md](docs/features.md) for the full breakdown.
 
