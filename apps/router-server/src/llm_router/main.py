@@ -49,6 +49,8 @@ async def lifespan(app: FastAPI):
     app.state.metrics_cache = {}
     app.state.backend_inflight = {}
     app.state.backend_health = {}
+    # Instances being gracefully drained before a stop: key -> expiry epoch.
+    app.state.draining = {}
     # Routing policy: global default (per-group overrides ride model_config), plus
     # the round-robin cursor map. See routing_strategies.py.
     app.state.routing_strategy = os.environ.get("LLMOPS_ROUTING_STRATEGY", DEFAULT_STRATEGY)

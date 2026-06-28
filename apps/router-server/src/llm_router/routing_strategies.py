@@ -29,7 +29,8 @@ from fastapi import HTTPException
 
 from src.llm_router.backend_runtime_state import (FAIL_OPEN_PENALTY,
                                                   INFLIGHT_WEIGHT, get_inflight,
-                                                  is_backend_in_cooldown)
+                                                  is_backend_in_cooldown,
+                                                  is_draining)
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,12 @@ async def select_instance(
             detail=f"All instances of model '{model_key}' are asleep.",
         )
     candidates = awake
+    # Drain-aware: an instance the backend is about to stop takes no NEW requests
+    # while its in-flight finish. Only drop it if a non-draining alternative
+    # remains — draining is best-effort and must never hard-503 a still-live group.
+    not_draining = [i for i in candidates if not is_draining(app, model_key, i["id"])]
+    if not_draining:
+        candidates = not_draining
     if len(candidates) == 1:
         return candidates[0]
 

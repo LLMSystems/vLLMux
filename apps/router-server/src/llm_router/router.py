@@ -7,9 +7,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from src.llm_router.backend_runtime_state import (decr_inflight, incr_inflight,
+from src.llm_router.backend_runtime_state import (clear_draining, decr_inflight,
+                                                  get_inflight, incr_inflight,
                                                   mark_backend_failure,
-                                                  mark_backend_success)
+                                                  mark_backend_success,
+                                                  mark_draining)
 from src.llm_router.auth import authenticate
 from src.llm_router.routing_strategies import (DEFAULT_STRATEGY, STRATEGIES,
                                                select_instance)
@@ -45,6 +47,34 @@ async def reload_config(request: Request):
     groups = list(request.app.state.config.get("LLM_engines", {}).keys())
     logger.info("Config reloaded via /reload: %d groups", len(groups))
     return {"status": "reloaded", "groups": groups}
+
+
+@router.post("/drain")
+async def drain_backend(request: Request):
+    """Mark an instance draining (no new requests) and report its in-flight count.
+
+    The backend calls this repeatedly while gracefully stopping an instance: each
+    call refreshes the drain mark (which self-expires) and returns how many
+    requests are still in flight, so the backend knows when it's safe to kill the
+    process. Internal control-plane call (same as /reload, unauthenticated)."""
+    body = await request.json()
+    model_key, instance_id = body.get("model_key"), body.get("instance_id")
+    if not model_key or not instance_id:
+        raise HTTPException(status_code=400, detail="model_key and instance_id required")
+    ttl = float(body.get("ttl", 60.0))
+    mark_draining(request.app, model_key, instance_id, ttl=ttl)
+    return {"draining": True, "inflight": get_inflight(request.app, model_key, instance_id)}
+
+
+@router.post("/undrain")
+async def undrain_backend(request: Request):
+    """Clear a drain mark (e.g. when a stopped instance is started again)."""
+    body = await request.json()
+    model_key, instance_id = body.get("model_key"), body.get("instance_id")
+    if not model_key or not instance_id:
+        raise HTTPException(status_code=400, detail="model_key and instance_id required")
+    clear_draining(request.app, model_key, instance_id)
+    return {"draining": False}
 
 
 @router.get("/health")

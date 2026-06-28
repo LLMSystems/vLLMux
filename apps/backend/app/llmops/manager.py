@@ -132,6 +132,47 @@ class ModelManager:
             logger.warning("Router reload POST failed (%s/reload)", self.router_url)
             return False
 
+    async def _drain_instance(self, key: str) -> None:
+        """Best-effort graceful drain before a stop: ask the router to send this
+        instance no new requests, then wait for in-flight to reach 0 (up to
+        drain_timeout). Re-marks each poll so the router's drain mark can't expire
+        mid-drain. Never raises — a drain failure must not block the stop."""
+        if not self.router_url or self.settings.drain_timeout <= 0:
+            return
+        group, _, instance_id = key.partition("::")
+        payload = {"model_key": group, "instance_id": instance_id,
+                   "ttl": self.settings.drain_timeout + 10}
+        deadline = time.monotonic() + self.settings.drain_timeout
+        try:
+            while True:
+                resp = await self.http_client.post(
+                    f"{self.router_url}/drain", json=payload, timeout=5.0
+                )
+                inflight = resp.json().get("inflight", 0) if resp.status_code < 400 else 0
+                if inflight <= 0:
+                    logger.info("Drained %s (in-flight cleared)", key)
+                    return
+                if time.monotonic() >= deadline:
+                    logger.warning("Drain of %s timed out with %d in-flight; stopping anyway",
+                                   key, inflight)
+                    return
+                await asyncio.sleep(self.settings.drain_poll_interval)
+        except Exception:
+            logger.warning("Drain of %s failed (%s/drain); stopping anyway", key, self.router_url)
+
+    async def _undrain_instance(self, key: str) -> None:
+        """Clear any stale drain mark when (re)starting an instance. Best-effort."""
+        if not self.router_url:
+            return
+        group, _, instance_id = key.partition("::")
+        try:
+            await self.http_client.post(
+                f"{self.router_url}/undrain",
+                json={"model_key": group, "instance_id": instance_id}, timeout=5.0,
+            )
+        except Exception:
+            pass
+
     async def write_prometheus_targets(self) -> bool:
         """Best-effort: refresh the Prometheus file_sd targets file to reflect the
         currently-ready vLLM instances. No-op unless prometheus_sd_path is set.
@@ -272,6 +313,8 @@ class ModelManager:
             inst.proc = proc
             inst.pid = proc.pid
             inst.touch()
+        # Clear any leftover drain mark so a restarted instance rejoins the pool.
+        await self._undrain_instance(key)
         logger.info("Started %s (pid=%s)", key, proc.pid)
         return inst
 
@@ -299,6 +342,10 @@ class ModelManager:
                     await self._record(inst, prev, new_state)
                 return inst
         await self._record(inst, prev, ModelState.STOPPING)
+
+        # Graceful drain: let in-flight requests on this instance finish before we
+        # kill the process (best-effort; never blocks the stop beyond drain_timeout).
+        await self._drain_instance(key)
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(

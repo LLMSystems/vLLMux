@@ -47,6 +47,11 @@ class BackendSettings:
     start_timeout: float = 300.0
     # Grace period for SIGTERM before SIGKILL when stopping.
     stop_timeout: float = 10.0
+    # Graceful drain: before killing an instance on stop, tell the router to send
+    # it no new requests and wait up to this long for in-flight ones to finish
+    # (0 disables; returns early as soon as in-flight hits 0).
+    drain_timeout: float = 30.0
+    drain_poll_interval: float = 1.0
     # How often the GPU-process inventory is refreshed.
     gpu_poll_interval: float = 5.0
     # How often per-group live load (queue depth) is aggregated from the router scrape.
@@ -141,6 +146,8 @@ class BackendSettings:
             poll_interval=_env_float("LLMOPS_POLL_INTERVAL", 2.0),
             start_timeout=_env_float("LLMOPS_START_TIMEOUT", 300.0),
             stop_timeout=_env_float("LLMOPS_STOP_TIMEOUT", 10.0),
+            drain_timeout=_env_float("LLMOPS_DRAIN_TIMEOUT", 30.0),
+            drain_poll_interval=_env_float("LLMOPS_DRAIN_POLL_INTERVAL", 1.0),
             gpu_poll_interval=_env_float("LLMOPS_GPU_POLL_INTERVAL", 5.0),
             load_poll_interval=_env_float("LLMOPS_LOAD_POLL_INTERVAL", 5.0),
             autoscale_interval=_env_float("LLMOPS_AUTOSCALE_INTERVAL", 5.0),

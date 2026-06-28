@@ -45,8 +45,12 @@ FAKE_CONFIG = RootConfig.model_validate(FAKE_CONFIG_DICT)
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int, payload: dict | None = None):
         self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
 
 
 class FakeHTTPClient:
@@ -54,7 +58,8 @@ class FakeHTTPClient:
 
     def __init__(self, healthy_ports=()):
         self.healthy_ports = set(healthy_ports)
-        self.posts = []  # (url, json) — e.g. alert sends
+        self.posts = []  # (url, json) — e.g. alert sends, router reload/drain
+        self.drain_inflight = 0  # what /drain reports as in-flight (tests can set)
 
     async def get(self, url, *args, **kwargs):
         # url looks like http://localhost:8002/health
@@ -65,6 +70,8 @@ class FakeHTTPClient:
 
     async def post(self, url, json=None, timeout=None, *args, **kwargs):
         self.posts.append((url, json))
+        if url.endswith("/drain"):
+            return _FakeResponse(200, {"draining": True, "inflight": self.drain_inflight})
         return _FakeResponse(200)
 
 

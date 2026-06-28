@@ -58,3 +58,32 @@ def mark_backend_success(app, model_key: str, instance_id: str) -> None:
         app.state.backend_health[key]["fail_count"] = 0
         app.state.backend_health[key]["cooldown_until"] = 0.0
         app.state.backend_health[key]["last_error"] = None
+
+
+# -- Graceful drain ---------------------------------------------------------
+# An instance the backend is about to stop: it should receive no NEW requests,
+# but existing in-flight ones finish. Marks carry an expiry so a stale mark
+# (e.g. backend died mid-drain) self-heals; the backend re-marks each poll.
+
+def mark_draining(app, model_key: str, instance_id: str, ttl: float = 60.0) -> None:
+    key = make_backend_key(model_key, instance_id)
+    app.state.draining[key] = time.time() + ttl
+
+
+def clear_draining(app, model_key: str, instance_id: str) -> None:
+    key = make_backend_key(model_key, instance_id)
+    app.state.draining.pop(key, None)
+
+
+def is_draining(app, model_key: str, instance_id: str) -> bool:
+    draining = getattr(app.state, "draining", None)
+    if not draining:
+        return False
+    key = make_backend_key(model_key, instance_id)
+    expires = draining.get(key)
+    if expires is None:
+        return False
+    if expires <= time.time():
+        draining.pop(key, None)  # expired -> self-heal
+        return False
+    return True
