@@ -43,6 +43,8 @@ class BackendSettings:
     db_path: Optional[str] = None
     # Cap on retained audit-log rows; the oldest are pruned hourly past this.
     audit_max_rows: int = 50_000
+    # Cap on retained overlay-config version snapshots; oldest pruned hourly past this.
+    config_versions_max: int = 500
     # Pre-flight VRAM check before starting a model (blocks likely-OOM starts).
     vram_guard: bool = True
     # Auto-restart a managed model that crashes while desired=running.
@@ -94,6 +96,7 @@ class BackendSettings:
             load_poll_interval=_env_float("LLMOPS_LOAD_POLL_INTERVAL", 5.0),
             autoscale_interval=_env_float("LLMOPS_AUTOSCALE_INTERVAL", 5.0),
             db_path=os.environ.get("LLMOPS_DB_PATH"),
+            config_versions_max=int(_env_float("LLMOPS_CONFIG_VERSIONS_MAX", 500)),
             vram_guard=_env_bool("LLMOPS_VRAM_GUARD", True),
             auto_restart=_env_bool("LLMOPS_AUTO_RESTART", True),
             max_restarts=int(_env_float("LLMOPS_MAX_RESTARTS", 3)),

@@ -36,6 +36,10 @@ class ModelConflict(RuntimeError):
     """A create/delete request clashes with existing state (key, port, ownership)."""
 
 
+class ConfigInvalid(ValueError):
+    """An imported/rolled-back overlay fails schema validation (maps to 400)."""
+
+
 class VRAMInsufficient(RuntimeError):
     """The target GPU likely lacks free memory for this model (pre-flight guard)."""
 
@@ -706,6 +710,94 @@ class ModelManager:
         async with self.registry.lock:
             self.registry.remove(key)
         logger.info("Deleted dynamic model %s", key)
+
+    # -- Config export / import (versioning) ----------------------------------
+
+    def _resolve_specs(self, config) -> dict[str, tuple]:
+        """Resolve (kind, LaunchSpec) for every instance key `config` defines."""
+        out: dict[str, tuple] = {}
+        for launcher in self._launchers.values():
+            for key in launcher.keys(config):
+                out[key] = (launcher.kind, launcher.build_spec(config, self.config_path, key))
+        return out
+
+    def export_overlay(self) -> dict:
+        """The full current overlay (the entire mutable state), for backup."""
+        from app.services.overlay import load_overlay
+
+        return load_overlay(self.overlay_path)
+
+    def resync_registry(self, new_config) -> dict[str, list[str]]:
+        """Align the registry to `new_config`: add new keys (STOPPED), drop gone
+        ones, refresh the spec of changed ones. Returns {added, removed, changed}.
+        Caller must hold registry.lock and have ensured no affected instance is
+        running (launch-param changes only take effect on the next launch)."""
+        desired = self._resolve_specs(new_config)
+        current = set(self.registry.keys())
+        added = sorted(set(desired) - current)
+        removed = sorted(current - set(desired))
+        changed = sorted(
+            k for k in set(desired) & current
+            if self.registry.get(k).spec != desired[k][1]
+        )
+        for key in removed:
+            self.registry.remove(key)
+        for key in added:
+            kind, spec = desired[key]
+            self.registry.add(ModelInstance(
+                key=key, kind=kind, host=spec.host, port=spec.port, spec=spec,
+                model_tag=spec.model_tag, log_path=spec.log_path,
+            ))
+        for key in changed:
+            kind, spec = desired[key]
+            inst = self.registry.get(key)
+            inst.spec, inst.host, inst.port = spec, spec.host, spec.port
+            inst.model_tag, inst.log_path = spec.model_tag, spec.log_path
+        return {"added": added, "removed": removed, "changed": changed}
+
+    async def import_overlay(self, overlay: dict, *, force: bool = False) -> dict[str, list[str]]:
+        """Replace the whole overlay with `overlay` (a backup or a past version).
+
+        Validates the merged result first; then unless `force`, refuses if any
+        instance whose definition would be removed or changed is still running
+        (a launch-param change under a live process would silently drift). With
+        `force`, those instances are stopped first so nothing is orphaned.
+        Returns the {added, removed, changed} key summary."""
+        from app.services.overlay import build_merged_config, save_overlay
+
+        if not isinstance(overlay, dict):
+            raise ConfigInvalid("overlay must be a JSON object")
+        overlay = dict(overlay)
+        overlay.setdefault("LLM_engines", {})
+        try:
+            new_config = build_merged_config(self.config_path, overlay)  # schema-validates
+        except Exception as e:
+            raise ConfigInvalid(f"invalid config: {e}") from e
+
+        desired = self._resolve_specs(new_config)
+        current = set(self.registry.keys())
+        affected = (current - set(desired)) | {
+            k for k in set(desired) & current if self.registry.get(k).spec != desired[k][1]
+        }
+        live = lambda k: (i := self.registry.get(k)) and i.state not in (
+            ModelState.STOPPED, ModelState.FAILED)
+        busy = sorted(k for k in affected if live(k))
+        if busy and not force:
+            raise ModelConflict(
+                "stop these instances before importing (or use force): " + ", ".join(busy))
+        for key in busy:  # force: stop so we don't change params under / orphan a live process
+            try:
+                await self.stop(key)
+            except Exception:
+                logger.warning("import_overlay: failed to stop %s before applying", key)
+
+        save_overlay(overlay, self.overlay_path)
+        self.config = new_config
+        async with self.registry.lock:
+            summary = self.resync_registry(new_config)
+        await self.trigger_router_reload()
+        logger.info("Imported overlay: %s", summary)
+        return summary
 
     async def stop_all(self) -> None:
         """Best-effort shutdown of every managed process (used at app shutdown)."""

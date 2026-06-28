@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS alert_sinks (
     min_severity TEXT    NOT NULL DEFAULT 'info',
     created_at   REAL    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS config_versions (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        REAL    NOT NULL,
+    actor     TEXT,                  -- operator label / 'admin' / 'local-dev'
+    role      TEXT,                  -- viewer | operator | admin
+    summary   TEXT,                  -- trigger, e.g. 'PUT /api/models/Qwen/autoscale'
+    sha256    TEXT    NOT NULL,      -- overlay content hash (skip if == latest)
+    overlay   TEXT    NOT NULL       -- full overlay JSON snapshot
+);
+CREATE INDEX IF NOT EXISTS idx_config_versions_ts ON config_versions(ts);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -467,6 +478,68 @@ class LLMOpsStore:
         cur = await self._db.execute("DELETE FROM alert_sinks WHERE id = ?", (sink_id,))
         await self._db.commit()
         return cur.rowcount > 0
+
+    # ---- Config versions (overlay snapshots) -----------------------------
+
+    async def latest_config_version_hash(self) -> Optional[str]:
+        cur = await self._db.execute(
+            "SELECT sha256 FROM config_versions ORDER BY id DESC LIMIT 1"
+        )
+        row = await cur.fetchone()
+        return row["sha256"] if row else None
+
+    async def record_config_version(
+        self, overlay: str, sha256: str, actor: Optional[str] = None,
+        role: Optional[str] = None, summary: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> Optional[int]:
+        """Append an overlay snapshot. Skips (returns None) when the content hash
+        matches the latest row, so identical-content requests don't pile up."""
+        import time
+
+        if await self.latest_config_version_hash() == sha256:
+            return None
+        cur = await self._db.execute(
+            "INSERT INTO config_versions (ts, actor, role, summary, sha256, overlay) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ts or time.time(), actor, role, summary, sha256, overlay),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def list_config_versions(
+        self, before: Optional[int] = None, limit: int = 50
+    ) -> list[dict]:
+        """Version metadata (no overlay body), newest first; ``before`` is an id
+        cursor for pagination."""
+        where, params = "", []
+        if before is not None:
+            where = " WHERE id < ?"; params.append(before)
+        params.append(max(1, min(limit, 500)))
+        cur = await self._db.execute(
+            f"SELECT id, ts, actor, role, summary, sha256 FROM config_versions{where} "
+            f"ORDER BY id DESC LIMIT ?",
+            tuple(params),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_config_version(self, version_id: int) -> Optional[dict]:
+        cur = await self._db.execute(
+            "SELECT id, ts, actor, role, summary, sha256, overlay FROM config_versions "
+            "WHERE id = ?",
+            (version_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def prune_config_versions(self, max_rows: int = 500) -> int:
+        cur = await self._db.execute(
+            "DELETE FROM config_versions WHERE id NOT IN "
+            "(SELECT id FROM config_versions ORDER BY id DESC LIMIT ?)",
+            (max_rows,),
+        )
+        await self._db.commit()
+        return cur.rowcount
 
     async def prune_audit(self, max_rows: int = 50_000) -> int:
         """Cap the audit table to its most recent ``max_rows`` rows. Returns the

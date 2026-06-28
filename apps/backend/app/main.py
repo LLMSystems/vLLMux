@@ -64,6 +64,18 @@ async def _audit_prune_loop(store, max_rows: int, interval: float = 3600.0) -> N
         await asyncio.sleep(interval)
 
 
+async def _config_versions_prune_loop(store, max_rows: int, interval: float = 3600.0) -> None:
+    """Cap the overlay-version history to ``max_rows`` snapshots, hourly."""
+    while True:
+        try:
+            deleted = await store.prune_config_versions(max_rows=max_rows)
+            if deleted:
+                logger.info("Pruned %d old config versions (cap %d)", deleted, max_rows)
+        except Exception:
+            logger.exception("Config-version prune failed")
+        await asyncio.sleep(interval)
+
+
 async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
     """Refresh the GPU-process inventory in the background."""
     loop = asyncio.get_event_loop()
@@ -139,6 +151,15 @@ async def lifespan(app: FastAPI):
     # Layer DB-configured alert sinks onto the env ones before any alert fires.
     await refresh_sinks(notifier, settings, store)
 
+    # Baseline overlay snapshot so the boot-time config is itself a rollback point
+    # (deduped against the latest, so a restart with no change adds nothing).
+    try:
+        from app.core.config_versioning import snapshot_overlay
+
+        await snapshot_overlay(store, actor="system", role=None, summary="startup baseline")
+    except Exception:
+        logger.warning("Failed to record startup config snapshot", exc_info=True)
+
     # Adopt anything already healthy before starting the loops, so state is
     # honest from the first response.
     await adopt_running(registry, http_client, settings, store, notifier)
@@ -156,6 +177,7 @@ async def lifespan(app: FastAPI):
         ),
         asyncio.create_task(autoscaler_loop(app, manager, settings.autoscale_interval)),
         asyncio.create_task(_audit_prune_loop(store, settings.audit_max_rows)),
+        asyncio.create_task(_config_versions_prune_loop(store, settings.config_versions_max)),
     ]
     logger.info("Reconciler + GPU poller + load monitor + autoscaler started")
 
@@ -186,7 +208,10 @@ def create_app() -> FastAPI:
     )
     # Records control-plane mutations (who changed what) to the store.
     from app.core.audit import install_audit_middleware
+    from app.core.config_versioning import install_config_version_middleware
     install_audit_middleware(app)
+    # Snapshots the overlay whenever a request changes it (for history/rollback).
+    install_config_version_middleware(app)
     app.include_router(model_routes.router, prefix="/api")
     app.include_router(system_routes.router, prefix="/api")
     app.include_router(config_routes.router, prefix="/api")

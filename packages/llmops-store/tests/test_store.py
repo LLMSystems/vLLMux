@@ -258,3 +258,31 @@ async def test_audit_prune_keeps_newest(store):
     remaining = await store.list_audit(limit=100)
     assert len(remaining) == 4
     assert {r["path"] for r in remaining} == {"/api/x/9", "/api/x/8", "/api/x/7", "/api/x/6"}
+
+
+async def test_config_version_dedup_and_pagination(store):
+    # First snapshot records; an identical-content snapshot is skipped.
+    v1 = await store.record_config_version('{"a":1}', "hash-a", actor="admin",
+                                           role="admin", summary="POST /import", ts=1.0)
+    assert v1 == 1
+    assert await store.record_config_version('{"a":1}', "hash-a", ts=2.0) is None
+    assert await store.latest_config_version_hash() == "hash-a"
+
+    v2 = await store.record_config_version('{"a":2}', "hash-b", summary="PUT /autoscale", ts=3.0)
+    assert v2 == 2
+
+    rows = await store.list_config_versions()
+    assert [r["id"] for r in rows] == [2, 1]  # newest first
+    assert "overlay" not in rows[0]           # list omits the heavy body
+    # full fetch carries the overlay snapshot.
+    assert (await store.get_config_version(1))["overlay"] == '{"a":1}'
+    # cursor pagination.
+    assert [r["id"] for r in await store.list_config_versions(before=2)] == [1]
+
+
+async def test_config_version_prune_keeps_newest(store):
+    for i in range(8):
+        await store.record_config_version(f'{{"n":{i}}}', f"h{i}", ts=float(i))
+    deleted = await store.prune_config_versions(max_rows=3)
+    assert deleted == 5
+    assert [r["sha256"] for r in await store.list_config_versions()] == ["h7", "h6", "h5"]

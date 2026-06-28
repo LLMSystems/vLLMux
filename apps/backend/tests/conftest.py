@@ -224,6 +224,42 @@ class FakeStore:
         self.alert_sinks = [s for s in self.alert_sinks if s["id"] != sink_id]
         return len(self.alert_sinks) < before
 
+    # -- Config versions --
+    def __init_cv(self):
+        if not hasattr(self, "config_versions"):
+            self.config_versions = []
+
+    async def latest_config_version_hash(self):
+        self.__init_cv()
+        return self.config_versions[-1]["sha256"] if self.config_versions else None
+
+    async def record_config_version(self, overlay, sha256, actor=None, role=None,
+                                    summary=None, ts=None):
+        self.__init_cv()
+        if await self.latest_config_version_hash() == sha256:
+            return None
+        vid = len(self.config_versions) + 1
+        self.config_versions.append({"id": vid, "ts": ts or 0.0, "actor": actor,
+                                     "role": role, "summary": summary, "sha256": sha256,
+                                     "overlay": overlay})
+        return vid
+
+    async def list_config_versions(self, before=None, limit=50):
+        self.__init_cv()
+        rows = [{k: v for k, v in r.items() if k != "overlay"}
+                for r in self.config_versions if before is None or r["id"] < before]
+        return list(reversed(rows))[:limit]
+
+    async def get_config_version(self, version_id):
+        self.__init_cv()
+        return next((dict(r) for r in self.config_versions if r["id"] == version_id), None)
+
+    async def prune_config_versions(self, max_rows=500):
+        self.__init_cv()
+        before = len(self.config_versions)
+        self.config_versions = self.config_versions[-max_rows:]
+        return before - len(self.config_versions)
+
     async def list_audit(self, actor=None, action=None, target=None, since=None,
                          until=None, before=None, limit=200):
         rows = [
