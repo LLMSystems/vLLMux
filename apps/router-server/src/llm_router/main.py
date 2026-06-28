@@ -51,6 +51,10 @@ async def lifespan(app: FastAPI):
     app.state.backend_health = {}
     # Instances being gracefully drained before a stop: key -> expiry epoch.
     app.state.draining = {}
+    # HA Phase 3a: live routable address per instance, (group, id) -> (host, port),
+    # refreshed each poll from the shared store. Empty until the first poll; routing
+    # falls back to the config address, so collapsed deploys are unaffected.
+    app.state.live_addrs = {}
     # Routing policy: global default (per-group overrides ride model_config), plus
     # the round-robin cursor map. See routing_strategies.py.
     app.state.routing_strategy = os.environ.get("LLMOPS_ROUTING_STRATEGY", DEFAULT_STRATEGY)

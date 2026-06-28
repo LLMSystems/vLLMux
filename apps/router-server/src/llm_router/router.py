@@ -414,8 +414,17 @@ async def _proxy_to_backend(request: Request, upstream_path: str, api_key_name=N
                 instance_id = instance["id"]
                 tried.add(instance_id)
 
+                # HA Phase 3a: route to the instance's live, store-published address
+                # when it has one (set by the node-agent), else the config address.
+                # Collapsed single-host deploys publish 127.0.0.1, so this is a no-op
+                # there; split deploys get cross-network routing for free.
                 host = instance.get("host", "localhost")
                 port = instance["port"]
+                live = getattr(request.app.state, "live_addrs", None)
+                if live:
+                    addr = live.get((model_key, instance_id))
+                    if addr:
+                        host, port = addr
                 target_url = f"http://{host}:{port}{upstream_path}"
 
                 incr_inflight(request.app, model_key, instance_id)

@@ -190,6 +190,47 @@ async def _process_restarts(registry: ModelRegistry, settings: BackendSettings, 
             logger.warning("Auto-restart of %s failed: %s", key, e)
 
 
+async def _heartbeat_instances_live(
+    registry: ModelRegistry, store, settings: BackendSettings, transitions: list[Transition]
+) -> None:
+    """HA Phase 3a: publish each READY instance's routable address to the shared
+    store so any router can route to it over the network (not just the backend's
+    localhost). Heartbeated every pass — the TTL self-heals if this agent dies —
+    and deregistered the moment an instance leaves READY so routers stop targeting
+    a stopped/sleeping backend without waiting for the lease to lapse. No-op when
+    the store doesn't support it (older SQLite, or no store)."""
+    if store is None or not hasattr(store, "upsert_instance_live"):
+        return
+    for inst, frm, to, _detail in transitions:
+        if frm == ModelState.READY and to != ModelState.READY:
+            try:
+                await store.remove_instance_live(inst.key)
+            except Exception:
+                logger.debug("remove_instance_live failed for %s", inst.key, exc_info=True)
+    node_id = settings.instance_id or None
+    for inst in registry.values():
+        if inst.state != ModelState.READY:
+            continue
+        host = settings.node_host or inst.host
+        group, _, instance_id = inst.key.partition("::")
+        try:
+            await store.upsert_instance_live(
+                key=inst.key, group_key=group, instance_id=instance_id,
+                host=host, port=inst.port, ttl=settings.live_ttl,
+                node_id=node_id, state=inst.state.value,
+            )
+        except Exception:
+            logger.debug("upsert_instance_live failed for %s", inst.key, exc_info=True)
+    # Sweep rows whose lease lapsed — e.g. left by a crashed/restarted agent whose
+    # READY->stop transition this process never saw — so the table shows only live
+    # instances rather than relying on read-time filtering alone.
+    if hasattr(store, "prune_instances_live"):
+        try:
+            await store.prune_instances_live()
+        except Exception:
+            logger.debug("prune_instances_live failed", exc_info=True)
+
+
 async def reconcile_once(
     registry: ModelRegistry, http_client, settings: BackendSettings, store=None,
     manager=None, notifier=None,
@@ -202,6 +243,7 @@ async def reconcile_once(
         )
     transitions = [t for sub in results for t in sub]
     await _persist(store, transitions, notifier, settings)
+    await _heartbeat_instances_live(registry, store, settings, transitions)
     # An LLM instance that just turned READY may be a newly-added overlay
     # instance the router doesn't know about yet. Nudge it to re-read config so
     # the instance joins its load-balancing pool — only now that it's actually

@@ -385,3 +385,42 @@ async def test_draining_set_list_expire_clear(store):
     assert set(await store.list_draining(ts=1012.0)) == {"G::a"}
     await store.clear_draining("G::a")
     assert await store.list_draining(ts=1012.0) == {}
+
+
+@pytest.mark.asyncio
+async def test_instances_live_upsert_list_expire_remove(store):
+    await store.upsert_instance_live(
+        "G::a", "G", "a", "10.0.0.1", 8001, ttl=10, node_id="n1", state="ready", ts=1000.0
+    )
+    await store.upsert_instance_live(
+        "G::b", "G", "b", "10.0.0.2", 8002, ttl=10, node_id="n1", state="ready", ts=1000.0
+    )
+    rows = await store.list_instances_live(ts=1005.0)
+    by_key = {r["key"]: r for r in rows}
+    assert by_key.keys() == {"G::a", "G::b"}
+    assert (by_key["G::a"]["host"], by_key["G::a"]["port"]) == ("10.0.0.1", 8001)
+    assert by_key["G::a"]["group_key"] == "G" and by_key["G::a"]["instance_id"] == "a"
+
+    # Re-publishing refreshes the address + extends the lease (idempotent upsert).
+    await store.upsert_instance_live(
+        "G::a", "G", "a", "10.0.0.9", 8009, ttl=10, node_id="n1", state="ready", ts=1008.0
+    )
+    rows = await store.list_instances_live(ts=1012.0)  # 'b' (exp 1010) gone, 'a' (exp 1018) stays
+    by_key = {r["key"]: r for r in rows}
+    assert by_key.keys() == {"G::a"}
+    assert (by_key["G::a"]["host"], by_key["G::a"]["port"]) == ("10.0.0.9", 8009)
+
+    await store.remove_instance_live("G::a")
+    assert await store.list_instances_live(ts=1012.0) == []
+
+
+@pytest.mark.asyncio
+async def test_prune_instances_live_deletes_expired_rows(store):
+    await store.upsert_instance_live("G::a", "G", "a", "h", 1, ttl=10, ts=1000.0)
+    await store.upsert_instance_live("G::b", "G", "b", "h", 2, ttl=10, ts=1000.0)
+    await store.upsert_instance_live("G::c", "G", "c", "h", 3, ttl=100, ts=1000.0)
+    # At t=1020 a/b (exp 1010) lapsed, c (exp 1100) is live.
+    deleted = await store.prune_instances_live(ts=1020.0)
+    assert deleted == 2
+    rows = await store.list_instances_live(ts=1020.0)
+    assert {r["key"] for r in rows} == {"G::c"}

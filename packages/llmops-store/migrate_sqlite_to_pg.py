@@ -35,7 +35,7 @@ import aiosqlite  # noqa: E402
 from llmops_store import LLMOpsStore, get_db_path  # noqa: E402
 
 # Ephemeral runtime state — pointless (and slightly harmful) to copy; it rebuilds.
-SKIP_TABLES = {"leader_lease", "draining"}
+SKIP_TABLES = {"leader_lease", "draining", "instances_live"}
 
 
 async def _sqlite_tables(src) -> list[str]:

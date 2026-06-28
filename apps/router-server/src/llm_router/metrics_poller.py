@@ -40,12 +40,31 @@ async def poll_metrics_forever(app, interval: float = 1.0):
             # (num_groups_with_a_dead_backend x timeout) and the cache went
             # stale, degrading routing. A composite key keeps instance ids that
             # collide across groups distinct.
+            # HA Phase 3a: refresh live instance addresses from the shared store so
+            # scraping (and, via app.state.live_addrs, routing) follows where each
+            # instance actually runs rather than assuming the backend's localhost.
+            # Falls back to the config address when an instance hasn't published one
+            # yet — so collapsed single-host deploys behave exactly as before.
+            live_addrs: Dict[tuple, tuple] = {}
+            store = getattr(app.state, "store", None)
+            if store is not None and hasattr(store, "list_instances_live"):
+                try:
+                    for r in await store.list_instances_live():
+                        live_addrs[(r["group_key"], r["instance_id"])] = (r["host"], r["port"])
+                except Exception:
+                    pass
+            app.state.live_addrs = live_addrs
+
             index = []  # (model_key, instance_id, composite_key)
             backends: Dict[str, str] = {}
             for model_key, model_cfg in llm_engines.items():
                 for instance in model_cfg.get("instances", []):
                     composite = f"{model_key}\x00{instance['id']}"
-                    url = f"http://{instance.get('host', 'localhost')}:{instance['port']}"
+                    host, port = live_addrs.get(
+                        (model_key, instance["id"]),
+                        (instance.get("host", "localhost"), instance["port"]),
+                    )
+                    url = f"http://{host}:{port}"
                     index.append((model_key, instance["id"], composite))
                     backends[composite] = url
 

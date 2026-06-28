@@ -183,6 +183,23 @@ CREATE TABLE IF NOT EXISTS draining (
     key         TEXT    PRIMARY KEY,      -- "group::instance_id" being drained
     expires_at  REAL    NOT NULL          -- epoch; self-expires so a stale mark heals
 );
+
+-- HA Phase 3a: live, routable address of each running instance. The node-agent
+-- (collapsed into the backend on a single host) upserts the address + observed
+-- state of every READY instance here; routers read it to route over the network
+-- instead of assuming the backend's localhost/shared-netns. config = "which
+-- instances should exist", instances_live = "where they actually are now". A TTL
+-- (heartbeated each reconcile pass) self-heals stale rows if an agent dies.
+CREATE TABLE IF NOT EXISTS instances_live (
+    key         TEXT    PRIMARY KEY,      -- "group::instance_id"
+    group_key   TEXT    NOT NULL,         -- model group (router's model_key)
+    instance_id TEXT    NOT NULL,
+    node_id     TEXT,                     -- agent/replica that owns the process
+    host        TEXT    NOT NULL,         -- routable host (127.0.0.1 when collapsed)
+    port        INTEGER NOT NULL,
+    state       TEXT,                     -- observed state, e.g. 'ready'
+    expires_at  REAL    NOT NULL          -- epoch; self-expires so a stale row heals
+);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -736,6 +753,79 @@ class LLMOpsStore:
             "SELECT key, expires_at FROM draining WHERE expires_at > ?", (now,)
         )
         return {r["key"]: r["expires_at"] for r in await cur.fetchall()}
+
+    # ---- Live instance addresses (HA Phase 3a; shared so any router routes) ----
+
+    async def upsert_instance_live(
+        self,
+        key: str,
+        group_key: str,
+        instance_id: str,
+        host: str,
+        port: int,
+        ttl: float,
+        node_id: Optional[str] = None,
+        state: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> None:
+        """Register/refresh a running instance's routable address. Called each
+        reconcile pass for every READY instance (TTL = heartbeat lease)."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        await self._db.execute(
+            "INSERT INTO instances_live "
+            "(key, group_key, instance_id, node_id, host, port, state, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "group_key = excluded.group_key, instance_id = excluded.instance_id, "
+            "node_id = excluded.node_id, host = excluded.host, port = excluded.port, "
+            "state = excluded.state, expires_at = excluded.expires_at",
+            (key, group_key, instance_id, node_id, host, int(port), state, now + ttl),
+        )
+        await self._db.commit()
+
+    async def remove_instance_live(self, key: str) -> None:
+        await self._db.execute("DELETE FROM instances_live WHERE key = ?", (key,))
+        await self._db.commit()
+
+    async def prune_instances_live(self, ts: Optional[float] = None) -> int:
+        """Delete rows whose lease lapsed (e.g. left behind by a crashed/restarted
+        agent). Reads already filter on expires_at, so this is just housekeeping so
+        the table reflects only live instances. Returns the number deleted."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        cur = await self._db.execute(
+            "DELETE FROM instances_live WHERE expires_at <= ?", (now,)
+        )
+        await self._db.commit()
+        return cur.rowcount
+
+    async def list_instances_live(self, ts: Optional[float] = None) -> list[dict]:
+        """Non-expired live instances. Routers read this to route over the network
+        rather than assuming the backend's localhost."""
+        import time
+
+        now = ts if ts is not None else time.time()
+        cur = await self._db.execute(
+            "SELECT key, group_key, instance_id, node_id, host, port, state, expires_at "
+            "FROM instances_live WHERE expires_at > ?",
+            (now,),
+        )
+        return [
+            {
+                "key": r["key"],
+                "group_key": r["group_key"],
+                "instance_id": r["instance_id"],
+                "node_id": r["node_id"],
+                "host": r["host"],
+                "port": r["port"],
+                "state": r["state"],
+                "expires_at": r["expires_at"],
+            }
+            for r in await cur.fetchall()
+        ]
 
     async def prune_audit(self, max_rows: int = 50_000) -> int:
         """Cap the audit table to its most recent ``max_rows`` rows. Returns the

@@ -273,6 +273,28 @@ def test_final_attempt_5xx_is_surfaced():
     assert client.app.state.backend_inflight == {}
 
 
+def test_routes_to_live_address_when_published():
+    # HA Phase 3a: when a live address is published for the instance, the proxy
+    # routes there instead of the config (localhost) address — the basis for
+    # cross-host routing. Config still decides *which* instance exists.
+    http = FakeHTTPClient()
+    client = build_client(CONFIG, http)
+    client.app.state.live_addrs = {("Qwen3-0.6B", "qwen3"): ("10.1.2.3", 9100)}
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 200
+    assert http.calls[-1]["url"] == "http://10.1.2.3:9100/v1/chat/completions"
+
+
+def test_falls_back_to_config_address_without_live_entry():
+    # No live entry for this instance -> config localhost:8002, exactly as before.
+    http = FakeHTTPClient()
+    client = build_client(CONFIG, http)
+    client.app.state.live_addrs = {("OtherGroup", "x"): ("10.0.0.9", 9999)}
+    resp = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B", "prompt": "hi"})
+    assert resp.status_code == 200
+    assert http.calls[-1]["url"] == "http://localhost:8002/v1/chat/completions"
+
+
 def test_streaming_usage_is_logged():
     # Usage event is split across raw chunks to exercise SSE reassembly.
     chunks = [

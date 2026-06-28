@@ -125,6 +125,14 @@ class BackendSettings:
     instance_id: str = ""
     leader_lease_ttl: float = 15.0
 
+    # HA Phase 3a: address this node advertises for its instances in instances_live.
+    # Empty -> use each instance's configured host (127.0.0.1 in the collapsed
+    # single-host deploy). Set to this node's routable IP/hostname when splitting
+    # the router/agent across hosts so routers can reach vLLM over the network.
+    # The live address is heartbeated each reconcile pass; live_ttl is its lease.
+    node_host: str = ""
+    live_ttl: float = 30.0
+
     @property
     def auth_enabled(self) -> bool:
         return bool(self.admin_token)
@@ -180,6 +188,8 @@ class BackendSettings:
             instance_id=os.environ.get("LLMOPS_INSTANCE_ID", "").strip()
             or f"{socket.gethostname()}:{os.getpid()}",
             leader_lease_ttl=_env_float("LLMOPS_LEADER_LEASE_TTL", 15.0),
+            node_host=os.environ.get("LLMOPS_NODE_HOST", "").strip(),
+            live_ttl=_env_float("LLMOPS_LIVE_TTL", 30.0),
             default_input_price=_env_float("LLMOPS_DEFAULT_INPUT_PRICE", 0.0),
             default_output_price=_env_float("LLMOPS_DEFAULT_OUTPUT_PRICE", 0.0),
             price_currency=os.environ.get("LLMOPS_PRICE_CURRENCY", "USD").strip() or "USD",
