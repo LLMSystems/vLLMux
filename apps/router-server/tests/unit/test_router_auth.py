@@ -235,3 +235,40 @@ def test_enabled_rejects_unknown_key(monkeypatch):
         headers={"Authorization": "Bearer sk-llmops-bad"},
     )
     assert r.status_code == 401
+
+
+# ---- SSO session cookie (signed-in user driving the playground) -----------
+
+def _session(secret, role, email="boss@corp.com"):
+    import jwt
+    return jwt.encode({"sub": "u1", "email": email, "role": role}, secret, algorithm="HS256")
+
+
+def test_enabled_accepts_sso_session_cookie(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("LLMOPS_SESSION_SECRET", "a-long-shared-session-secret-123")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore()
+    client = _client(store)
+    client.cookies.set("llmops_session", _session("a-long-shared-session-secret-123", "operator"))
+    r = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B"})
+    assert r.status_code == 200
+    assert store.reqs[-1]["api_key_name"] == "boss@corp.com"
+
+
+def test_sso_viewer_cookie_cannot_run_inference(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("LLMOPS_SESSION_SECRET", "a-long-shared-session-secret-123")
+    client = _client(FakeStore())
+    client.cookies.set("llmops_session", _session("a-long-shared-session-secret-123", "viewer"))
+    r = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B"})
+    assert r.status_code == 403
+
+
+def test_sso_cookie_wrong_secret_falls_through_to_401(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("LLMOPS_SESSION_SECRET", "the-real-secret-aaaaaaaaaaaaaaaa")
+    client = _client(FakeStore())
+    client.cookies.set("llmops_session", _session("a-forged-secret-bbbbbbbbbbbbbbbb", "admin"))
+    r = client.post("/v1/chat/completions", json={"model": "Qwen3-0.6B"})
+    assert r.status_code == 401  # bad signature -> ignored -> no token -> 401

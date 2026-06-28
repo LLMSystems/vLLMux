@@ -97,6 +97,40 @@ def _bearer(request: Request) -> str | None:
     return h[7:].strip() if h.lower().startswith("bearer ") else None
 
 
+_SESSION_COOKIE = "llmops_session"
+
+
+def _session_secret() -> str:
+    """Mirror the backend's session-signing key so we can verify its SSO cookie:
+    LLMOPS_SESSION_SECRET, else derived from the admin token, else "" (no cookie
+    auth — a random per-process key couldn't be shared with the backend anyway)."""
+    explicit = os.environ.get("LLMOPS_SESSION_SECRET", "").strip()
+    if explicit:
+        return explicit
+    admin = os.environ.get("LLMOPS_ADMIN_TOKEN", "").strip()
+    return f"sess:{admin}" if admin else ""
+
+
+def _session_actor(request: Request) -> tuple[str, str] | None:
+    """(actor, role) from a valid SSO session cookie, else None. Lets a user who
+    signed in with SSO (an HttpOnly cookie, no bearer token) drive the playground;
+    the cookie rides along same-origin via nginx."""
+    cookie = request.cookies.get(_SESSION_COOKIE)
+    secret = _session_secret()
+    if not cookie or not secret:
+        return None
+    try:
+        import jwt
+
+        claims = jwt.decode(cookie, secret, algorithms=["HS256"])
+    except Exception:
+        return None
+    role = claims.get("role")
+    if not role:
+        return None
+    return claims.get("email") or claims.get("name") or claims.get("sub") or "sso", role
+
+
 async def authenticate(request: Request) -> str | None:
     """Return the attributed key name, or None when auth is disabled.
 
@@ -104,6 +138,18 @@ async def authenticate(request: Request) -> str | None:
     """
     if not _require_enabled():
         return None
+
+    # An SSO-signed-in user (session cookie, no bearer token) may drive inference;
+    # attributed by email, never rate-limited/quota'd. Viewers are read-only.
+    sess = _session_actor(request)
+    if sess is not None:
+        actor, role = sess
+        if role == "viewer":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "viewer role cannot run inference",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return actor
 
     token = _bearer(request)
     if not token:

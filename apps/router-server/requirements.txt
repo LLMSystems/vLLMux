@@ -4,5 +4,7 @@ evalscope
 aiosqlite
 # Postgres backend for the shared store (HA mode, LLMOPS_DB_URL=postgres://…).
 asyncpg
+# Verify the backend's SSO session cookie so a signed-in user can run inference.
+pyjwt
 pytest
 pytest-asyncio
