@@ -65,9 +65,23 @@
 
 ---
 
-## 2b. Overlay 入庫 + desired 持久化 / 重放
+## 2b. Overlay 入庫 + desired 持久化 / 重放  ✅ 已完成
 
 **目標**：多副本看到同一份權威設定;重啟 / 接管能把「該跑的」拉回來。
+
+> 進度：**已完成**。實作上比原規劃更省 —— **overlay 不需另開表也不需改那 44 處 sync 呼叫**：
+> 「目前 overlay」直接取 `config_versions` 最新一筆（每次變更 middleware 都已快照進 DB）。
+> 新增 `get_current_overlay()` + `hydrate_overlay_from_store()`(backend 與 router 各一份):
+> **DB 模式下開機 / `/reload` 時把 DB 的 overlay 水合回本機檔案**,sync `load_overlay` 照舊讀檔,
+> 零連鎖。SQLite 模式為 no-op（檔案本就是單機真相）。
+> desired:`instance_desired` 表 + `set/list/delete`;manager 在 start/stop/sleep/wake 持久化、
+> delete 清除;開機 `replay_desired()`(adopt 之後)把 desired=running 但已停的重新拉起,
+> 由 `LLMOPS_REPLAY_DESIRED`(預設 true)控制 —— **單機重啟也受益**(自動恢復原本在跑的模型)。
+> 測試：store +4(兩後端)、backend desired-replay +4 / overlay-hydrate +4、router hydrate +3。
+> backend 342 / router 112 / store 52(SQLite+PG)。
+>
+> 留待 2c：**跨副本即時傳播**(目前靠開機 / `/reload` 水合;只有 leader 寫入後,follower/router
+> 在 reload 點同步,即足夠;live watch 等 leader election 完成再評估)。
 
 ### 做法
 1. **Overlay 權威來源改 DB**：

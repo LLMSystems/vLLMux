@@ -33,6 +33,9 @@
 - **優雅排空(graceful drain)** — 停模型 / 縮容前,backend 先請 router 對該 instance 停送
   新請求,等 in-flight 跑完(上限 `LLMOPS_DRAIN_TIMEOUT`,清空即提早結束)才殺進程,避免滾動
   更新 / 停機切斷進行中的請求。見 [ha-design_zh-CN.md](ha-design_zh-CN.md)。
+- **重啟自動恢復(desired 重放)** — 每顆模型「該不該跑」的意圖會持久化;backend 重啟後會把
+  原本在跑、卻因崩潰/重啟而停掉的模型自動拉回(`LLMOPS_REPLAY_DESIRED`,預設開)。搭配可選的
+  Postgres 後端(`LLMOPS_DB_URL`),狀態與設定可由多個後端副本共享,邁向控制平面 HA。
 
 ## 觀測性
 

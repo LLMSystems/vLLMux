@@ -45,6 +45,11 @@
   has the router stop sending it new requests and waits for in-flight ones to finish
   (capped at `LLMOPS_DRAIN_TIMEOUT`, returning early once clear), so a rolling update
   or shutdown doesn't cut live requests. See [ha-design_zh-CN.md](ha-design_zh-CN.md).
+- **Restart restore (desired replay)** — each model's "should it be running" intent is
+  persisted, so after a backend restart the models that were running (but got stopped
+  by the crash/restart) are brought back automatically (`LLMOPS_REPLAY_DESIRED`, on by
+  default). With the optional Postgres backend (`LLMOPS_DB_URL`), state + config are
+  shared across backend replicas — the path toward control-plane HA.
 
 ## Observability
 
