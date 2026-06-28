@@ -41,6 +41,10 @@
   (readiness, 200 once config is loaded and startup finished, else 503), both
   auth-free, so k8s probes / load balancers hold traffic correctly during boot or a
   reload window.
+- **Graceful drain** — before killing an instance on stop / scale-down, the backend
+  has the router stop sending it new requests and waits for in-flight ones to finish
+  (capped at `LLMOPS_DRAIN_TIMEOUT`, returning early once clear), so a rolling update
+  or shutdown doesn't cut live requests. See [ha-design_zh-CN.md](ha-design_zh-CN.md).
 
 ## Observability
 

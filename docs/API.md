@@ -580,6 +580,19 @@ curl -s http://localhost:8887/health
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8887/ready
 ```
 
+### 2.9 `POST /drain` · `POST /undrain`（優雅排空,內部控制用）
+
+backend 停一顆 instance 前呼叫,讓 router 對它**不再送新請求**(現有 in-flight 照常跑完)。
+免 auth(同 `/reload`,backend↔router 內部呼叫)。
+
+| 端點 | body | 回應 |
+|---|---|---|
+| `POST /drain` | `{model_key, instance_id, ttl?}` | `{draining: true, inflight: N}` —— backend 反覆呼叫直到 `inflight==0` 或逾時才殺進程;drain 標記帶 TTL 會自動過期(stale 自癒) |
+| `POST /undrain` | `{model_key, instance_id}` | `{draining: false}` —— 重啟該 instance 時清除標記 |
+
+> 選路會跳過 draining 的 instance,但**只在還有非 draining 的替代時**才跳過 —— 全部 draining
+> 仍盡力服務,不硬性 503。
+
 ---
 
 ## 3. Embedding / Reranker Server

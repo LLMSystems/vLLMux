@@ -30,6 +30,9 @@
 - **Router 健康探針** — `GET /health`(liveness,永遠 200)與 `GET /ready`(readiness,
   config 載入 + 啟動完成才 200,否則 503),皆免 auth,供 k8s 探針 / 負載器在啟動 / reload
   期間正確探活。
+- **優雅排空(graceful drain)** — 停模型 / 縮容前,backend 先請 router 對該 instance 停送
+  新請求,等 in-flight 跑完(上限 `LLMOPS_DRAIN_TIMEOUT`,清空即提早結束)才殺進程,避免滾動
+  更新 / 停機切斷進行中的請求。見 [ha-design_zh-CN.md](ha-design_zh-CN.md)。
 
 ## 觀測性
 

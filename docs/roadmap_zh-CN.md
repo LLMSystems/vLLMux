@@ -98,6 +98,11 @@ open-dev 後門。`/api/auth/sso/*`,見 [sso-design_zh-CN.md](sso-design_zh-CN.m
 
 ## 🟢 加分項
 
+- **控制平面 HA / 規模化(C-3)** — 分階段設計見 [ha-design_zh-CN.md](ha-design_zh-CN.md)。
+  **Phase 1 優雅排空已完成**(停模型前 drain in-flight);Phase 2(Postgres 狀態外移 + leader
+  election)、Phase 3(control-plane / node-agent 拆分,多節點)待實作。
+
+
 - ✅ **Router 自身 `/health`、`/ready`** — `已完成`：`/health` liveness(永遠 200)、`/ready`
   readiness(config 載入 + 啟動完成才 200,否則 503),皆免 auth,供 k8s 探針 / 負載器探活。
 - ✅ **設定版本化 / 匯出匯入** — `已完成`：overlay 可一鍵匯出備份、匯入還原；每次變更自動快照,
