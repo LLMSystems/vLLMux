@@ -174,14 +174,34 @@ desired,不再直接碰進程。**單機先 collapsed**(agent 與控制平面同
 
 ## 分階段執行（建議順序）
 
-| 子階段 | 產出 | 單機先 collapsed? | 風險 |
-|---|---|---|---|
-| **3a** 實例位址入庫 + router 讀 DB | 解開 netns 耦合 | ✅ localhost 不變 | 中 |
-| **3b** node-agent 抽出 | spawn 與控制平面分離 | ✅ 同容器 | **高**(核心執行模型) |
-| **3d** observed 入庫 + 控制平面無狀態 | 控制平面可多副本 | ✅ | 中高 |
-| **3c** 跨節點排程 | 真多節點 | — | 高 |
-| **3e** router 多副本 | router 水平擴 | — | 低 |
-| **3f** k8s 部署 | 一鍵多節點 | — | 中 |
+| 子階段 | 產出 | 單機先 collapsed? | 風險 | 狀態 |
+|---|---|---|---|---|
+| **3a** 實例位址入庫 + router 讀 DB | 解開 netns 耦合 | ✅ localhost 不變 | 中 | ✅ 已完成（live 驗） |
+| **3b** node-agent 抽出 | spawn 與控制平面分離 | ✅ 同容器 | **高**(核心執行模型) | ✅ 已完成（3b-1 節點註冊/assignments；3b-2 ownership-gated actuation + 心跳自癒） |
+| **3d** observed 入庫 + 控制平面無狀態 | 控制平面可多副本 | ✅ | 中高 | ✅ 已完成（3d-1 observed 回填；3d-2 follower 讀 DB 組裝視圖，**雙副本 live 驗**） |
+| **3c** 跨節點排程 | 真多節點 | — | 高 | ✅ 已完成（greedy by free VRAM + 死節點重指派；多節點為 unit test，單機 no-op） |
+| **3e** router 多副本 | router 水平擴 | — | 低 | ✅ 已完成（router 無狀態、`/ready` 報 routable 數，**第二副本 live 驗**） |
+| **3f** k8s 部署 | 一鍵多節點 | — | 中 | 規劃中（Helm/manifests） |
 
-> 起手式建議:**3a**(風險中、解開最關鍵的 netns 耦合,且單機完全不變)。確認 router 能從 DB 讀位址
-> 路由後,再評估是否投入 3b 這塊核心重構。
+> 起手式建議:**3a**…(已完成)。
+
+## 實作狀態與唯一剩下的硬限制（2026-06）
+
+3a–3e 全部落地、SQLite + Postgres 雙跑測試通過、單機 collapsed 行為逐位元不變,並做了
+**雙 backend 副本**(follower 從 DB 讀 fleet)與**雙 router 副本**(共享 store 讀路由)的 live 驗證。
+
+**唯一還沒解的硬限制**:vLLM 仍以 `--host localhost` 綁在 backend 的 netns 內(launcher 沿用
+config 的 host)。所以「另一個 netns / 另一台機器的 router 或 node-agent」雖然能從 DB 讀到實例位址,
+卻仍連不到只綁 localhost 的 vLLM。要真正多節點 inference,還需要:
+
+1. **node-agent 把 vLLM 綁在可路由位址**(node IP / `0.0.0.0`,非 `localhost`),並以該位址寫入
+   `instances_live`(`LLMOPS_NODE_HOST` 已預留)。這是把 actuation 真正搬到每個 node 的最後一步
+   (3b 的 collapsed→split 切換),牽涉改 launcher 的 `--host` 與安全考量(綁 0.0.0.0)。
+2. 在有第二台 GPU 主機時才有意義、也才測得起來;單機無法驗證(GPU-less 副本無法真的起模型)。
+
+換言之:**控制平面 HA(狀態外移、leader、雙副本讀寫、排程、router 水平擴)已完備且驗過;
+剩下純粹是「把 vLLM 綁到可跨網位址」這一步 + 真實多 GPU 主機環境**,屬部署形態而非控制平面邏輯。
+
+> **節點身分建議**:多節點部署請給每台設**穩定**的 `LLMOPS_INSTANCE_ID`(預設 `hostname:pid` 會
+> 隨重啟改變)。assignments 已對「指派到已死節點」做自癒回收,但穩定 id 讓 nodes/leader/assignment
+> 更易讀、failover 更乾淨。
