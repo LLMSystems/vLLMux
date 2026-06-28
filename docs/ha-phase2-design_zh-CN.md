@@ -183,7 +183,16 @@
 
 ---
 
-## 2e. 部署 + 遷移 + 文檔
+## 2e. 部署 + 遷移 + 文檔  ✅ 已完成
+
+> 進度：**已完成**。compose 的 profile-gated `postgres` 服務 + `PgDriver` 連線 retry（前面已做);
+> **遷移腳本** `packages/llmops-store/migrate_sqlite_to_pg.py`:逐表把 SQLite 複製進 Postgres
+> (依目標欄位型別 coerce、複製明文 id 後重設 IDENTITY sequence、略過 runtime-only 的
+> lease/draining、當前 overlay 隨 `config_versions` 帶過去);非空目標需 `--wipe` 才覆蓋(可重跑)。
+> deployment 文檔(中英)補上 HA 部署 + 一行遷移指令。實測:seed SQLite → 遷移 → PG 資料/型別/
+> sequence/overlay 全對。測試:`_coerce` 純函式 +1、完整遷移(PG-gated)+2。
+
+### (原規劃)
 
 - **compose**:新增可選 `postgres` service（`deploy/docker-compose.ha.yaml` override 或 profile）;
   backend/router 設 `LLMOPS_DB_URL`。單機預設仍不含 PG。

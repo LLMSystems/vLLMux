@@ -153,9 +153,20 @@ docker compose -f deploy/docker-compose.yaml --profile ha up -d
 ```
 
 All store data (keys / audit / config versions / cost / request logs / desired)
-then lives in Postgres. Note: it's a **fresh empty DB** — existing SQLite data
-isn't migrated automatically yet. Unset `LLMOPS_DB_URL` to go back to SQLite,
-unchanged.
+then lives in Postgres. Switching is a **fresh empty DB**; to carry existing
+SQLite data over, run the migration once (re-runnable, `--wipe` to overwrite;
+runtime-only lease/draining are skipped, the current overlay rides along in
+config_versions):
+
+```bash
+# data is in the llmops-data volume, so run it inside the engine image:
+docker compose -f deploy/docker-compose.yaml run --rm --no-deps \
+  -e LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops \
+  -v "$PWD/packages/llmops-store:/mig" backend \
+  python /mig/migrate_sqlite_to_pg.py --src /app/data/llmops.db
+```
+
+Unset `LLMOPS_DB_URL` to go back to SQLite, unchanged.
 
 **2. Leader election is automatic.** In Postgres mode the backend elects a
 leader: **only the leader runs the singleton loops** (reconcile / autoscale /

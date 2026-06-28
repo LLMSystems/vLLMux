@@ -143,8 +143,18 @@ docker compose -f deploy/docker-compose.yaml --profile ha up -d
 ```
 
 切過去後,**所有 store 資料(金鑰/稽核/設定版本/成本/推理紀錄/desired)都寫 Postgres**。
-注意:這是**全新的空 DB**,舊 SQLite 資料不會自動搬(遷移腳本待補)。不設 `LLMOPS_DB_URL`
-就回到 SQLite,行為完全不變。
+切到 Postgres 是**全新的空 DB**;要把現有 SQLite 資料搬過去,跑一次遷移腳本(可重跑,
+`--wipe` 覆蓋;runtime-only 的 lease/draining 會略過,當前 overlay 隨 config_versions 一起帶過去):
+
+```bash
+# data 在 llmops-data volume 裡,所以在 engine 映像內跑:
+docker compose -f deploy/docker-compose.yaml run --rm --no-deps \
+  -e LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops \
+  -v "$PWD/packages/llmops-store:/mig" backend \
+  python /mig/migrate_sqlite_to_pg.py --src /app/data/llmops.db
+```
+
+不設 `LLMOPS_DB_URL` 就回到 SQLite,行為完全不變。
 
 **2. Leader election 是自動的。** 一旦走 Postgres,backend 就會競選 leader —— **只有 leader
 跑那些單例背景迴圈(reconcile / autoscale / prune)**,其餘副本待命。leader 掛掉,待命副本會在
