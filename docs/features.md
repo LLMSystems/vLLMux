@@ -48,8 +48,14 @@
 - **Restart restore (desired replay)** — each model's "should it be running" intent is
   persisted, so after a backend restart the models that were running (but got stopped
   by the crash/restart) are brought back automatically (`LLMOPS_REPLAY_DESIRED`, on by
-  default). With the optional Postgres backend (`LLMOPS_DB_URL`), state + config are
-  shared across backend replicas — the path toward control-plane HA.
+  default).
+- **Control-plane HA (optional)** — point the shared store at Postgres
+  (`LLMOPS_DB_URL`) to run more than one backend replica: state, config and desired
+  intent live in the DB, and a **leader lease** ensures only one replica runs the
+  singleton control loops (reconcile / autoscale / prune) — a standby steals the
+  expired lease and takes over within ~`LLMOPS_LEADER_LEASE_TTL` seconds if the leader
+  dies. SQLite single-machine stays the zero-config default. See
+  [ha-phase2-design_zh-CN.md](ha-phase2-design_zh-CN.md).
 
 ## Observability
 

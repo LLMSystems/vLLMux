@@ -34,8 +34,12 @@
   新請求,等 in-flight 跑完(上限 `LLMOPS_DRAIN_TIMEOUT`,清空即提早結束)才殺進程,避免滾動
   更新 / 停機切斷進行中的請求。見 [ha-design_zh-CN.md](ha-design_zh-CN.md)。
 - **重啟自動恢復(desired 重放)** — 每顆模型「該不該跑」的意圖會持久化;backend 重啟後會把
-  原本在跑、卻因崩潰/重啟而停掉的模型自動拉回(`LLMOPS_REPLAY_DESIRED`,預設開)。搭配可選的
-  Postgres 後端(`LLMOPS_DB_URL`),狀態與設定可由多個後端副本共享,邁向控制平面 HA。
+  原本在跑、卻因崩潰/重啟而停掉的模型自動拉回(`LLMOPS_REPLAY_DESIRED`,預設開)。
+- **控制平面 HA(選用)** — 把共用 store 指向 Postgres(`LLMOPS_DB_URL`)即可跑多個後端副本:
+  狀態、設定與 desired 意圖都在 DB,並以 **leader 租約**確保只有一個副本跑單例背景迴圈
+  (reconcile / autoscale / prune);leader 掛掉時,待命副本會在約 `LLMOPS_LEADER_LEASE_TTL`
+  秒內搶下過期租約接手。單機 SQLite 仍是零設定預設。見
+  [ha-phase2-design_zh-CN.md](ha-phase2-design_zh-CN.md)。
 
 ## 觀測性
 

@@ -107,9 +107,23 @@
 
 ---
 
-## 2c. Leader election（選主）
+## 2c. Leader election（選主）  ✅ 已完成
 
 **目標**：多副本只有 **leader** 跑背景單例迴圈,其餘待命;leader 掛則自動接手。
+
+> 進度：**已完成**。`leader_lease(name, holder, expires_at)` 表 + `try_acquire_leader`
+> (原子「搶或續租」:`ON CONFLICT … DO UPDATE … WHERE expires_at < now OR holder = me`)/
+> `release_leader` / `get_leader`(store,跑 SQLite+PG 兩後端測試)。`app/core/leader.py`
+> `LeaderElector`:DB 模式輪詢搶租(心跳 = ttl/3),搶到才 `on_acquire`、失去才 `on_release`;
+> **單機(無 PG)= 永久 leader**,行為與今天逐位元一致。`main.py` 把那 6 個背景迴圈(reconcile/
+> gpu/load/autoscaler/2×prune)＋ `replay_desired` 收進 `on_acquire`,**只有 leader 跑**;
+> follower 仍服務 API。`LLMOPS_INSTANCE_ID`(預設 hostname:pid)、`LLMOPS_LEADER_LEASE_TTL`
+> (預設 15)。docker PG 模式實測:單副本搶到租約、loops 啟動,`leader_lease` 有 holder 一列。
+> 測試:store 租約 +2(兩後端)、elector 單元 +4(單機永久 leader / 搶失再搶 / follower 不搶 /
+> DB 異常不誤判)。backend 346 / router 115 / store 56。
+>
+> 留待後續:**follower 把寫入(start/stop/編輯)轉發給 leader**(目前 follower 的 API 仍會動自己的
+> registry;單機/單一 active 副本不受影響,真多副本同時受寫才需要 —— 與 2d/Phase 3 一起評估)。
 
 ### 做法
 1. **租約機制**（PG）：`leader_lease(name PRIMARY KEY, holder, expires_at)` 一列;
