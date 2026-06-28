@@ -2,5 +2,7 @@ vllm
 gunicorn
 evalscope
 aiosqlite
+# Postgres backend for the shared store (HA mode, LLMOPS_DB_URL=postgres://…).
+asyncpg
 pytest
 pytest-asyncio

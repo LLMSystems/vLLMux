@@ -14,9 +14,27 @@ from llmops_store import LLMOpsStore, _percentile  # noqa: E402
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-async def store(tmp_path):
-    s = await LLMOpsStore(str(tmp_path / "test.db")).init()
+@pytest.fixture(params=["sqlite", "postgres"])
+async def store(request, tmp_path):
+    """Every `store` test runs against BOTH backends, proving the Postgres driver
+    is behaviour-equivalent to SQLite. Postgres needs LLMOPS_TEST_DB_URL (a throw-
+    away DB); without it the postgres variant is skipped.
+
+    Run on PG:  docker run -d --name pg -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:16
+                LLMOPS_TEST_DB_URL=postgresql://postgres:test@localhost:55432/postgres pytest
+    """
+    if request.param == "postgres":
+        url = os.environ.get("LLMOPS_TEST_DB_URL")
+        if not url:
+            pytest.skip("set LLMOPS_TEST_DB_URL to run store tests on Postgres")
+        import asyncpg
+
+        conn = await asyncpg.connect(url)  # clean slate per test
+        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+        await conn.close()
+        s = await LLMOpsStore(db_url=url).init()
+    else:
+        s = await LLMOpsStore(str(tmp_path / "test.db")).init()
     yield s
     await s.close()
 

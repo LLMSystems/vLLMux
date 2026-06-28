@@ -19,17 +19,23 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-import aiosqlite
+from _driver import make_driver
 
 # packages/llmops-store/llmops_store.py -> repo root is 2 levels up.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 DEFAULT_DB_PATH = os.path.join(_REPO_ROOT, "data", "llmops.db")
 DB_PATH_ENV = "LLMOPS_DB_PATH"
+DB_URL_ENV = "LLMOPS_DB_URL"  # postgres://… enables the HA (Postgres) backend
 
 
 def get_db_path() -> str:
     """Resolve the active DB path: env override, else the shared default."""
     return os.environ.get(DB_PATH_ENV, DEFAULT_DB_PATH)
+
+
+def get_db_url() -> Optional[str]:
+    """Postgres DSN if HA mode is on (LLMOPS_DB_URL set), else None (SQLite)."""
+    return os.environ.get(DB_URL_ENV, "").strip() or None
 
 
 _SCHEMA = """
@@ -182,36 +188,26 @@ def _percentile(values: list[float], pct: float) -> Optional[float]:
 
 
 class LLMOpsStore:
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(self, db_path: Optional[str] = None, db_url: Optional[str] = None) -> None:
+        # db_url (LLMOPS_DB_URL=postgres://…) selects the HA Postgres backend;
+        # otherwise the shared SQLite file. db_path is ignored in Postgres mode.
+        self.db_url = db_url or get_db_url()
         self.db_path = db_path or get_db_path()
-        self._db: Optional[aiosqlite.Connection] = None
+        self._db = None  # driver (SQLite or Postgres), set in init()
 
     async def init(self) -> "LLMOpsStore":
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        # isolation_level=None -> autocommit: every statement is its own committed
-        # unit, so a write that loses the WAL lock can never leave a dangling
-        # implicit transaction open (which would wedge the write lock for every
-        # process until the connection writes again — see the eval finalize hang).
-        # The explicit commit() calls below become harmless no-ops.
-        self._db = await aiosqlite.connect(self.db_path, isolation_level=None)
-        self._db.row_factory = aiosqlite.Row
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        # Wait (rather than erroring) up to 30s for a contended write lock; under a
-        # parallel eval the router + backend write concurrently.
-        await self._db.execute("PRAGMA busy_timeout=30000")
+        # The driver owns connection setup (WAL/pragmas for SQLite, a pool for
+        # Postgres). Every statement self-commits (autocommit), so the explicit
+        # commit() calls below are harmless no-ops on both backends.
+        self._db = await make_driver(self.db_path, self.db_url).connect()
         await self._db.executescript(_SCHEMA)
         await self._migrate()
-        await self._db.commit()
         return self
 
     async def _migrate(self) -> None:
         """Add columns introduced after the original schema, idempotently."""
         for table, column, decl in _MIGRATIONS:
-            cur = await self._db.execute(f"PRAGMA table_info({table})")
-            cols = {row["name"] for row in await cur.fetchall()}
-            if column not in cols:
-                await self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            await self._db.ensure_column(table, column, decl)
 
     async def close(self) -> None:
         if self._db is not None:
@@ -283,14 +279,12 @@ class LLMOpsStore:
     ) -> int:
         import time
 
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO api_keys "
             "(name, key_hash, prefix, created_at, rpm_limit, token_quota, quota_period) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name, key_hash, prefix, ts or time.time(), rpm_limit, token_quota, quota_period),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def list_api_keys(self) -> list[dict]:
         """All keys, newest first — never returns the hash."""
@@ -335,13 +329,11 @@ class LLMOpsStore:
     ) -> int:
         import time
 
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO operators (label, token_hash, prefix, role, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (label, token_hash, prefix, role, ts or time.time()),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def list_operators(self) -> list[dict]:
         """All operators, newest first — never returns the hash."""
@@ -461,12 +453,10 @@ class LLMOpsStore:
     ) -> int:
         import time
 
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO alert_sinks (type, url, min_severity, created_at) VALUES (?, ?, ?, ?)",
             (type, url, min_severity, ts or time.time()),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def list_alert_sinks(self) -> list[dict]:
         cur = await self._db.execute(
@@ -590,13 +580,11 @@ class LLMOpsStore:
 
         if await self.latest_config_version_hash() == sha256:
             return None
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO config_versions (ts, actor, role, summary, sha256, overlay) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (ts or time.time(), actor, role, summary, sha256, overlay),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def list_config_versions(
         self, before: Optional[int] = None, limit: int = 50
@@ -652,13 +640,11 @@ class LLMOpsStore:
         import time
 
         now = ts or time.time()
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO perf_runs (created_at, name, model, target_url, status, params, started_at) "
             "VALUES (?, ?, ?, ?, 'running', ?, ?)",
             (now, name, model, target_url, params, now),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def finish_perf_run(
         self, run_id: int, status: str, result: Optional[str] = None,
@@ -715,13 +701,11 @@ class LLMOpsStore:
         # A 'queued' run hasn't actually started yet, so leave started_at unset
         # until start_eval_run flips it to 'running'.
         started_at = None if status == "queued" else now
-        cur = await self._db.execute(
+        return await self._db.insert(
             "INSERT INTO eval_runs (created_at, name, model, target_url, datasets, "
             "status, params, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (now, name, model, target_url, datasets, status, params, started_at),
         )
-        await self._db.commit()
-        return cur.lastrowid
 
     async def start_eval_run(self, run_id: int, ts: Optional[float] = None) -> None:
         """Flip a queued run to 'running' once a concurrency slot frees up."""

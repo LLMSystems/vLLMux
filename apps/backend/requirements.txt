@@ -5,6 +5,9 @@ pyyaml
 httpx
 psutil
 aiosqlite
+# Postgres backend for the shared store (HA mode, LLMOPS_DB_URL=postgres://…).
+# Only imported when configured; SQLite remains the zero-config default.
+asyncpg
 huggingface_hub
 # SSO/OIDC: sign+verify session cookies (HS256) and validate IdP id_tokens
 # (RS256 via JWKS). [crypto] pulls `cryptography` for RSA signature verification.
