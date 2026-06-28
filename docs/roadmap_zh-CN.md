@@ -99,8 +99,10 @@ open-dev 後門。`/api/auth/sso/*`,見 [sso-design_zh-CN.md](sso-design_zh-CN.m
 ## 🟢 加分項
 
 - **控制平面 HA / 規模化(C-3)** — 分階段設計見 [ha-design_zh-CN.md](ha-design_zh-CN.md)。
-  **Phase 1 優雅排空已完成**(停模型前 drain in-flight);Phase 2(Postgres 狀態外移 + leader
-  election)、Phase 3(control-plane / node-agent 拆分,多節點)待實作。
+  **Phase 1 優雅排空 ✅**、**Phase 2(2a–2e:Postgres 狀態外移 + leader election + router 多副本
+  + 遷移)✅**(見 [ha-phase2-design_zh-CN.md](ha-phase2-design_zh-CN.md));**Phase 3**
+  (control-plane / node-agent 拆分 → 真多節點 + 多副本 inference)= **設計完成、待實作**,見
+  [ha-phase3-design_zh-CN.md](ha-phase3-design_zh-CN.md)。
 
 
 - ✅ **Router 自身 `/health`、`/ready`** — `已完成`：`/health` liveness(永遠 200)、`/ready`
