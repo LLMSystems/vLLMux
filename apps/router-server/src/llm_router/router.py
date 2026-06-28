@@ -116,7 +116,17 @@ async def ready(request: Request):
             content={"status": "not ready",
                      "reason": "config not loaded" if not config else "starting"},
         )
-    return {"status": "ready", "groups": len(config.get("LLM_engines", {}))}
+    # HA Phase 3e: surface how many instances are routable right now (live addresses
+    # from the shared store). Informational only — readiness is NOT gated on it, so a
+    # fresh cluster with no models started still accepts traffic (and returns a clean
+    # 503/no-instance to clients) rather than every router replica dropping out of
+    # the load balancer. Lets an operator see a stateless replica's view of the fleet.
+    live = getattr(state, "live_addrs", None) or {}
+    return {
+        "status": "ready",
+        "groups": len(config.get("LLM_engines", {})),
+        "routable_instances": len(live),
+    }
 
 
 @router.get("/routing")
