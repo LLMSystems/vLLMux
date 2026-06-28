@@ -23,9 +23,15 @@
 
 ---
 
-## 2a. Store 抽象化 + Postgres 後端（地基，零行為改變）
+## 2a. Store 抽象化 + Postgres 後端（地基，零行為改變）  ✅ 已完成
 
 **目標**：`LLMOPS_DB_URL=postgres://…` 走 Postgres，否則沿用 SQLite；對外介面與行為完全不變。
+
+> 進度：**已完成**。`packages/llmops-store/_driver.py`（`SqliteDriver` / `PgDriver`(asyncpg) +
+> `?`→`$n`、`AUTOINCREMENT`→`IDENTITY`、`REAL`→`DOUBLE PRECISION`、`RETURNING id`、`ensure_column`）；
+> `LLMOpsStore` 改走 driver（6 個 insert 用 `insert()`、migration 用 `ensure_column()`）。
+> 測試：store 全套**參數化跑 SQLite + Postgres 兩種後端**（`LLMOPS_TEST_DB_URL` 開,缺則 skip）+
+> driver 方言純函式單元測試。SQLite 行為零退化（backend 334 / router 109 / store 28，PG 變體再 +20）。
 
 ### 做法
 1. **方言 driver 薄層**（新 `packages/llmops-store/_driver.py`）：
