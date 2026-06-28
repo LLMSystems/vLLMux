@@ -166,6 +166,10 @@ async def _persist(store, transitions: list[Transition], notifier=None, settings
 async def _process_restarts(registry: ModelRegistry, settings: BackendSettings, store, manager) -> None:
     """Start any crashed-but-wanted instances whose backoff has elapsed."""
     now = time.time()
+    # HA Phase 3b: only auto-restart instances this node owns; one assigned to a
+    # different node-agent is that agent's to actuate. Empty set on a single host,
+    # so collapsed behaviour is unchanged.
+    foreign = await manager.foreign_assignments() if hasattr(manager, "foreign_assignments") else set()
     due: list[tuple[str, int]] = []
     async with registry.lock:
         for inst in registry.values():
@@ -173,6 +177,7 @@ async def _process_restarts(registry: ModelRegistry, settings: BackendSettings, 
                 inst.state == ModelState.FAILED
                 and inst.desired == Desired.RUNNING
                 and inst.managed
+                and inst.key not in foreign
                 and inst.next_restart_at is not None
                 and now >= inst.next_restart_at
                 and inst.restart_count < settings.max_restarts

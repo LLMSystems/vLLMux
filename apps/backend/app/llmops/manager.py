@@ -178,6 +178,19 @@ class ModelManager:
             except Exception:
                 logger.warning("Failed to assign %s to this node", key, exc_info=True)
 
+    async def foreign_assignments(self) -> set[str]:
+        """Keys explicitly assigned to a *different* node — this node-agent must not
+        actuate them (their owning agent does). Empty on a single host (everything
+        is unassigned or assigned here), so collapsed behaviour is unchanged.
+        Best-effort: any store issue yields an empty set (actuate as before)."""
+        if self.store is None or not hasattr(self.store, "list_assignments"):
+            return set()
+        try:
+            amap = await self.store.list_assignments()
+        except Exception:
+            return set()
+        return {k for k, n in amap.items() if n != self.settings.instance_id}
+
     async def replay_desired(self) -> None:
         """On boot (after adopt_running): start instances whose persisted desired is
         RUNNING but which are currently STOPPED/FAILED — so a backend restart (or a
@@ -190,9 +203,12 @@ class ModelManager:
         except Exception:
             logger.warning("Failed to read desired state for replay", exc_info=True)
             return
+        # HA Phase 3b: don't replay instances owned by another node-agent — their
+        # node restores them. Empty on a single host, so collapsed is unchanged.
+        foreign = await self.foreign_assignments()
         for key, want in desired.items():
             inst = self.registry.get(key)
-            if inst is None or want != Desired.RUNNING.value:
+            if inst is None or want != Desired.RUNNING.value or key in foreign:
                 continue
             if inst.state in (ModelState.STOPPED, ModelState.FAILED):
                 try:

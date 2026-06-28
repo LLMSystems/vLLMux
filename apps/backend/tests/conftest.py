@@ -298,6 +298,25 @@ class FakeStore:
         self.__init_desired()
         self.desired.pop(key, None)
 
+    # -- Node assignments (HA Phase 3b) --
+    def __init_assign(self):
+        if not hasattr(self, "assignments"):
+            self.assignments = {}
+
+    async def set_assignment(self, key, node_id, ts=None):
+        self.__init_assign()
+        self.assignments[key] = node_id
+
+    async def delete_assignment(self, key):
+        self.__init_assign()
+        self.assignments.pop(key, None)
+
+    async def list_assignments(self, node_id=None):
+        self.__init_assign()
+        if node_id is None:
+            return dict(self.assignments)
+        return {k: n for k, n in self.assignments.items() if n == node_id}
+
     async def get_current_overlay(self):
         self.__init_cv()
         import json as _json

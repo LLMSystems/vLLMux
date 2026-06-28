@@ -123,6 +123,9 @@ class _ReloadSpyManager:
         self.sd_writes += 1
         return True
 
+    async def foreign_assignments(self):
+        return set()
+
 
 async def test_ready_transition_nudges_router_reload():
     reg = _registry()
