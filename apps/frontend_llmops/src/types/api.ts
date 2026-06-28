@@ -256,6 +256,49 @@ export interface ApiKey {
 
 export type QuotaPeriod = 'total' | 'daily' | 'monthly'
 
+/** Control-plane roles (monotonic: admin ⊃ operator ⊃ viewer). */
+export type Role = 'viewer' | 'operator' | 'admin'
+
+/** The caller's resolved identity (GET /api/me). */
+export interface Me {
+  actor: string | null
+  role: Role | null
+}
+
+/** A control-plane user credential (the token hash is never returned). */
+export interface Operator {
+  id: number
+  label: string
+  prefix: string
+  role: Role
+  created_at: number
+  last_used_at: number | null
+  revoked: number
+}
+
+/** Returned once on creation — `token` is the plaintext, shown only here. */
+export interface CreatedOperator {
+  id: number
+  label: string
+  role: Role
+  prefix: string
+  token: string
+}
+
+/** One control-plane mutation in the audit trail (GET /api/audit). */
+export interface AuditEntry {
+  id: number
+  ts: number
+  actor: string
+  role: Role | null
+  method: string
+  path: string
+  target: string | null
+  status: number
+  detail: string | null
+  source_ip: string | null
+}
+
 /** Per-group live load (autoscaling signal), keyed by group name in the API. */
 export interface GroupLoad {
   group: string

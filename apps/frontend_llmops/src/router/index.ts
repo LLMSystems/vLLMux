@@ -76,6 +76,18 @@ const router = createRouter({
       component: () => import('@/views/KeysView.vue'),
     },
     {
+      path: '/operators',
+      name: 'operators',
+      meta: { title: 'operators' },
+      component: () => import('@/views/OperatorsView.vue'),
+    },
+    {
+      path: '/audit',
+      name: 'audit',
+      meta: { title: 'audit' },
+      component: () => import('@/views/AuditView.vue'),
+    },
+    {
       path: '/usage',
       name: 'usage',
       meta: { title: 'usage' },

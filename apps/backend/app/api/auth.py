@@ -7,7 +7,14 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from app.core.auth import generate_api_key, require_admin
+from app.core.auth import (
+    Role,
+    generate_api_key,
+    generate_operator_token,
+    require_admin,
+    require_viewer,
+    resolve_actor,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -85,3 +92,63 @@ async def create_key(body: CreateKeyRequest, request: Request):
 async def revoke_key(key_id: int, request: Request):
     if not await _store(request).revoke_api_key(key_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown or already-revoked key: {key_id}")
+
+
+# ---- Operators (control-plane users) -------------------------------------
+
+class CreateOperatorRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+    role: Role = Role.OPERATOR
+
+
+@router.get("/me")
+async def whoami(request: Request, _: None = Depends(require_viewer)):
+    """The caller's resolved identity + role (drives the UI's chrome/permissions)."""
+    actor, role = await resolve_actor(request)
+    return {"actor": actor, "role": role.value if role else None}
+
+
+@router.get("/operators", dependencies=[Depends(require_admin)])
+async def list_operators(request: Request):
+    return await _store(request).list_operators()
+
+
+@router.post("/operators", status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)])
+async def create_operator(body: CreateOperatorRequest, request: Request):
+    """Mint an operator token. The plaintext is returned **once** — never stored."""
+    plaintext, token_hash, prefix = generate_operator_token()
+    op_id = await _store(request).create_operator(
+        body.label.strip(), token_hash, prefix, body.role.value
+    )
+    return {
+        "id": op_id, "label": body.label.strip(), "role": body.role.value,
+        "prefix": prefix, "token": plaintext,
+    }
+
+
+@router.delete("/operators/{operator_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_admin)])
+async def revoke_operator(operator_id: int, request: Request):
+    if not await _store(request).revoke_operator(operator_id):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"unknown or already-revoked operator: {operator_id}"
+        )
+
+
+# ---- Audit log -----------------------------------------------------------
+
+@router.get("/audit", dependencies=[Depends(require_admin)])
+async def list_audit(
+    request: Request,
+    actor: str | None = None,
+    action: str | None = None,
+    target: str | None = None,
+    since: float | None = None,
+    until: float | None = None,
+    limit: int = 200,
+):
+    """Control-plane change history (newest first), with optional filters."""
+    return await _store(request).list_audit(
+        actor=actor, action=action, target=target, since=since, until=until, limit=limit
+    )

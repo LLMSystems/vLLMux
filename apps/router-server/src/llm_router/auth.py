@@ -129,6 +129,19 @@ async def authenticate(request: Request) -> str | None:
 
     row = await store.get_active_api_key_by_hash(key_hash) if store is not None else None
     if row is None:
+        # Fall back to a control-plane operator token: a signed-in dashboard user
+        # (viewer/operator/admin) may drive the playground. Attributed by label,
+        # never rate-limited/quota'd — like the admin token. Only reached when the
+        # token isn't a real API key, so API-key traffic pays no extra lookup.
+        op = (
+            await store.get_active_operator_by_hash(key_hash)
+            if store is not None and hasattr(store, "get_active_operator_by_hash")
+            else None
+        )
+        if op is not None:
+            name = op["label"]
+            _cache[key_hash] = (None, name, None, None, None, now + _CACHE_TTL)
+            return name
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "invalid or revoked API key",
             headers={"WWW-Authenticate": "Bearer"},

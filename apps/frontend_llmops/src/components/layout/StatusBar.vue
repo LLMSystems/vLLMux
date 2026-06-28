@@ -2,19 +2,38 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Languages, Moon, Sun, Wifi, WifiOff } from '@lucide/vue'
+import { Languages, LogIn, LogOut, Moon, Sun, Wifi, WifiOff } from '@lucide/vue'
 import { setLocale, currentLocale } from '@/i18n'
 import { useModelsStore } from '@/stores/models'
 import { useResourcesStore } from '@/stores/resources'
 import { useTheme } from '@/composables/useTheme'
+import { useAuth } from '@/composables/useAuth'
 import { formatPercent, timeAgo } from '@/lib/utils'
 import Button from '@/components/ui/Button.vue'
+import Badge from '@/components/ui/Badge.vue'
+import UserAvatar from '@/components/UserAvatar.vue'
+import type { Role } from '@/types/api'
 
 const { t } = useI18n()
 const route = useRoute()
 const models = useModelsStore()
 const resources = useResourcesStore()
 const { isDark, toggle } = useTheme()
+const { me, authEnabled, ensureUnlocked, logout, refreshMe } = useAuth()
+
+const roleVariant: Record<Role, 'default' | 'ready' | 'muted'> = {
+  admin: 'default',
+  operator: 'ready',
+  viewer: 'muted',
+}
+
+async function signIn() {
+  await ensureUnlocked()
+}
+function signOut() {
+  logout()
+  void refreshMe()
+}
 
 const title = computed(() => t('sidebar.' + ((route.meta.title as string) ?? 'overview')))
 const languageTitle = computed(() =>
@@ -92,6 +111,37 @@ function toggleLocale() {
       <!-- Language toggle -->
       <Button variant="ghost" size="icon-sm" :title="languageTitle" @click="toggleLocale">
         <Languages class="size-4" />
+      </Button>
+
+      <!-- Identity -->
+      <div
+        v-if="me?.actor"
+        class="flex items-center gap-2 rounded-md border border-border/60 bg-background/40 py-1 pl-1.5 pr-2"
+        :title="$t('statusBar.signedInAs', { actor: me.actor })"
+      >
+        <UserAvatar :seed="me.actor" :size="24" />
+        <div class="hidden leading-tight sm:block">
+          <p class="text-xs font-medium">{{ me.actor }}</p>
+        </div>
+        <Badge v-if="me.role" :variant="roleVariant[me.role]" class="text-[10px]">{{ me.role }}</Badge>
+        <Button
+          v-if="authEnabled"
+          variant="ghost"
+          size="icon-sm"
+          :title="$t('statusBar.signOut')"
+          @click="signOut"
+        >
+          <LogOut class="size-3.5" />
+        </Button>
+      </div>
+      <Button
+        v-else-if="authEnabled"
+        variant="ghost"
+        size="icon-sm"
+        :title="$t('statusBar.signIn')"
+        @click="signIn"
+      >
+        <LogIn class="size-4" />
       </Button>
     </div>
   </header>

@@ -1,9 +1,14 @@
 import type {
   ApiKey,
+  AuditEntry,
   CacheInfo,
   ConfigSummary,
   CreatedKey,
+  CreatedOperator,
   CreateModelPayload,
+  Me,
+  Operator,
+  Role,
   DatasetCacheInfo,
   DatasetDownloadJob,
   DownloadJob,
@@ -243,6 +248,40 @@ export const api = {
       return false
     }
   },
+  /** The caller's resolved identity + role (drives chrome + permission gating). */
+  whoami: () => request<Me>(API_BASE, '/api/me'),
+  /** Resolve a candidate token's identity without storing it (for login). */
+  whoamiWith: async (token: string): Promise<Me | null> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { 'X-Admin-Token': token },
+      })
+      return res.ok ? ((await res.json()) as Me) : null
+    } catch {
+      return null
+    }
+  },
+
+  // ---- Operators (control-plane users) -------------------------------------
+  listOperators: () => request<Operator[]>(API_BASE, '/api/operators'),
+  createOperator: (label: string, role: Role) =>
+    request<CreatedOperator>(API_BASE, '/api/operators', {
+      method: 'POST',
+      body: JSON.stringify({ label, role }),
+    }),
+  revokeOperator: (id: number) =>
+    request<null>(API_BASE, `/api/operators/${id}`, { method: 'DELETE' }),
+
+  // ---- Audit log -----------------------------------------------------------
+  listAudit: (params?: { actor?: string; action?: string; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.actor) q.set('actor', params.actor)
+    if (params?.action) q.set('action', params.action)
+    if (params?.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AuditEntry[]>(API_BASE, `/api/audit${qs ? `?${qs}` : ''}`)
+  },
+
   // ---- Model weights --------------------------------------------------------
   getCache: () => request<CacheInfo>(API_BASE, '/api/cache'),
   deleteCache: (repoId: string) =>

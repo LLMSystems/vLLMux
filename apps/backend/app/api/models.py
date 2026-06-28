@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_manager
 from app.api.schemas import ModelView
-from app.core.auth import require_admin
+from app.core.auth import require_operator
 from app.llmops.manager import (
     GpuUnavailable,
     LoraRuntimeError,
@@ -55,7 +55,7 @@ async def list_models(manager: ModelManager = Depends(get_manager)):
     return [ModelView.from_instance(i) for i in await manager.list()]
 
 
-@router.post("/parse", dependencies=[Depends(require_admin)])
+@router.post("/parse", dependencies=[Depends(require_operator)])
 async def parse_command(body: ParseRequest, manager: ModelManager = Depends(get_manager)):
     """Parse a pasted vLLM command into editable fields + conflict hints."""
     try:
@@ -72,7 +72,7 @@ async def parse_command(body: ParseRequest, manager: ModelManager = Depends(get_
 
 
 @router.post("", response_model=ModelView, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def create_model(body: CreateModelRequest, manager: ModelManager = Depends(get_manager)):
     """Add a dynamic LLM model (overlay). Appears immediately as STOPPED."""
     settings = dict(body.settings)
@@ -89,7 +89,7 @@ async def create_model(body: CreateModelRequest, manager: ModelManager = Depends
     return ModelView.from_instance(inst)
 
 
-@router.put("/{key}", response_model=ModelView, dependencies=[Depends(require_admin)])
+@router.put("/{key}", response_model=ModelView, dependencies=[Depends(require_operator)])
 async def update_model(
     key: str, body: CreateModelRequest, manager: ModelManager = Depends(get_manager)
 ):
@@ -111,7 +111,7 @@ async def update_model(
 
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_admin)])
+               dependencies=[Depends(require_operator)])
 async def delete_model(key: str, manager: ModelManager = Depends(get_manager)):
     """Remove a dynamically-added model (must be overlay-owned and stopped)."""
     try:
@@ -133,7 +133,7 @@ def _group_of(key: str) -> str:
     return key.split("::")[0]
 
 
-@router.post("/{key}/lora", dependencies=[Depends(require_admin)])
+@router.post("/{key}/lora", dependencies=[Depends(require_operator)])
 async def load_lora(key: str, body: LoadLoraRequest, manager: ModelManager = Depends(get_manager)):
     """Hot-load a LoRA into every ready instance of the group + persist it to the
     overlay. Call POST /v1/reload on the router afterwards so it routes the new
@@ -148,7 +148,7 @@ async def load_lora(key: str, body: LoadLoraRequest, manager: ModelManager = Dep
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"LoRA load failed (rolled back): {e}")
 
 
-@router.delete("/{key}/lora/{name}", dependencies=[Depends(require_admin)])
+@router.delete("/{key}/lora/{name}", dependencies=[Depends(require_operator)])
 async def unload_lora(key: str, name: str, manager: ModelManager = Depends(get_manager)):
     """Hot-unload a LoRA from every ready instance + drop it from the overlay."""
     try:
@@ -183,7 +183,7 @@ def _reject_if_autoscaled(manager: ModelManager, key: str) -> None:
 
 
 @router.post("/{key}/start", response_model=ModelView, status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def start_model(key: str, force: bool = False, manager: ModelManager = Depends(get_manager)):
     _reject_if_autoscaled(manager, key)
     try:
@@ -197,7 +197,7 @@ async def start_model(key: str, force: bool = False, manager: ModelManager = Dep
 
 
 @router.post("/{key}/stop", response_model=ModelView, status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def stop_model(key: str, manager: ModelManager = Depends(get_manager)):
     _reject_if_autoscaled(manager, key)
     try:
@@ -222,7 +222,7 @@ class AutoscaleRequest(BaseModel):
     cooldown_s: float | None = Field(default=None, ge=0)
 
 
-@router.put("/{group}/autoscale", dependencies=[Depends(require_admin)])
+@router.put("/{group}/autoscale", dependencies=[Depends(require_operator)])
 async def set_group_autoscale(
     group: str, body: AutoscaleRequest, manager: ModelManager = Depends(get_manager)
 ):
@@ -251,7 +251,7 @@ class FallbackRequest(BaseModel):
     fallback: list[str] = Field(default_factory=list)
 
 
-@router.put("/{group}/fallback", dependencies=[Depends(require_admin)])
+@router.put("/{group}/fallback", dependencies=[Depends(require_operator)])
 async def set_group_fallback(
     group: str, body: FallbackRequest, manager: ModelManager = Depends(get_manager)
 ):
@@ -267,7 +267,7 @@ async def set_group_fallback(
 
 
 @router.post("/{key}/sleep", response_model=ModelView,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(get_manager)):
     """Level-1 sleep a ready instance: free its VRAM but keep it warm for a
     seconds-fast wake. Requires the model to be launched with enable_sleep_mode."""
@@ -283,7 +283,7 @@ async def sleep_model(key: str, level: int = 1, manager: ModelManager = Depends(
 
 
 @router.post("/{key}/wake", response_model=ModelView,
-             dependencies=[Depends(require_admin)])
+             dependencies=[Depends(require_operator)])
 async def wake_model(key: str, manager: ModelManager = Depends(get_manager)):
     """Wake a sleeping instance back to ready (reloads weights to GPU)."""
     _reject_if_autoscaled(manager, key)

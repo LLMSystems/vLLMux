@@ -164,6 +164,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Records control-plane mutations (who changed what) to the store.
+    from app.core.audit import install_audit_middleware
+    install_audit_middleware(app)
     app.include_router(model_routes.router, prefix="/api")
     app.include_router(system_routes.router, prefix="/api")
     app.include_router(config_routes.router, prefix="/api")

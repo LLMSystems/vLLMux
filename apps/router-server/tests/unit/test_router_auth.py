@@ -47,9 +47,10 @@ class FakeHTTPClient:
 
 
 class FakeStore:
-    def __init__(self, keys=None, used_tokens=0):
+    def __init__(self, keys=None, used_tokens=0, operators=None):
         self.reqs = []
         self._keys = keys or {}  # hash -> {"id","name"}
+        self._operators = operators or {}  # hash -> {"label","role"}
         self._used_tokens = used_tokens
 
     async def record_request(self, **kwargs):
@@ -57,6 +58,9 @@ class FakeStore:
 
     async def get_active_api_key_by_hash(self, key_hash):
         return self._keys.get(key_hash)
+
+    async def get_active_operator_by_hash(self, key_hash):
+        return self._operators.get(key_hash)
 
     async def tokens_used_by_key(self, name, since=None):
         return self._used_tokens
@@ -125,6 +129,32 @@ def test_enabled_accepts_valid_api_key_and_attributes_name(monkeypatch):
     )
     assert r.status_code == 200
     assert store.reqs[-1]["api_key_name"] == "ci"
+
+
+def test_enabled_accepts_operator_token_and_attributes_label(monkeypatch):
+    """A signed-in control-plane operator may drive inference (e.g. the
+    playground); attributed by label, never rate-limited."""
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    store = FakeStore(operators={_hash("sk-op-tok"): {"label": "alice", "role": "operator"}})
+    client = _client(store)
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-op-tok"},
+    )
+    assert r.status_code == 200
+    assert store.reqs[-1]["api_key_name"] == "alice"
+
+
+def test_enabled_rejects_unknown_token(monkeypatch):
+    monkeypatch.setenv("LLMOPS_REQUIRE_API_KEY", "true")
+    monkeypatch.delenv("LLMOPS_ADMIN_TOKEN", raising=False)
+    client = _client(FakeStore())
+    r = client.post(
+        "/v1/chat/completions", json={"model": "Qwen3-0.6B"},
+        headers={"Authorization": "Bearer sk-op-nope"},
+    )
+    assert r.status_code == 401
 
 
 def test_enabled_enforces_rpm_limit(monkeypatch):

@@ -91,6 +91,8 @@ class FakeStore:
         self.events = []  # (key, kind, from_state, to_state, detail)
         self.reqs = []    # kwargs dicts
         self.api_keys = []  # list of dicts (incl. key_hash)
+        self.operators = []  # list of dicts (incl. token_hash)
+        self.audit = []  # list of dicts
 
     async def record_model_event(self, key, kind, from_state, to_state, detail=None, ts=None):
         self.events.append((key, kind, from_state, to_state, detail))
@@ -136,6 +138,61 @@ class FakeStore:
 
     async def list_api_keys(self):
         return [{k: v for k, v in r.items() if k != "key_hash"} for r in reversed(self.api_keys)]
+
+    # -- Operators --
+    async def create_operator(self, label, token_hash, prefix, role, ts=None):
+        oid = len(self.operators) + 1
+        self.operators.append({
+            "id": oid, "label": label, "token_hash": token_hash, "prefix": prefix,
+            "role": role, "created_at": ts or 0.0, "last_used_at": None, "revoked": 0,
+        })
+        return oid
+
+    async def list_operators(self):
+        return [{k: v for k, v in r.items() if k != "token_hash"}
+                for r in reversed(self.operators)]
+
+    async def count_active_operators(self):
+        return sum(1 for o in self.operators if not o["revoked"])
+
+    async def get_active_operator_by_hash(self, token_hash):
+        for o in self.operators:
+            if o["token_hash"] == token_hash and not o["revoked"]:
+                return dict(o)
+        return None
+
+    async def touch_operator(self, operator_id, ts=None):
+        for o in self.operators:
+            if o["id"] == operator_id:
+                o["last_used_at"] = ts or 0.0
+
+    async def revoke_operator(self, operator_id):
+        for o in self.operators:
+            if o["id"] == operator_id and not o["revoked"]:
+                o["revoked"] = 1
+                return True
+        return False
+
+    # -- Audit --
+    async def record_audit(self, actor, method, path, status, role=None, target=None,
+                           detail=None, source_ip=None, ts=None):
+        self.audit.append({
+            "id": len(self.audit) + 1, "ts": ts or 0.0, "actor": actor, "role": role,
+            "method": method, "path": path, "target": target, "status": status,
+            "detail": detail, "source_ip": source_ip,
+        })
+
+    async def list_audit(self, actor=None, action=None, target=None, since=None,
+                         until=None, limit=200):
+        rows = [
+            r for r in self.audit
+            if (actor is None or r["actor"] == actor)
+            and (action is None or action in r["path"])
+            and (target is None or r["target"] == target)
+            and (since is None or r["ts"] >= since)
+            and (until is None or r["ts"] <= until)
+        ]
+        return list(reversed(rows))[:limit]
 
     # -- Perf runs --
     def __init_perf(self):

@@ -16,15 +16,19 @@ import {
   LineChart,
   Package,
   Receipt,
+  ScrollText,
   Server,
   TerminalSquare,
+  Users,
 } from '@lucide/vue'
 import { useModelsStore } from '@/stores/models'
+import { useAuth } from '@/composables/useAuth'
 import StatusDot from '@/components/StatusDot.vue'
 import type { ModelState } from '@/types/api'
 
 const route = useRoute()
 const models = useModelsStore()
+const { isAdmin } = useAuth()
 const { t } = useI18n()
 
 // Roster grouped by model group (dedupes multi-instance groups), with a
@@ -51,23 +55,33 @@ const roster = computed(() => {
   })
 })
 
-const nav = computed(() => [
-  { to: '/', label: t('sidebar.overview'), icon: LayoutDashboard },
-  { to: '/models', label: t('sidebar.models'), icon: Server },
-  { to: '/traffic', label: t('sidebar.traffic'), icon: ArrowLeftRight },
-  { to: '/requests', label: t('sidebar.requests'), icon: Receipt },
-  { to: '/monitoring', label: t('sidebar.monitoring'), icon: LineChart },
-  { to: '/playground', label: t('sidebar.playground'), icon: TerminalSquare },
-  { to: '/benchmark', label: t('sidebar.benchmark'), icon: Gauge },
-  { to: '/eval', label: t('sidebar.eval'), icon: ClipboardCheck },
-  { to: '/library', label: t('sidebar.library'), icon: Package },
-  { to: '/lora-library', label: t('sidebar.loraLibrary'), icon: Layers },
-  { to: '/datasets', label: t('sidebar.datasets'), icon: Database },
-  { to: '/keys', label: t('sidebar.keys'), icon: KeyRound },
-  { to: '/usage', label: t('sidebar.usage'), icon: BookOpen },
-  { to: '/resources', label: t('sidebar.resources'), icon: Cpu },
-  { to: '/activity', label: t('sidebar.activity'), icon: Activity },
-])
+const nav = computed(() => {
+  const items = [
+    { to: '/', label: t('sidebar.overview'), icon: LayoutDashboard },
+    { to: '/models', label: t('sidebar.models'), icon: Server },
+    { to: '/traffic', label: t('sidebar.traffic'), icon: ArrowLeftRight },
+    { to: '/requests', label: t('sidebar.requests'), icon: Receipt },
+    { to: '/monitoring', label: t('sidebar.monitoring'), icon: LineChart },
+    { to: '/playground', label: t('sidebar.playground'), icon: TerminalSquare },
+    { to: '/benchmark', label: t('sidebar.benchmark'), icon: Gauge },
+    { to: '/eval', label: t('sidebar.eval'), icon: ClipboardCheck },
+    { to: '/library', label: t('sidebar.library'), icon: Package },
+    { to: '/lora-library', label: t('sidebar.loraLibrary'), icon: Layers },
+    { to: '/datasets', label: t('sidebar.datasets'), icon: Database },
+    { to: '/keys', label: t('sidebar.keys'), icon: KeyRound },
+    // Admin-only control-plane user management + audit trail.
+    ...(isAdmin.value
+      ? [
+          { to: '/operators', label: t('sidebar.operators'), icon: Users },
+          { to: '/audit', label: t('sidebar.audit'), icon: ScrollText },
+        ]
+      : []),
+    { to: '/usage', label: t('sidebar.usage'), icon: BookOpen },
+    { to: '/resources', label: t('sidebar.resources'), icon: Cpu },
+    { to: '/activity', label: t('sidebar.activity'), icon: Activity },
+  ]
+  return items
+})
 </script>
 
 <template>

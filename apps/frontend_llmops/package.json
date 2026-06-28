@@ -17,6 +17,8 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@dicebear/collection": "^9.4.2",
+    "@dicebear/core": "^9.4.2",
     "@lucide/vue": "^1.18.0",
     "@tailwindcss/vite": "^4.3.1",
     "@types/dompurify": "^3.0.5",

@@ -205,3 +205,56 @@ async def test_usage_summary_since_filter(store):
                                latency_ms=10.0, ts=2000.0)
     recent = {r["model_key"]: r for r in await store.usage_summary(since=1500.0)}
     assert recent["Qwen"]["count"] == 1
+
+
+# -- Operators -------------------------------------------------------------
+
+async def test_operator_crud_and_lookup(store):
+    oid = await store.create_operator("alice", "hash-a", "sk-op-aaaa…zzzz", "admin")
+    assert await store.count_active_operators() == 1
+
+    op = await store.get_active_operator_by_hash("hash-a")
+    assert op["label"] == "alice" and op["role"] == "admin" and op["id"] == oid
+
+    listed = await store.list_operators()
+    assert len(listed) == 1 and "token_hash" not in listed[0]
+
+    assert await store.revoke_operator(oid) is True
+    assert await store.revoke_operator(oid) is False          # already revoked
+    assert await store.get_active_operator_by_hash("hash-a") is None
+    assert await store.count_active_operators() == 0
+
+
+async def test_operator_touch_updates_last_used(store):
+    oid = await store.create_operator("bob", "hash-b", "sk-op-bbbb…zzzz", "operator")
+    await store.touch_operator(oid, ts=1234.0)
+    assert (await store.list_operators())[0]["last_used_at"] == 1234.0
+
+
+# -- Audit log -------------------------------------------------------------
+
+async def test_audit_record_and_filter(store):
+    await store.record_audit("alice", "POST", "/api/models/Q/start", 202,
+                             role="operator", target="Q", ts=1000.0)
+    await store.record_audit("bob", "PUT", "/api/models/Q/autoscale", 200,
+                             role="admin", target="Q", ts=2000.0)
+    await store.record_audit("alice", "DELETE", "/api/keys/3", 204,
+                             role="admin", target="3", ts=3000.0)
+
+    assert len(await store.list_audit()) == 3
+    assert [r["actor"] for r in await store.list_audit()] == ["alice", "bob", "alice"]  # newest first
+    assert len(await store.list_audit(actor="alice")) == 2
+    assert len(await store.list_audit(action="autoscale")) == 1
+    assert len(await store.list_audit(target="Q")) == 2
+    assert len(await store.list_audit(since=2500.0)) == 1
+    assert len(await store.list_audit(until=1500.0)) == 1
+
+
+async def test_audit_prune_keeps_newest(store):
+    for i in range(10):
+        await store.record_audit("a", "POST", f"/api/x/{i}", 200, ts=float(i))
+    deleted = await store.prune_audit(max_rows=4)
+    assert deleted == 6
+    remaining = await store.list_audit(limit=100)
+    assert len(remaining) == 4
+    assert {r["path"] for r in remaining} == {"/api/x/9", "/api/x/8", "/api/x/7", "/api/x/6"}

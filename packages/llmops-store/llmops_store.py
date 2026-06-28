@@ -106,6 +106,33 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     finished_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_eval_runs_created ON eval_runs(created_at);
+
+CREATE TABLE IF NOT EXISTS operators (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    label        TEXT    NOT NULL,            -- display name + DiceBear avatar seed
+    token_hash   TEXT    NOT NULL UNIQUE,     -- SHA-256 only; plaintext shown once
+    prefix       TEXT    NOT NULL,            -- display prefix sk-op-xxxx…last4
+    role         TEXT    NOT NULL,            -- viewer | operator | admin
+    created_at   REAL    NOT NULL,
+    last_used_at REAL,
+    revoked      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_operators_hash ON operators(token_hash);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    actor       TEXT    NOT NULL,      -- operator label / 'admin' / 'local-dev'
+    role        TEXT,                  -- viewer | operator | admin
+    method      TEXT    NOT NULL,      -- POST/PUT/DELETE/PATCH
+    path        TEXT    NOT NULL,      -- /api/models/Qwen3-0.6B/autoscale
+    target      TEXT,                  -- subject extracted from the path
+    status      INTEGER NOT NULL,      -- response HTTP status code
+    detail      TEXT,                  -- redacted request summary (JSON)
+    source_ip   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
 """
 
 # Columns added after the original schema shipped; applied on init() for DBs
@@ -272,6 +299,121 @@ class LLMOpsStore:
         )
         row = await cur.fetchone()
         return int(row["used"] or 0)
+
+    # ---- Operators (control-plane users) ---------------------------------
+
+    async def create_operator(
+        self, label: str, token_hash: str, prefix: str, role: str,
+        ts: Optional[float] = None,
+    ) -> int:
+        import time
+
+        cur = await self._db.execute(
+            "INSERT INTO operators (label, token_hash, prefix, role, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (label, token_hash, prefix, role, ts or time.time()),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def list_operators(self) -> list[dict]:
+        """All operators, newest first — never returns the hash."""
+        cur = await self._db.execute(
+            "SELECT id, label, prefix, role, created_at, last_used_at, revoked "
+            "FROM operators ORDER BY id DESC"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def count_active_operators(self) -> int:
+        """Number of non-revoked operators (0 => fall back to env admin token)."""
+        cur = await self._db.execute(
+            "SELECT COUNT(*) AS n FROM operators WHERE revoked = 0"
+        )
+        row = await cur.fetchone()
+        return int(row["n"] or 0)
+
+    async def get_active_operator_by_hash(self, token_hash: str) -> Optional[dict]:
+        """Look up a non-revoked operator by token hash (for authentication)."""
+        cur = await self._db.execute(
+            "SELECT id, label, prefix, role, revoked FROM operators WHERE token_hash = ?",
+            (token_hash,),
+        )
+        row = await cur.fetchone()
+        if row is None or row["revoked"]:
+            return None
+        return dict(row)
+
+    async def touch_operator(self, operator_id: int, ts: Optional[float] = None) -> None:
+        import time
+
+        await self._db.execute(
+            "UPDATE operators SET last_used_at = ? WHERE id = ?",
+            (ts or time.time(), operator_id),
+        )
+        await self._db.commit()
+
+    async def revoke_operator(self, operator_id: int) -> bool:
+        cur = await self._db.execute(
+            "UPDATE operators SET revoked = 1 WHERE id = ? AND revoked = 0", (operator_id,)
+        )
+        await self._db.commit()
+        return cur.rowcount > 0
+
+    # ---- Audit log (control-plane mutations) -----------------------------
+
+    async def record_audit(
+        self, actor: str, method: str, path: str, status: int,
+        role: Optional[str] = None, target: Optional[str] = None,
+        detail: Optional[str] = None, source_ip: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> None:
+        import time
+
+        await self._db.execute(
+            "INSERT INTO audit_log (ts, actor, role, method, path, target, status, detail, source_ip) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts or time.time(), actor, role, method, path, target, status, detail, source_ip),
+        )
+        await self._db.commit()
+
+    async def list_audit(
+        self, actor: Optional[str] = None, action: Optional[str] = None,
+        target: Optional[str] = None, since: Optional[float] = None,
+        until: Optional[float] = None, limit: int = 200,
+    ) -> list[dict]:
+        """Audit entries, newest first, with optional filters. ``action`` matches
+        the path substring (e.g. 'autoscale'); ``actor``/``target`` are exact."""
+        where: list[str] = []
+        params: list = []
+        if actor is not None:
+            where.append("actor = ?"); params.append(actor)
+        if action is not None:
+            where.append("path LIKE ?"); params.append(f"%{action}%")
+        if target is not None:
+            where.append("target = ?"); params.append(target)
+        if since is not None:
+            where.append("ts >= ?"); params.append(since)
+        if until is not None:
+            where.append("ts <= ?"); params.append(until)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        params.append(max(1, min(limit, 1000)))
+        cur = await self._db.execute(
+            f"SELECT id, ts, actor, role, method, path, target, status, detail, source_ip "
+            f"FROM audit_log{clause} ORDER BY id DESC LIMIT ?",
+            tuple(params),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def prune_audit(self, max_rows: int = 50_000) -> int:
+        """Cap the audit table to its most recent ``max_rows`` rows. Returns the
+        number deleted."""
+        cur = await self._db.execute(
+            "DELETE FROM audit_log WHERE id NOT IN "
+            "(SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
+            (max_rows,),
+        )
+        await self._db.commit()
+        return cur.rowcount
 
     # -- Perf runs (load tests) --------------------------------------------
 
