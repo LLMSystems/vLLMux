@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import alerts as alert_routes
 from app.api import auth as auth_routes
 from app.api import config as config_routes
+from app.api import cost as cost_routes
 from app.api import datasets as dataset_routes
 from app.api import downloads as download_routes
 from app.api import embedding as embedding_routes
@@ -26,6 +27,7 @@ from app.api import eval as eval_routes
 from app.api import lora as lora_routes
 from app.api import metrics as metrics_routes
 from app.api import models as model_routes
+from app.api import sso as sso_routes
 from app.api import perf as perf_routes
 from app.api import observability as observability_routes
 from app.api import system as system_routes
@@ -217,7 +219,9 @@ def create_app() -> FastAPI:
     app.include_router(config_routes.router, prefix="/api")
     app.include_router(observability_routes.router, prefix="/api")
     app.include_router(auth_routes.router, prefix="/api")
+    app.include_router(sso_routes.router, prefix="/api")
     app.include_router(alert_routes.router, prefix="/api")
+    app.include_router(cost_routes.router, prefix="/api")
     app.include_router(download_routes.router, prefix="/api")
     app.include_router(lora_routes.router, prefix="/api")
     app.include_router(dataset_routes.router, prefix="/api")

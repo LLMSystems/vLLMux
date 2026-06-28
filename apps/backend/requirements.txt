@@ -6,6 +6,9 @@ httpx
 psutil
 aiosqlite
 huggingface_hub
+# SSO/OIDC: sign+verify session cookies (HS256) and validate IdP id_tokens
+# (RS256 via JWKS). [crypto] pulls `cryptography` for RSA signature verification.
+pyjwt[crypto]
 # [perf] = load-test deps (aiohttp/jinja2/numpy/transformers…); [ifeval] = langdetect+nltk
 # for the IFEval accuracy benchmark. Targeted extras only — NOT [all] (that pulls
 # multi-GB opencompass/vlmeval backends we don't use).

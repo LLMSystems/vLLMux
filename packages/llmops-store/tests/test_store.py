@@ -286,3 +286,29 @@ async def test_config_version_prune_keeps_newest(store):
     deleted = await store.prune_config_versions(max_rows=3)
     assert deleted == 5
     assert [r["sha256"] for r in await store.list_config_versions()] == ["h7", "h6", "h5"]
+
+
+async def test_model_price_upsert_and_delete(store):
+    await store.set_model_price("Qwen", 1.5, 4.0, "USD", ts=1.0)
+    rows = await store.list_model_prices()
+    assert rows == [{"model": "Qwen", "input_price": 1.5, "output_price": 4.0,
+                     "currency": "USD", "updated_at": 1.0}]
+    # Upsert overwrites in place (still one row).
+    await store.set_model_price("Qwen", 2.0, 5.0, "EUR", ts=2.0)
+    rows = await store.list_model_prices()
+    assert len(rows) == 1 and rows[0]["input_price"] == 2.0 and rows[0]["currency"] == "EUR"
+    assert await store.delete_model_price("Qwen") is True
+    assert await store.delete_model_price("Qwen") is False
+
+
+async def test_token_usage_by_model_and_key(store):
+    for name, mk, pt, ct in [("k1", "A", 100, 50), ("k1", "A", 200, 60), ("k2", "B", 10, 5)]:
+        await store.record_request(model_key=mk, instance_id="i", path="/v1/chat/completions",
+                                   status_code=200, latency_ms=1.0, prompt_tokens=pt,
+                                   completion_tokens=ct, total_tokens=pt + ct, api_key_name=name)
+    by_model = {r["model_key"]: r for r in await store.token_usage_by_model()}
+    assert by_model["A"]["requests"] == 2
+    assert by_model["A"]["prompt_tokens"] == 300 and by_model["A"]["completion_tokens"] == 110
+    by_key = await store.token_usage_by_key()
+    k1a = next(r for r in by_key if r["name"] == "k1" and r["model_key"] == "A")
+    assert k1a["prompt_tokens"] == 300 and k1a["requests"] == 2

@@ -224,6 +224,56 @@ class FakeStore:
         self.alert_sinks = [s for s in self.alert_sinks if s["id"] != sink_id]
         return len(self.alert_sinks) < before
 
+    # -- Model prices + cost aggregates --
+    def __init_prices(self):
+        if not hasattr(self, "prices"):
+            self.prices = {}
+
+    async def set_model_price(self, model, input_price, output_price, currency="USD", ts=None):
+        self.__init_prices()
+        self.prices[model] = {"model": model, "input_price": input_price,
+                              "output_price": output_price, "currency": currency,
+                              "updated_at": ts or 0.0}
+
+    async def list_model_prices(self):
+        self.__init_prices()
+        return [dict(p) for p in sorted(self.prices.values(), key=lambda r: r["model"])]
+
+    async def delete_model_price(self, model):
+        self.__init_prices()
+        return self.prices.pop(model, None) is not None
+
+    def _ts_ok(self, r, since, until):
+        ts = r.get("ts") or 0.0
+        return (since is None or ts >= since) and (until is None or ts <= until)
+
+    async def token_usage_by_model(self, since=None, until=None):
+        agg: dict = {}
+        for r in self.reqs:
+            if not self._ts_ok(r, since, until):
+                continue
+            m = agg.setdefault(r.get("model_key"), {"model_key": r.get("model_key"),
+                "requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+            m["requests"] += 1
+            m["prompt_tokens"] += r.get("prompt_tokens") or 0
+            m["completion_tokens"] += r.get("completion_tokens") or 0
+            m["total_tokens"] += r.get("total_tokens") or 0
+        return sorted(agg.values(), key=lambda r: r["total_tokens"], reverse=True)
+
+    async def token_usage_by_key(self, since=None, until=None):
+        agg: dict = {}
+        for r in self.reqs:
+            if not r.get("api_key_name") or not self._ts_ok(r, since, until):
+                continue
+            k = (r["api_key_name"], r.get("model_key"))
+            m = agg.setdefault(k, {"name": r["api_key_name"], "model_key": r.get("model_key"),
+                "requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+            m["requests"] += 1
+            m["prompt_tokens"] += r.get("prompt_tokens") or 0
+            m["completion_tokens"] += r.get("completion_tokens") or 0
+            m["total_tokens"] += r.get("total_tokens") or 0
+        return list(agg.values())
+
     # -- Config versions --
     def __init_cv(self):
         if not hasattr(self, "config_versions"):

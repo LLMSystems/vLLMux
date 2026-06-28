@@ -25,6 +25,20 @@ def _env_bool(name: str, default: bool) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_csv(name: str) -> tuple[str, ...]:
+    """Parse a comma-separated env var into a tuple of trimmed, non-empty items."""
+    raw = os.environ.get(name, "")
+    return tuple(s.strip() for s in raw.split(",") if s.strip())
+
+
+# Fallback session-signing key when neither LLMOPS_SESSION_SECRET nor the admin
+# token is set. Process-local + random, so SSO sessions don't survive a restart
+# (dev-only convenience; production must set LLMOPS_SESSION_SECRET).
+import secrets as _secrets  # noqa: E402
+
+_RANDOM_SECRET = _secrets.token_urlsafe(32)
+
+
 @dataclass(frozen=True)
 class BackendSettings:
     # How often the reconciler derives observed state from process + health.
@@ -45,6 +59,11 @@ class BackendSettings:
     audit_max_rows: int = 50_000
     # Cap on retained overlay-config version snapshots; oldest pruned hourly past this.
     config_versions_max: int = 500
+    # Default per-1M-token prices for models without an explicit price row, and the
+    # dashboard's display currency. 0 -> cost shows as 0 until a price is set.
+    default_input_price: float = 0.0
+    default_output_price: float = 0.0
+    price_currency: str = "USD"
     # Pre-flight VRAM check before starting a model (blocks likely-OOM starts).
     vram_guard: bool = True
     # Auto-restart a managed model that crashes while desired=running.
@@ -74,10 +93,40 @@ class BackendSettings:
     # this; the rest queue. Maps to vLLM's max-num-seqs pressure. Runtime-editable
     # via the eval API (not persisted across restart).
     eval_concurrency_budget: int = 32
+    # ---- SSO / OIDC (all optional; empty issuer -> SSO disabled) ----
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_url: str = ""  # empty -> derived from the request host
+    oidc_scopes: str = "openid email profile"
+    oidc_groups_claim: str = "groups"
+    oidc_admin_emails: tuple[str, ...] = ()
+    oidc_admin_groups: tuple[str, ...] = ()
+    oidc_operator_groups: tuple[str, ...] = ()
+    oidc_viewer_groups: tuple[str, ...] = ()
+    oidc_default_role: str = "viewer"  # role for an authenticated user matching no group; "" = deny
+    # Session cookie signing key + lifetime. Empty secret -> derived from
+    # admin_token, else a random per-process key (dev only; set it in prod).
+    session_secret: str = ""
+    session_ttl: int = 28_800  # 8h
 
     @property
     def auth_enabled(self) -> bool:
         return bool(self.admin_token)
+
+    @property
+    def sso_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
+
+    @property
+    def signing_secret(self) -> str:
+        """Key for session/state cookies: explicit, else admin_token, else random
+        (random means a restart invalidates sessions — fine for dev, not prod)."""
+        if self.session_secret:
+            return self.session_secret
+        if self.admin_token:
+            return "sess:" + self.admin_token
+        return _RANDOM_SECRET
 
     @classmethod
     def from_env(cls) -> "BackendSettings":
@@ -97,6 +146,23 @@ class BackendSettings:
             autoscale_interval=_env_float("LLMOPS_AUTOSCALE_INTERVAL", 5.0),
             db_path=os.environ.get("LLMOPS_DB_PATH"),
             config_versions_max=int(_env_float("LLMOPS_CONFIG_VERSIONS_MAX", 500)),
+            oidc_issuer=os.environ.get("LLMOPS_OIDC_ISSUER", "").strip().rstrip("/"),
+            oidc_client_id=os.environ.get("LLMOPS_OIDC_CLIENT_ID", "").strip(),
+            oidc_client_secret=os.environ.get("LLMOPS_OIDC_CLIENT_SECRET", "").strip(),
+            oidc_redirect_url=os.environ.get("LLMOPS_OIDC_REDIRECT_URL", "").strip(),
+            oidc_scopes=os.environ.get("LLMOPS_OIDC_SCOPES", "openid email profile").strip()
+            or "openid email profile",
+            oidc_groups_claim=os.environ.get("LLMOPS_OIDC_GROUPS_CLAIM", "groups").strip() or "groups",
+            oidc_admin_emails=_env_csv("LLMOPS_OIDC_ADMIN_EMAILS"),
+            oidc_admin_groups=_env_csv("LLMOPS_OIDC_ADMIN_GROUPS"),
+            oidc_operator_groups=_env_csv("LLMOPS_OIDC_OPERATOR_GROUPS"),
+            oidc_viewer_groups=_env_csv("LLMOPS_OIDC_VIEWER_GROUPS"),
+            oidc_default_role=os.environ.get("LLMOPS_OIDC_DEFAULT_ROLE", "viewer").strip(),
+            session_secret=os.environ.get("LLMOPS_SESSION_SECRET", "").strip(),
+            session_ttl=int(_env_float("LLMOPS_SESSION_TTL", 28_800)),
+            default_input_price=_env_float("LLMOPS_DEFAULT_INPUT_PRICE", 0.0),
+            default_output_price=_env_float("LLMOPS_DEFAULT_OUTPUT_PRICE", 0.0),
+            price_currency=os.environ.get("LLMOPS_PRICE_CURRENCY", "USD").strip() or "USD",
             vram_guard=_env_bool("LLMOPS_VRAM_GUARD", True),
             auto_restart=_env_bool("LLMOPS_AUTO_RESTART", True),
             max_restarts=int(_env_float("LLMOPS_MAX_RESTARTS", 3)),

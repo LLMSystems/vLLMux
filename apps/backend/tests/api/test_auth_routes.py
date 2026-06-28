@@ -9,11 +9,11 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def test_auth_status_disabled_by_default(client):
-    assert client.get("/api/auth/status").json() == {"auth_enabled": False}
+    assert client.get("/api/auth/status").json() == {"auth_enabled": False, "sso_enabled": False}
 
 
 def test_auth_status_enabled_when_token_set(auth_client):
-    assert auth_client.get("/api/auth/status").json() == {"auth_enabled": True}
+    assert auth_client.get("/api/auth/status").json() == {"auth_enabled": True, "sso_enabled": False}
 
 
 def test_writes_open_when_auth_disabled(client):

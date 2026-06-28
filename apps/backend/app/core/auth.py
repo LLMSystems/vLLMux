@@ -75,10 +75,11 @@ async def resolve_actor(request: Request) -> tuple[str | None, Role | None]:
 
     1. auth disabled (no env admin token) **and** no operators created yet →
        open local-dev: ("local-dev", ADMIN).
-    2. token matches a non-revoked operator → (label, its role).
-    3. token equals the env admin token → ("admin", ADMIN) — the permanent
+    2. a valid SSO session cookie → (email/name, its mapped role).
+    3. token matches a non-revoked operator → (label, its role).
+    4. token equals the env admin token → ("admin", ADMIN) — the permanent
        rescue/bootstrap backdoor.
-    4. otherwise → (None, None); the caller raises 401.
+    5. otherwise → (None, None); the caller raises 401.
     """
     settings = request.app.state.settings
     store = getattr(request.app.state, "store", None)
@@ -86,11 +87,23 @@ async def resolve_actor(request: Request) -> tuple[str | None, Role | None]:
 
     n_ops = await store.count_active_operators() if store is not None else 0
 
-    # 1. Frictionless local dev: nothing configured at all.
-    if not settings.auth_enabled and n_ops == 0:
+    # 1. Frictionless local dev: nothing configured at all (no admin token, no SSO,
+    #    no operators). Configuring SSO closes this open backdoor.
+    if not settings.auth_enabled and not settings.sso_enabled and n_ops == 0:
         return "local-dev", Role.ADMIN
 
-    # 2. A named operator credential.
+    # 2. An SSO session cookie (humans log in via the IdP; machines use tokens).
+    if settings.sso_enabled:
+        from app.core.oidc import SESSION_COOKIE, read_session
+
+        sess = read_session(request.cookies.get(SESSION_COOKIE), settings)
+        if sess and sess.get("role"):
+            try:
+                return sess.get("email") or sess.get("name") or sess["sub"], Role(sess["role"])
+            except (ValueError, KeyError):
+                pass  # malformed cookie -> fall through to token auth
+
+    # 3. A named operator credential.
     if token and store is not None:
         op = await store.get_active_operator_by_hash(hash_key(token))
         if op:
@@ -100,11 +113,11 @@ async def resolve_actor(request: Request) -> tuple[str | None, Role | None]:
             except ValueError:  # unknown role string in DB → treat as lowest
                 return op["label"], Role.VIEWER
 
-    # 3. The env admin token (always admin; works even with operators present).
+    # 4. The env admin token (always admin; works even with operators present).
     if token and settings.admin_token and secrets.compare_digest(token, settings.admin_token):
         return "admin", Role.ADMIN
 
-    # 4. No valid credential.
+    # 5. No valid credential.
     return None, None
 
 

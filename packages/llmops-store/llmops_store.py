@@ -142,6 +142,14 @@ CREATE TABLE IF NOT EXISTS alert_sinks (
     created_at   REAL    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS model_prices (
+    model         TEXT    PRIMARY KEY,       -- route/group name (request_logs.model_key)
+    input_price   REAL    NOT NULL,          -- price per 1M prompt tokens
+    output_price  REAL    NOT NULL,          -- price per 1M completion tokens
+    currency      TEXT    NOT NULL DEFAULT 'USD',
+    updated_at    REAL    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS config_versions (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     ts        REAL    NOT NULL,
@@ -478,6 +486,89 @@ class LLMOpsStore:
         cur = await self._db.execute("DELETE FROM alert_sinks WHERE id = ?", (sink_id,))
         await self._db.commit()
         return cur.rowcount > 0
+
+    # ---- Model prices + cost aggregates ----------------------------------
+
+    async def set_model_price(
+        self, model: str, input_price: float, output_price: float,
+        currency: str = "USD", ts: Optional[float] = None,
+    ) -> None:
+        """Upsert the per-1M-token price for a model (route/group name)."""
+        import time
+
+        await self._db.execute(
+            "INSERT INTO model_prices (model, input_price, output_price, currency, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(model) DO UPDATE SET input_price=excluded.input_price, "
+            "output_price=excluded.output_price, currency=excluded.currency, "
+            "updated_at=excluded.updated_at",
+            (model, input_price, output_price, currency, ts or time.time()),
+        )
+        await self._db.commit()
+
+    async def list_model_prices(self) -> list[dict]:
+        cur = await self._db.execute(
+            "SELECT model, input_price, output_price, currency, updated_at "
+            "FROM model_prices ORDER BY model"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def delete_model_price(self, model: str) -> bool:
+        cur = await self._db.execute("DELETE FROM model_prices WHERE model = ?", (model,))
+        await self._db.commit()
+        return cur.rowcount > 0
+
+    async def token_usage_by_model(
+        self, since: Optional[float] = None, until: Optional[float] = None
+    ) -> list[dict]:
+        """Per-model prompt/completion/total token sums + request count, for costing."""
+        where, params = self._ts_window(since, until)
+        cur = await self._db.execute(
+            f"""
+            SELECT model_key,
+                   COUNT(*)                              AS requests,
+                   COALESCE(SUM(prompt_tokens), 0)       AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0)   AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0)        AS total_tokens
+            FROM request_logs {where}
+            GROUP BY model_key ORDER BY total_tokens DESC
+            """,
+            params,
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def token_usage_by_key(
+        self, since: Optional[float] = None, until: Optional[float] = None
+    ) -> list[dict]:
+        """Per-API-key prompt/completion/total token sums + request count.
+
+        Cost needs each key's split across models (different prices), so this
+        returns one row per (key, model)."""
+        base, params = self._ts_window(since, until)
+        where = (base + " AND " if base else "WHERE ") + "api_key_name IS NOT NULL"
+        cur = await self._db.execute(
+            f"""
+            SELECT api_key_name AS name, model_key,
+                   COUNT(*)                              AS requests,
+                   COALESCE(SUM(prompt_tokens), 0)       AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0)   AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0)        AS total_tokens
+            FROM request_logs {where}
+            GROUP BY api_key_name, model_key
+            """,
+            params,
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    @staticmethod
+    def _ts_window(since: Optional[float], until: Optional[float]) -> tuple[str, tuple]:
+        clauses, params = [], []
+        if since is not None:
+            clauses.append("ts >= ?"); params.append(since)
+        if until is not None:
+            clauses.append("ts <= ?"); params.append(until)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, tuple(params)
 
     # ---- Config versions (overlay snapshots) -----------------------------
 

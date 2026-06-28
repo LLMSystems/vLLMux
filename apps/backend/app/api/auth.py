@@ -45,8 +45,9 @@ class CreateKeyRequest(BaseModel):
 
 @router.get("/auth/status")
 async def auth_status(request: Request):
-    """Public: lets the UI decide whether to prompt for the admin token."""
-    return {"auth_enabled": request.app.state.settings.auth_enabled}
+    """Public: lets the UI decide whether to prompt for a token / offer SSO."""
+    settings = request.app.state.settings
+    return {"auth_enabled": settings.auth_enabled, "sso_enabled": settings.sso_enabled}
 
 
 @router.post("/auth/verify", dependencies=[Depends(require_admin)])
