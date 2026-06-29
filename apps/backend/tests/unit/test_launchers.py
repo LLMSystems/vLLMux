@@ -132,6 +132,28 @@ def test_sleep_mode_sets_dev_mode_env_and_flag():
     assert "--enable-sleep-mode" in spec.command  # emitted by the CLI arg builder
 
 
+def _host_arg(cmd):
+    return cmd[cmd.index("--host") + 1]
+
+
+def test_vllm_binds_configured_host_by_default():
+    spec = VllmLauncher().build_spec(FAKE_CONFIG, "config.yaml", "Qwen3-0.6B::qwen3")
+    # Default: bind the configured host (localhost); probe + record match it.
+    assert _host_arg(spec.command) == spec.host == "localhost"
+    assert spec.probe_url == "http://localhost:8002/health"
+
+
+def test_vllm_bind_host_env_overrides_only_the_bind_address(monkeypatch):
+    # HA split deploys: LLMOPS_VLLM_BIND_HOST binds vLLM to a routable interface
+    # (--host), but the probe + recorded host (what the local backend uses) stay
+    # the configured localhost — routers reach it via the advertised NODE_HOST.
+    monkeypatch.setenv("LLMOPS_VLLM_BIND_HOST", "0.0.0.0")
+    spec = VllmLauncher().build_spec(FAKE_CONFIG, "config.yaml", "Qwen3-0.6B::qwen3")
+    assert _host_arg(spec.command) == "0.0.0.0"      # vLLM listens on all interfaces
+    assert spec.host == "localhost"                  # record unchanged
+    assert spec.probe_url == "http://localhost:8002/health"  # local probe unchanged
+
+
 def test_no_sleep_mode_by_default():
     spec = VllmLauncher().build_spec(FAKE_CONFIG, "config.yaml", "Qwen3-0.6B::qwen3")
     assert spec.sleep_enabled is False

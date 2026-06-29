@@ -190,7 +190,16 @@ class VllmLauncher:
         if sleep_enabled:
             env["VLLM_SERVER_DEV_MODE"] = "1"
 
-        command = ["vllm"] + build_vllm_cli_args(merged)
+        # HA split deploys: optionally bind vLLM to a routable interface (e.g.
+        # 0.0.0.0) so a router/node-agent in another netns or host can reach it.
+        # Only the `--host` *bind* address changes; routers connect via the
+        # advertised LLMOPS_NODE_HOST (see reconciler / instances_live), and the
+        # local health probe + record keep the configured host (localhost), which a
+        # 0.0.0.0 bind also serves. Empty (default) = bind the configured host =
+        # today's localhost-only behaviour, byte-for-byte unchanged.
+        bind_host = os.environ.get("LLMOPS_VLLM_BIND_HOST", "").strip()
+        cli_cfg = {**merged, "host": bind_host} if bind_host else merged
+        command = ["vllm"] + build_vllm_cli_args(cli_cfg)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
         return LaunchSpec(
             key=key,
