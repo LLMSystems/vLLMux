@@ -204,7 +204,9 @@ StatefulSet(或外部 DSN)、Service/Ingress,附 `values-collapsed` / `values-sp
 
 **唯一還沒做的**:真・多節點 inference —— 需要**真實的多 GPU 主機**才測得起來、才有意義(單機 GPU-less
 副本起不了模型),且 backend 多副本目前是「控制平面 HA(leader + 暖備接管)」而非「並行 GPU 工作節點」
-(每個 backend pod 各跑自己那份 fleet 需要 per-node actuation,屬未來工作)。
+(每個 backend pod 各跑自己那份 fleet 需要 per-node actuation)。**完整設計藍圖**見
+[ha-per-node-actuation-design_zh-CN.md](ha-per-node-actuation-design_zh-CN.md)(collapsed-first 分階段、
+各元件改法、失敗情境;等有實體多機環境再實作)。
 
 換言之:**控制平面 HA(狀態外移、leader、雙副本讀寫、跨節點排程、router 水平擴、vLLM 可路由綁定、
 k8s 打包)全部完成且驗過**;只差「真多 GPU 主機 + per-node actuation」這層 —— 那要有實體多機環境才推進。
