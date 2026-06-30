@@ -866,6 +866,8 @@ export default {
     editTitle: 'Edit Model',
     pasteCommand: 'Paste vLLM launch command',
     parseCommand: 'Parse command',
+    or: 'or',
+    manualEntry: 'Manual entry',
     parseFailed: 'Failed to parse command',
     groupLabel: 'Group',
     groupExists: 'Group already exists — will add as a new replica.',

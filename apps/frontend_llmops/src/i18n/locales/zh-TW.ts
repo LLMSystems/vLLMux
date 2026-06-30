@@ -845,6 +845,8 @@ export default {
     editTitle: '編輯模型',
     pasteCommand: '貼上 vLLM 啟動指令',
     parseCommand: '解析指令',
+    or: '或',
+    manualEntry: '手動填寫',
     parseFailed: '無法解析指令',
     groupLabel: '群組',
     groupExists: '已存在群組 — 將新增為新副本。',

@@ -526,10 +526,18 @@ async function submit() {
           placeholder="CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85"
           class="mt-1 min-h-[80px] font-mono text-xs"
         />
-        <Button class="mt-2" size="sm" :disabled="!command.trim() || parsing" @click="parse">
-          <Loader2 v-if="parsing" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />
-          {{ $t('addModel.parseCommand') }}
-        </Button>
+        <div class="mt-2 flex items-center gap-2">
+          <Button size="sm" :disabled="!command.trim() || parsing" @click="parse">
+            <Loader2 v-if="parsing" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />
+            {{ $t('addModel.parseCommand') }}
+          </Button>
+          <span class="text-xs text-muted-foreground">{{ $t('addModel.or') }}</span>
+          <!-- Jump straight to the form (no vLLM command to paste) — needed to add a
+               SGLang / non-vLLM model, where you pick the engine in the form. -->
+          <Button size="sm" variant="outline" @click="parsed = true">
+            {{ $t('addModel.manualEntry') }}
+          </Button>
+        </div>
       </div>
 
       <!-- Editable preview -->
