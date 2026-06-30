@@ -104,9 +104,16 @@
 |---|---|---|---|---|
 | **A** 把 reconcile 的「desired→observed 收斂(start/stop/sleep/wake)」抽成一個函式 | 邏輯就位,仍 leader 跑、行為不變 | ✅ | 中 | ✅ 已完成 |
 | **B** un-leader-gate reconcile(每 node 跑)、ownership-scoped | follower 開始收斂自己擁有的(單機沒有 follower → 不變) | ✅ | 中高(改執行模型) | ✅ 已完成 |
-| **C** API/autoscaler 改寫 desired/assignment(非同步收斂)+ 保留軟預檢 | 寫入與執行解耦 | ✅(owning=self) | 高(API 時序/預檢語意) | ⬜ |
-| **D** scheduler 加 node 拒絕回饋 + 重指派 | 放置自我修正 | — | 中 | ⬜ |
-| **E** 真多 GPU 主機 live 驗:並行起模型、node failover 接管 | 真並行多節點 | — | 需實體多機 | ⬜ |
+| **C** API/autoscaler 改寫 desired/assignment(非同步收斂)+ 保留軟預檢 | 寫入與執行解耦 | ✅(owning=self) | 高(API 時序/預檢語意) | ✅ 已完成 |
+| **D** scheduler 加 node 拒絕回饋 + 重指派 | 放置自我修正 | — | 中 | ⬜（剩這個) |
+| **E** 真多 GPU 主機 live 驗:並行起模型、node failover 接管 | 真並行多節點 | — | 需實體多機 | ✅ 單機驗完(真多卡加速需實體機) |
+
+> **C 已完成 + engine-aware 排程 + overlay 同步**(commit `c29b231`/`ec72ba0`):`manager.start/stop/sleep/wake`
+> 在「本 node 跑不了該引擎」時改成寫 desired(不本機 spawn),由 engine-matching 的 node 收斂;node 用
+> `LLMOPS_NODE_ENGINES` 宣告引擎,scheduler 依此 placement;dashboard 動態加的模型透過 `sync_overlay_from_store`
+> 傳播到每個 node。**單機混合 fleet(vLLM+SGLang 各一容器)live 驗證全鏈通過**(見
+> [mixed-engine-deployment](mixed-engine-deployment_zh-CN.md))。**只剩 D**(本機預檢失敗→標記拒絕→換 node,
+> 僅在「同引擎多 node」才有意義)。
 
 > **A+B 已完成**([reconciler.py](../apps/backend/app/llmops/reconciler.py) `converge_desired` +
 > [main.py](../apps/backend/app/main.py) 迴圈拆分):reconcile/actuation + gpu-poll 移到 lifespan(每 node 跑);
