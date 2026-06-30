@@ -137,6 +137,11 @@ class BackendSettings:
     # node registry so the scheduler places each model on an engine-matching node.
     # Empty/unset = unspecified => runs any engine (collapsed single host: unchanged).
     node_engines: list[str] = field(default_factory=list)
+    # HA Phase 7: this node's own backend API base URL (e.g. http://node-host:5000),
+    # advertised in the node registry so a dashboard served by another node can proxy
+    # node-local requests (model logs / startup metrics) to the node that owns the
+    # model. Empty = not advertised (cross-node log/metrics fall back to a local read).
+    node_api_url: str = ""
 
     # HA Phase 3b: node-agent heartbeat. node_id reuses instance_id (the same id
     # used for the leader lease and live-address node_id). The agent re-registers
@@ -206,6 +211,7 @@ class BackendSettings:
             node_engines=[
                 e.strip() for e in os.environ.get("LLMOPS_NODE_ENGINES", "").split(",") if e.strip()
             ],
+            node_api_url=os.environ.get("LLMOPS_NODE_API_URL", "").strip().rstrip("/"),
             live_ttl=_env_float("LLMOPS_LIVE_TTL", 30.0),
             node_heartbeat_interval=_env_float("LLMOPS_NODE_HEARTBEAT_INTERVAL", 10.0),
             node_ttl=_env_float("LLMOPS_NODE_TTL", 30.0),

@@ -65,6 +65,7 @@ class NodeAgent:
         await self.store.upsert_node(
             self.node_id, self.hostname, self._capacity(),
             ttl=self.settings.node_ttl, engines=self._engines(),
+            api_url=self.settings.node_api_url or None,
         )
         # Housekeeping so a vanished peer's row doesn't linger past its lease.
         if hasattr(self.store, "prune_nodes"):

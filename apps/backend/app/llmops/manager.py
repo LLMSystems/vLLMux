@@ -256,6 +256,25 @@ class ModelManager:
                 alive = set()
         return {k for k, n in amap.items() if n != me and n in alive}
 
+    async def owning_node_api_url(self, key: str) -> Optional[str]:
+        """The backend API base URL of the node that owns `key`, when that node is a
+        *different*, alive node advertising an api_url — so node-local requests (logs,
+        startup metrics) can be proxied to it. None when the model is local / owner
+        unknown / no api_url advertised (caller then reads locally). Best-effort."""
+        if self.store is None or not hasattr(self.store, "list_assignments"):
+            return None
+        try:
+            owner = (await self.store.list_assignments()).get(key)
+            if owner is None or owner == self.settings.instance_id:
+                return None
+            for n in await self.store.list_nodes():
+                if n["node_id"] == owner:
+                    url = n.get("api_url")
+                    return url.rstrip("/") if url else None
+        except Exception:
+            logger.debug("owning_node_api_url failed for %s", key, exc_info=True)
+        return None
+
     async def replay_desired(self) -> None:
         """On boot (after adopt_running): start instances whose persisted desired is
         RUNNING but which are currently STOPPED/FAILED — so a backend restart (or a

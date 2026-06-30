@@ -9,8 +9,10 @@ import asyncio
 import json
 from typing import Optional
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.deps import get_manager
 from app.api.schemas import ModelView
@@ -62,10 +64,35 @@ async def requests_log(request: Request, model_key: Optional[str] = None, limit:
     return await _store(request).recent_requests(model_key=model_key, limit=limit)
 
 
+async def _proxy_to_owner(request: Request, manager, key: str, suffix: str):
+    """If `key` runs on another node (HA), GET that node's backend API for this
+    node-local data (logs/metrics live as files on the owning node) and relay the
+    JSON. Returns None when the model is local (caller reads locally)."""
+    api_url = await manager.owning_node_api_url(key)
+    if not api_url:
+        return None
+    url = f"{api_url}/api/models/{quote(key, safe='')}/{suffix}"
+    headers = {}
+    auth = request.headers.get("authorization")
+    if auth:
+        headers["authorization"] = auth
+    try:
+        resp = await request.app.state.http_client.get(
+            url, params=dict(request.query_params), headers=headers, timeout=10.0
+        )
+    except Exception:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"failed to reach owning node for {key}")
+    return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
 @router.get("/models/{key}/logs")
 async def model_logs(
-    key: str, tail: int = 200, manager: ModelManager = Depends(get_manager)
+    request: Request, key: str, tail: int = 200, manager: ModelManager = Depends(get_manager)
 ):
+    proxied = await _proxy_to_owner(request, manager, key, "logs")
+    if proxied is not None:
+        return proxied
     try:
         inst = await manager.get(key)
     except ModelNotFound:
@@ -77,11 +104,14 @@ async def model_logs(
 
 
 @router.get("/models/{key}/metrics")
-async def model_metrics(key: str, manager: ModelManager = Depends(get_manager)):
-    """vLLM startup capacity/memory/compile metrics parsed from the engine log.
+async def model_metrics(request: Request, key: str, manager: ModelManager = Depends(get_manager)):
+    """vLLM/SGLang startup capacity/memory/compile metrics parsed from the engine log.
 
     Only meaningful once the instance is READY (the metrics are printed at the end
     of model loading); returns {ready: false} otherwise so the UI hides the panel."""
+    proxied = await _proxy_to_owner(request, manager, key, "metrics")
+    if proxied is not None:
+        return proxied
     try:
         inst = await manager.get(key)
     except ModelNotFound:

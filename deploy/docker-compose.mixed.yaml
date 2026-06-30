@@ -43,6 +43,7 @@ services:
       - LLMOPS_INSTANCE_ID=vllm-node
       - LLMOPS_NODE_HOST=mixed-vllm-backend
       - LLMOPS_NODE_ENGINES=vllm
+      - LLMOPS_NODE_API_URL=http://mixed-vllm-backend:5000
       - LLMOPS_VLLM_BIND_HOST=0.0.0.0
       - LLMOPS_ROUTER_URL=http://router:8887
       - HF_HOME=/hf
@@ -74,6 +75,7 @@ services:
       - LLMOPS_INSTANCE_ID=sglang-node
       - LLMOPS_NODE_HOST=mixed-sglang-backend
       - LLMOPS_NODE_ENGINES=sglang
+      - LLMOPS_NODE_API_URL=http://mixed-sglang-backend:5000
       - LLMOPS_VLLM_BIND_HOST=0.0.0.0
       - LLMOPS_ROUTER_URL=http://router:8887
       - HF_HOME=/hf

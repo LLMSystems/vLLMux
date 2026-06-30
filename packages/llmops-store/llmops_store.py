@@ -211,6 +211,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     capacity    TEXT,                     -- JSON: GPU inventory (index/name/mem)
     engines     TEXT,                     -- JSON list of engines this node can run
                                           -- (NULL = unspecified => runs any engine)
+    api_url     TEXT,                     -- this node's backend API base URL, for
+                                          -- proxying node-local requests (logs/metrics)
     expires_at  REAL    NOT NULL          -- epoch; lapsed => node considered down
 );
 
@@ -246,6 +248,7 @@ _MIGRATIONS = [
     ("api_keys", "token_quota", "INTEGER"),
     ("api_keys", "quota_period", "TEXT"),
     ("nodes", "engines", "TEXT"),  # HA Phase 7: engines a node can run (mixed-engine fleets)
+    ("nodes", "api_url", "TEXT"),  # HA Phase 7: node backend API URL (log/metric proxy)
 ]
 
 
@@ -869,19 +872,22 @@ class LLMOpsStore:
     async def upsert_node(
         self, node_id: str, hostname: Optional[str], capacity: Optional[str],
         ttl: float, ts: Optional[float] = None, engines: Optional[str] = None,
+        api_url: Optional[str] = None,
     ) -> None:
         """Register/refresh a node-agent's heartbeat + capacity (JSON). `engines` is
-        a JSON list of the engines this node can run (NULL = any)."""
+        a JSON list of the engines this node can run (NULL = any); `api_url` is the
+        node's backend API base URL for proxying node-local requests."""
         import time
 
         now = ts if ts is not None else time.time()
         await self._db.execute(
-            "INSERT INTO nodes (node_id, hostname, capacity, engines, expires_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO nodes (node_id, hostname, capacity, engines, api_url, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(node_id) DO UPDATE SET "
             "hostname = excluded.hostname, capacity = excluded.capacity, "
-            "engines = excluded.engines, expires_at = excluded.expires_at",
-            (node_id, hostname, capacity, engines, now + ttl),
+            "engines = excluded.engines, api_url = excluded.api_url, "
+            "expires_at = excluded.expires_at",
+            (node_id, hostname, capacity, engines, api_url, now + ttl),
         )
         await self._db.commit()
 
@@ -891,12 +897,14 @@ class LLMOpsStore:
 
         now = ts if ts is not None else time.time()
         cur = await self._db.execute(
-            "SELECT node_id, hostname, capacity, engines, expires_at FROM nodes WHERE expires_at > ?",
+            "SELECT node_id, hostname, capacity, engines, api_url, expires_at "
+            "FROM nodes WHERE expires_at > ?",
             (now,),
         )
         return [
             {"node_id": r["node_id"], "hostname": r["hostname"],
-             "capacity": r["capacity"], "engines": r["engines"], "expires_at": r["expires_at"]}
+             "capacity": r["capacity"], "engines": r["engines"],
+             "api_url": r["api_url"], "expires_at": r["expires_at"]}
             for r in await cur.fetchall()
         ]
 

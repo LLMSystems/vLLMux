@@ -16,9 +16,10 @@ class FakeNodeStore:
         self.nodes = {}
         self.pruned = 0
 
-    async def upsert_node(self, node_id, hostname, capacity, ttl, ts=None, engines=None):
+    async def upsert_node(self, node_id, hostname, capacity, ttl, ts=None, engines=None,
+                          api_url=None):
         self.nodes[node_id] = {"hostname": hostname, "capacity": capacity, "ttl": ttl,
-                               "engines": engines}
+                               "engines": engines, "api_url": api_url}
 
     async def prune_nodes(self, ts=None):
         self.pruned += 1

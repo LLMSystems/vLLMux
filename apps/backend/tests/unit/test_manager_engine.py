@@ -269,3 +269,41 @@ async def test_node_can_run_respects_advertised(tmp_path):
     mgr, _ = _mgr_node_engines(tmp_path, ["vllm"])
     assert mgr._node_can_run("vllm") is True
     assert mgr._node_can_run("sglang") is False
+
+
+# ---- HA Phase 7: owning-node API URL (for log/metric proxy) ------------------
+
+class _AssignNodeStore:
+    db_url = "postgresql://x"  # marks HA mode
+    def __init__(self, assignments, nodes):
+        self._a = assignments
+        self._n = nodes
+    async def list_assignments(self): return dict(self._a)
+    async def list_nodes(self): return list(self._n)
+    async def list_instance_observed(self): return []
+
+
+async def test_owning_node_api_url_for_foreign_model(tmp_path):
+    store = _AssignNodeStore(
+        {"S::a": "sglang-node"},
+        [{"node_id": "sglang-node", "api_url": "http://sglang-backend:5000"}],
+    )
+    cfg = tmp_path / "c.yaml"; cfg.write_text("server:\n  port: 8887\nLLM_engines: {}\n")
+    mgr = ModelManager(build_registry(load_config(str(cfg)), str(cfg), [VllmLauncher()]),
+                       [VllmLauncher()], None, load_config(str(cfg)), str(cfg),
+                       BackendSettings(instance_id="vllm-node"), store=store,
+                       overlay_path=str(tmp_path/"o.json"))
+    assert await mgr.owning_node_api_url("S::a") == "http://sglang-backend:5000"
+
+
+async def test_owning_node_api_url_none_when_local(tmp_path):
+    store = _AssignNodeStore(
+        {"S::a": "vllm-node"},  # owned by us
+        [{"node_id": "vllm-node", "api_url": "http://vllm-backend:5000"}],
+    )
+    cfg = tmp_path / "c.yaml"; cfg.write_text("server:\n  port: 8887\nLLM_engines: {}\n")
+    mgr = ModelManager(build_registry(load_config(str(cfg)), str(cfg), [VllmLauncher()]),
+                       [VllmLauncher()], None, load_config(str(cfg)), str(cfg),
+                       BackendSettings(instance_id="vllm-node"), store=store,
+                       overlay_path=str(tmp_path/"o.json"))
+    assert await mgr.owning_node_api_url("S::a") is None  # local -> read locally
