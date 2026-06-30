@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from app.llmops.launchers import (CAP_SLEEP, EMBEDDING_KEY, ENGINE_DEFAULT,
-                                  EmbeddingLauncher, SglangLauncher, VllmLauncher,
-                                  _write_effective_config, build_sglang_cli_args,
-                                  build_vllm_cli_args)
+from app.llmops.launchers import (CAP_LORA_MODULES, CAP_RUNTIME_LORA, CAP_SLEEP,
+                                  EMBEDDING_KEY, ENGINE_DEFAULT, EmbeddingLauncher,
+                                  SglangLauncher, VllmLauncher, _write_effective_config,
+                                  build_sglang_cli_args, build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from schema import RootConfig
 from tests.conftest import FAKE_CONFIG
@@ -371,10 +371,40 @@ def test_sglang_launcher_claims_only_sglang_engine():
     assert VllmLauncher().keys(_sglang_config()) == []  # vLLM doesn't claim sglang group
 
 
-def test_sglang_launcher_capabilities_no_sleep():
-    # First cut: no capabilities advertised (sleep absent in SGLang; LoRA/metrics deferred).
-    assert SglangLauncher().capabilities == frozenset()
-    assert CAP_SLEEP not in SglangLauncher().capabilities
+def test_sglang_launcher_capabilities():
+    # Runtime + static LoRA are wired; sleep is absent in SGLang (degrades), and
+    # metrics need a parser so CAP_METRICS_* is not advertised yet.
+    caps = SglangLauncher().capabilities
+    assert CAP_RUNTIME_LORA in caps and CAP_LORA_MODULES in caps
+    assert CAP_SLEEP not in caps
+
+
+def test_sglang_args_lora_enable_and_paths():
+    # enable_lora -> --enable-lora; static lora_modules -> SGLang NAME=PATH form.
+    args = build_sglang_cli_args({
+        "model_tag": "org/m", "enable_lora": True,
+        "lora_modules": [{"name": "sql", "path": "/lora/sql"},
+                         {"name": "math", "path": "/lora/math"}],
+        "max_lora_rank": 16,
+    })
+    assert "--enable-lora" in args
+    i = args.index("--lora-paths")
+    assert args[i + 1] == "sql=/lora/sql" and args[i + 2] == "math=/lora/math"
+    assert args[args.index("--max-lora-rank") + 1] == "16"   # other lora knobs pass through
+    assert "--lora-modules" not in args                       # not vLLM's JSON form
+
+
+def test_sglang_args_runtime_lora_toggle_enables_lora():
+    # Our runtime toggle (allow_runtime_lora) must turn on --enable-lora so SGLang
+    # accepts POST /load_lora_adapter, even with no static modules.
+    args = build_sglang_cli_args({"model_tag": "org/m", "allow_runtime_lora": True})
+    assert "--enable-lora" in args
+    assert "--allow-runtime-lora" not in args                 # the toggle is not a flag
+
+
+def test_sglang_args_no_lora_by_default():
+    args = build_sglang_cli_args({"model_tag": "org/m"})
+    assert "--enable-lora" not in args and "--lora-paths" not in args
 
 
 def test_sglang_build_spec():

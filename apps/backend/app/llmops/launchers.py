@@ -302,9 +302,11 @@ _SGLANG_PARAM_MAP = {
     "tensor_parallel_size": "tp-size",
 }
 # Keys consumed specially (model_tag/served_model_name handled up front; id is the
-# key; cuda_device becomes CUDA_VISIBLE_DEVICES) plus the router-only knobs.
+# key; cuda_device becomes CUDA_VISIBLE_DEVICES; enable_lora/lora_modules drive the
+# LoRA flags below; allow_runtime_lora is an enable_lora trigger) + router-only knobs.
 _SGLANG_SKIP_CLI_KEYS = frozenset(
-    {"model_tag", "served_model_name", "id", "cuda_device", _LORA_RUNTIME_KEY}
+    {"model_tag", "served_model_name", "id", "cuda_device",
+     "enable_lora", "lora_modules", _LORA_RUNTIME_KEY}
 ) | _ROUTER_ONLY_KEYS
 
 
@@ -327,6 +329,22 @@ def build_sglang_cli_args(model_cfg: dict) -> list[str]:
     served = model_cfg.get("served_model_name") or model_tag
 
     args = ["--model-path", str(model_tag), "--served-model-name", str(served)]
+
+    # LoRA: SGLang needs --enable-lora at launch to accept either static adapters
+    # (--lora-paths NAME=PATH …) or runtime ones (POST /load_lora_adapter). Turn it
+    # on if any LoRA usage is configured (static modules, enable_lora, or our runtime
+    # toggle). Static modules use SGLang's NAME=PATH form (not vLLM's --lora-modules
+    # JSON). Other LoRA knobs (max_lora_rank, lora_target_modules, …) pass through
+    # below as plain kebab-cased flags.
+    lora_modules = model_cfg.get("lora_modules") or []
+    if model_cfg.get("enable_lora") or model_cfg.get(_LORA_RUNTIME_KEY) or lora_modules:
+        args.append("--enable-lora")
+        paths = [f"{m['name']}={m['path']}" for m in lora_modules
+                 if m.get("name") and m.get("path")]
+        if paths:
+            args.append("--lora-paths")
+            args.extend(paths)
+
     for key, value in model_cfg.items():
         if key in _SGLANG_SKIP_CLI_KEYS or value is None:
             continue
@@ -350,14 +368,13 @@ def build_sglang_cli_args(model_cfg: dict) -> list[str]:
 class SglangLauncher:
     kind = ModelKind.LLM
     engine = "sglang"
-    # First cut covers launch + route + lifecycle. SGLang *does* have runtime LoRA
-    # (POST /load_lora_adapter — note: no /v1 prefix, unlike vLLM) and sglang:* Prometheus
-    # metrics, but both need extra wiring (a per-engine LoRA endpoint path + a
-    # sglang metrics parser) — declared in a follow-up so we never advertise a
-    # capability that isn't end-to-end wired. No sleep (SGLang has no /sleep+/wake_up;
-    # `--sleep-on-idle` only lowers CPU, doesn't free VRAM) -> autoscaler degrades to
-    # ready<->stopped. See docs/multi-backend-engine-design_zh-CN.md §5.2.
-    capabilities = frozenset()
+    # Runtime + static LoRA are wired (--enable-lora / --lora-paths at launch;
+    # POST /load_lora_adapter — no /v1 prefix, unlike vLLM — for hot load/unload).
+    # No sleep (SGLang has no /sleep+/wake_up; `--sleep-on-idle` only lowers CPU,
+    # doesn't free VRAM) -> autoscaler degrades to ready<->stopped. sglang:* metrics
+    # exist but need a parser, so CAP_METRICS_* is left for a follow-up.
+    # See docs/multi-backend-engine-design_zh-CN.md §5.2.
+    capabilities = frozenset({CAP_RUNTIME_LORA, CAP_LORA_MODULES})
 
     def keys(self, config) -> list[str]:
         out: list[str] = []

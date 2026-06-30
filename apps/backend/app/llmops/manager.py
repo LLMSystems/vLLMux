@@ -736,8 +736,11 @@ class ModelManager:
         ]
 
     async def _post_lora(self, inst: ModelInstance, action: str, payload: dict) -> None:
-        """POST /v1/{load,unload}_lora_adapter to one instance; raise on failure."""
-        url = f"http://{inst.host}:{inst.port}/v1/{action}_lora_adapter"
+        """POST {load,unload}_lora_adapter to one instance; raise on failure. The
+        path differs by engine: vLLM serves /v1/<action>_lora_adapter, SGLang serves
+        /<action>_lora_adapter (no /v1). The JSON body is the same for both."""
+        prefix = "" if getattr(inst, "engine", "vllm") == "sglang" else "/v1"
+        url = f"http://{inst.host}:{inst.port}{prefix}/{action}_lora_adapter"
         resp = await self.http_client.post(url, json=payload, timeout=120.0)
         if resp.status_code >= 400:
             try:

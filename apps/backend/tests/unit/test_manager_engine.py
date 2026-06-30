@@ -176,3 +176,35 @@ async def test_create_overlay_model_rejects_unregistered_engine(tmp_path):
             "Brand", {"id": "z", "host": "localhost", "port": 8040},
             {"model_tag": "org/brand", "engine": "trtllm"},
         )
+
+
+# ---- per-engine runtime LoRA endpoint path ----------------------------------
+
+def _inst(engine: str, port: int):
+    from app.llmops.instance import LaunchSpec, ModelInstance
+    spec = LaunchSpec(key=f"G::a", kind=ModelKind.LLM, engine=engine, capabilities=frozenset(),
+                      command=[], env={}, log_path="x", host="localhost", port=port,
+                      probe_url=f"http://localhost:{port}/health")
+    return ModelInstance(key="G::a", kind=ModelKind.LLM, engine=engine, host="localhost",
+                         port=port, spec=spec)
+
+
+async def test_post_lora_endpoint_path_per_engine(tmp_path):
+    from tests.conftest import FakeHTTPClient
+    client = FakeHTTPClient()
+    mgr = ModelManager(build_registry(load_config(_write_min_cfg(tmp_path)), str(tmp_path/'c.yaml'),
+                                      [VllmLauncher()]),
+                       [VllmLauncher()], client, load_config(_write_min_cfg(tmp_path)),
+                       str(tmp_path/'c.yaml'), BackendSettings(), store=None,
+                       overlay_path=str(tmp_path/'o.json'))
+    await mgr._post_lora(_inst("vllm", 8002), "load", {"lora_name": "x", "lora_path": "/p"})
+    await mgr._post_lora(_inst("sglang", 8100), "load", {"lora_name": "x", "lora_path": "/p"})
+    urls = [u for u, _ in client.posts]
+    assert urls[0] == "http://localhost:8002/v1/load_lora_adapter"   # vLLM: /v1 prefix
+    assert urls[1] == "http://localhost:8100/load_lora_adapter"      # SGLang: no /v1
+
+
+def _write_min_cfg(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("server:\n  port: 8887\nLLM_engines: {}\n", encoding="utf-8")
+    return str(p)
