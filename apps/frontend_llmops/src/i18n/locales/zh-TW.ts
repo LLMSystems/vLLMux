@@ -203,6 +203,7 @@ export default {
     vllmCapacity: 'vLLM 容量',
     vllmPerf: 'vLLM 效能',
     vllmQuery: 'vLLM 請求',
+    sglang: 'SGLang',
     gpu: 'GPU',
     host: '主機',
     openGrafana: '在 Grafana 開啟',

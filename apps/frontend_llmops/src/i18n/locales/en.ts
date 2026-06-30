@@ -211,6 +211,7 @@ export default {
     vllmCapacity: 'vLLM Capacity',
     vllmPerf: 'vLLM Performance',
     vllmQuery: 'vLLM Queries',
+    sglang: 'SGLang',
     gpu: 'GPU',
     host: 'Host',
     openGrafana: 'Open in Grafana',
