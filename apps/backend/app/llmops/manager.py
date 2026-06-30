@@ -1054,6 +1054,42 @@ class ModelManager:
         logger.info("Imported overlay: %s", summary_keys)
         return summary_keys
 
+    async def sync_overlay_from_store(self) -> bool:
+        """HA Phase 7: pull the fleet's current overlay from the shared store and
+        align this node's registry to it, so a model added/edited on *any* replica
+        appears here too (and an engine-matching node can then actuate it). No-op
+        outside Postgres mode (SQLite's file is already the single shared truth) and
+        when nothing changed. Best-effort: never raises. Returns True if it resynced.
+
+        Only the registry alignment for *non-running-here* keys matters in practice:
+        a follower adds the new STOPPED instance, then converge_desired starts it if
+        it's assigned here. resync_registry refuses to change a key running locally,
+        which is the safe behaviour (the owning node edits its own)."""
+        if self.store is None or getattr(self.store, "db_url", None) is None:
+            return False
+        from app.services.overlay import (build_merged_config,
+                                          hydrate_overlay_from_store, load_overlay)
+        try:
+            changed = await hydrate_overlay_from_store(self.store, self.overlay_path)
+            if not changed:
+                return False
+            new_config = build_merged_config(self.config_path, load_overlay(self.overlay_path))
+        except Exception:
+            logger.debug("sync_overlay_from_store: hydrate/merge failed", exc_info=True)
+            return False
+        async with self.registry.lock:
+            try:
+                summary = self.resync_registry(new_config)
+            except Exception:
+                logger.debug("sync_overlay_from_store: resync failed", exc_info=True)
+                return False
+            self.config = new_config
+        if any(summary.values()):
+            logger.info("Synced overlay from store: %s", summary)
+            await self.trigger_router_reload()
+            return True
+        return False
+
     async def stop_all(self) -> None:
         """Best-effort shutdown of every managed process (used at app shutdown)."""
         for inst in self.registry.values():

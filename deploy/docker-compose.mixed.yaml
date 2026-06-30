@@ -1,0 +1,137 @@
+# Mixed-engine HA deployment: a vLLM backend + a SGLang backend share one Postgres,
+# one router and one dashboard. Each backend runs only its engine's image and
+# advertises it (LLMOPS_NODE_ENGINES); the leader's engine-aware scheduler places
+# each model on a matching node, and a control action that lands on the wrong node
+# is deferred to the owning one (HA Phase 7). The router reaches both backends over
+# the network via the addresses they publish to instances_live (Phase 3a).
+#
+#   make up-mixed   /   make down-mixed
+#
+# Add a SGLang model from the dashboard (Add Model -> Engine: sglang) or config; it
+# is auto-placed on the SGLang backend. Needs deploy/.env (admin token, secrets).
+name: vllmux-mixed
+services:
+  postgres:
+    image: postgres:16
+    container_name: mixed-postgres
+    environment:
+      - POSTGRES_USER=llmops
+      - POSTGRES_PASSWORD=llmops
+      - POSTGRES_DB=llmops
+    volumes:
+      - mixed-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmops"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  vllm-backend:
+    build: { context: .., dockerfile: deploy/engine.Dockerfile }
+    image: llmops-engine:latest
+    container_name: mixed-vllm-backend
+    working_dir: /app/apps/backend
+    command: uvicorn main:app --host 0.0.0.0 --port 5000
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - LLMOPS_DB_PATH=/app/data/llmops.db
+      - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      - LLMOPS_INSTANCE_ID=vllm-node
+      - LLMOPS_NODE_HOST=mixed-vllm-backend
+      - LLMOPS_NODE_ENGINES=vllm
+      - LLMOPS_VLLM_BIND_HOST=0.0.0.0
+      - LLMOPS_ROUTER_URL=http://router:8887
+      - HF_HOME=/hf
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+      - mixed-vllm-data:/app/data
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+    ports: ["${MIXED_VLLM_PORT:-5071}:5000"]
+    ipc: host
+    shm_size: "16gb"
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
+  sglang-backend:
+    build: { context: .., dockerfile: deploy/engine-sglang.Dockerfile }
+    image: llmops-engine-sglang:latest
+    container_name: mixed-sglang-backend
+    working_dir: /app/apps/backend
+    command: uvicorn main:app --host 0.0.0.0 --port 5000
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - LLMOPS_DB_PATH=/app/data/llmops.db
+      - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      - LLMOPS_INSTANCE_ID=sglang-node
+      - LLMOPS_NODE_HOST=mixed-sglang-backend
+      - LLMOPS_NODE_ENGINES=sglang
+      - LLMOPS_VLLM_BIND_HOST=0.0.0.0
+      - LLMOPS_ROUTER_URL=http://router:8887
+      - HF_HOME=/hf
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+      - mixed-sglang-data:/app/data
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+    ports: ["${MIXED_SGLANG_PORT:-5072}:5000"]
+    ipc: host
+    shm_size: "16gb"
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
+  router:
+    image: llmops-engine:latest
+    container_name: mixed-router
+    depends_on: [vllm-backend]
+    working_dir: /app/apps/router-server
+    command: gunicorn src.llm_router.main:app -c configs/gunicorn.conf.py
+    env_file: .env
+    environment:
+      - CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - PYTHONPATH=/app/apps/router-server
+      - ROUTER_WORKERS=${ROUTER_WORKERS:-1}
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+    ports: ["${ROUTER_PORT:-8887}:8887"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: mixed-grafana
+    environment:
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - mixed-grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  frontend:
+    build: { context: .., dockerfile: deploy/frontend.Dockerfile }
+    image: llmops-frontend:latest
+    container_name: mixed-frontend
+    depends_on: [vllm-backend, router, grafana]
+    # Mixed topology: the router is its own service, so override the baked nginx.
+    volumes:
+      - ./nginx.mixed.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["${FRONTEND_PORT:-8884}:80"]
+    restart: unless-stopped
+
+volumes:
+  mixed-pg-data:
+  mixed-vllm-data:
+  mixed-sglang-data:
+  mixed-grafana-data:

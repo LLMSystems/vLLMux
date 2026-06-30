@@ -94,6 +94,18 @@ async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
         await asyncio.sleep(interval)
 
 
+async def _overlay_sync_loop(manager, interval: float = 5.0) -> None:
+    """HA Phase 7: per-node loop pulling the fleet's shared overlay from the store so
+    a model added/edited on any replica appears in this node's registry too (then an
+    engine-matching node can actuate it). No-op outside Postgres/HA mode."""
+    while True:
+        try:
+            await manager.sync_overlay_from_store()
+        except Exception:
+            logger.exception("overlay sync pass failed")
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = get_config_path()
@@ -240,6 +252,7 @@ async def lifespan(app: FastAPI):
             reconcile_loop(registry, http_client, settings, store, manager, notifier)
         ),
         asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
+        asyncio.create_task(_overlay_sync_loop(manager)),
     ]
 
     try:
