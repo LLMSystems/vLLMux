@@ -109,12 +109,18 @@ services:
     image: grafana/grafana:11.1.0
     container_name: mixed-grafana
     environment:
-      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana
+      # Same as the main compose — root_url carries the external port and
+      # ALLOW_EMBEDDING lets the dashboard embed Grafana in an iframe (without it,
+      # Grafana sends X-Frame-Options: deny and the Monitoring tab shows a blocked
+      # placeholder).
+      - GF_SERVER_ROOT_URL=http://localhost:${FRONTEND_PORT:-8884}/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      # The alerting provisioning (contactpoints.yaml) needs this; a harmless
-      # default so Grafana provisions cleanly (override to a real webhook if wanted).
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_USERS_DEFAULT_THEME=dark
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Alerting provisioning (contactpoints.yaml) needs this; harmless default.
       - GRAFANA_ALERT_WEBHOOK=${GRAFANA_ALERT_WEBHOOK:-http://example.invalid/replace-me}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
