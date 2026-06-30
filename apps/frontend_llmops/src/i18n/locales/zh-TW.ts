@@ -204,6 +204,8 @@ export default {
     vllmPerf: 'vLLM 效能',
     vllmQuery: 'vLLM 請求',
     sglang: 'SGLang',
+    sglangDashboard: '儀表板',
+    shared: '共用',
     gpu: 'GPU',
     host: '主機',
     openGrafana: '在 Grafana 開啟',

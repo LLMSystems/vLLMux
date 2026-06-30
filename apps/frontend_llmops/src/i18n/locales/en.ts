@@ -212,6 +212,8 @@ export default {
     vllmPerf: 'vLLM Performance',
     vllmQuery: 'vLLM Queries',
     sglang: 'SGLang',
+    sglangDashboard: 'Dashboard',
+    shared: 'Shared',
     gpu: 'GPU',
     host: 'Host',
     openGrafana: 'Open in Grafana',
