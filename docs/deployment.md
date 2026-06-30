@@ -15,6 +15,23 @@ make up                              # docker compose -f deploy/docker-compose.y
 
 `make down` stops it, `make logs` tails all services, `make ps` shows status.
 
+## Deployment modes
+
+There are two stacks, both started from the same `deploy/.env`:
+
+| Mode | Command | Compose file | What you get |
+|---|---|---|---|
+| **vLLM-only** (default) | `make up` / `make down` | [`docker-compose.yaml`](../deploy/docker-compose.yaml) | The full single-engine stack documented on this page. |
+| **Mixed (vLLM + SGLang)** | `make up-mixed` / `make down-mixed` | [`docker-compose.mixed.yaml`](../deploy/docker-compose.mixed.yaml) | A vLLM backend **and** a SGLang backend sharing one Postgres, router, dashboard and Grafana. Add a SGLang model from *Add Model → engine: `sglang`*; an engine-aware scheduler auto-places it on the SGLang backend. |
+
+The mixed stack runs each engine as its own backend image (vLLM and SGLang pin
+incompatible torch/CUDA stacks, so they can't share one image), advertises its engine
+via `LLMOPS_NODE_ENGINES`, and lets the leader's scheduler place each model on a node
+that can run it. Full design, ports, and the metric-naming caveat (SGLang serves
+OpenMetrics, so Prometheus stores `sglang_*` with underscores) are in
+[mixed-engine-deployment.md](mixed-engine-deployment.md). The rest of this page
+describes the default vLLM-only stack.
+
 ## Services
 
 See [`deploy/docker-compose.yaml`](../deploy/docker-compose.yaml).

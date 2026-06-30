@@ -5,6 +5,71 @@
 > 不在對的 node 上的控制動作會被「延後」給擁有者執行(HA Phase 7C)。**單機就能跑**(兩個容器共享一張卡)。
 > 已 live 驗證:從 dashboard 新增一個 SGLang 模型 → 自動跑到 SGLang backend → 經同一個 router 路由。
 
+## 兩種啟動方式的架構
+
+**純 vLLM（`make up`）** — backend、router、Prometheus 共用一個 network namespace，
+被拉起的 vLLM 子進程在 `localhost:800x` 即可被 router 與 Prometheus 連到：
+
+```mermaid
+flowchart LR
+    Client([Clients])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    VLLM["<b>vLLM 實例</b><br/>:800x"]
+
+    subgraph netns["共用 network namespace"]
+        BE["<b>backend</b> · :5000"]
+        RT["<b>router</b> · :8887"]
+        PR["<b>prometheus</b> · :9090"]
+    end
+
+    Client --> FE
+    FE -->|/api| BE
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BE -->|按需拉起| VLLM
+    RT -->|路由 + 平衡| VLLM
+    PR -->|抓 /metrics| VLLM
+    GF -->|查詢| PR
+```
+
+**vLLM + SGLang 混合（`make up-mixed`）** — 兩個引擎各跑一個 backend 容器（無法共用 netns），
+共用一顆 Postgres（排程／desired 意圖）、一個 router、一個 dashboard 與一套監控；各 backend 把
+自己 ready 的實例以**可路由位址**寫進共享的 file_sd，Prometheus 一起抓：
+
+```mermaid
+flowchart LR
+    Client([Clients])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    PG[("<b>postgres</b><br/>共用 store · 排程/desired")]
+    PR["<b>prometheus</b> · :9090<br/>抓可路由 file_sd targets"]
+    RT["<b>router</b> · :8887<br/>OpenAI 相容負載平衡"]
+
+    subgraph vbe["vLLM backend (engine.Dockerfile)"]
+        BV["<b>backend</b> · :5071<br/>NODE_ENGINES=vllm"]
+        VINS["vLLM 實例"]
+    end
+    subgraph sbe["SGLang backend (engine-sglang.Dockerfile)"]
+        BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
+        SINS["SGLang 實例"]
+    end
+
+    Client --> FE
+    FE -->|/api| BV
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BV -->|拉起| VINS
+    BS -->|拉起| SINS
+    RT -->|路由| VINS
+    RT -->|路由| SINS
+    BV <-->|leader/排程| PG
+    BS <-->|收斂 desired| PG
+    PR -->|scrape| VINS
+    PR -->|scrape| SINS
+    GF -->|查詢| PR
+```
+
 ## 為什麼要分兩個 backend
 
 vLLM 和 SGLang 各自死釘不同的 torch/CUDA/flashinfer,塞同一個 image 會打架。launcher 是**在 backend 容器內

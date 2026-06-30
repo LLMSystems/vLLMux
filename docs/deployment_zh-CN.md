@@ -14,6 +14,22 @@ make up                              # docker compose -f deploy/docker-compose.y
 
 `make down` 停止、`make logs` 追蹤所有服務日誌、`make ps` 看狀態。
 
+## 兩種啟動方式
+
+共有兩套 stack，都讀同一份 `deploy/.env`：
+
+| 模式 | 指令 | Compose 檔 | 內容 |
+|---|---|---|---|
+| **純 vLLM**（預設） | `make up` / `make down` | [`docker-compose.yaml`](../deploy/docker-compose.yaml) | 本頁所述的完整單引擎 stack。 |
+| **混合（vLLM + SGLang）** | `make up-mixed` / `make down-mixed` | [`docker-compose.mixed.yaml`](../deploy/docker-compose.mixed.yaml) | 一個 vLLM backend **加上**一個 SGLang backend，共用同一顆 Postgres、router、控制台與 Grafana。從 *新增模型 → 引擎：`sglang`* 新增的模型，會由 engine-aware 排程器自動擺到 SGLang backend。 |
+
+混合 stack 把每個引擎跑成各自的 backend 映像（vLLM 與 SGLang 各自死釘不相容的
+torch/CUDA，無法塞同一份映像），各自以 `LLMOPS_NODE_ENGINES` 宣告自己的引擎，再由 leader
+的排程器把每顆模型擺到「跑得動它」的 node 上。完整設計、埠與指標命名注意事項（SGLang 走
+OpenMetrics，所以 Prometheus 入庫為底線的 `sglang_*`）見
+[mixed-engine-deployment_zh-CN.md](mixed-engine-deployment_zh-CN.md)。本頁其餘部分描述預設的
+純 vLLM stack。
+
 ## 服務
 
 見 [`deploy/docker-compose.yaml`](../deploy/docker-compose.yaml)。
