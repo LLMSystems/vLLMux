@@ -3,8 +3,9 @@ import json
 import pytest
 
 from app.llmops.launchers import (CAP_SLEEP, EMBEDDING_KEY, ENGINE_DEFAULT,
-                                  EmbeddingLauncher, VllmLauncher,
-                                  _write_effective_config, build_vllm_cli_args)
+                                  EmbeddingLauncher, SglangLauncher, VllmLauncher,
+                                  _write_effective_config, build_sglang_cli_args,
+                                  build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from schema import RootConfig
 from tests.conftest import FAKE_CONFIG
@@ -300,3 +301,91 @@ def test_engine_is_never_passed_to_vllm_cli():
     args = build_vllm_cli_args({"model_tag": "org/m", "engine": "vllm", "kind": "chat"})
     assert "--engine" not in args
     assert "--kind" not in args
+
+
+# ---- SGLang launcher (docs/multi-backend-engine-design_zh-CN.md §5.2) --------
+
+def _sglang_config(extra: dict | None = None) -> RootConfig:
+    mc = {"model_tag": "Qwen/Qwen3-0.6B", "engine": "sglang"}
+    if extra:
+        mc.update(extra)
+    return RootConfig.model_validate({
+        "server": {"host": "0.0.0.0", "port": 8887},
+        "LLM_engines": {"S": {
+            "instances": [{"id": "a", "host": "localhost", "port": 8100, "cuda_device": 2}],
+            "model_config": mc,
+        }},
+    })
+
+
+def test_sglang_args_model_path_and_served_name():
+    args = build_sglang_cli_args({"model_tag": "Qwen/Qwen3-0.6B"})
+    assert args[:2] == ["--model-path", "Qwen/Qwen3-0.6B"]
+    # served-model-name defaults to model_tag so /v1/models + forward_name are stable.
+    assert "--served-model-name" in args
+    assert args[args.index("--served-model-name") + 1] == "Qwen/Qwen3-0.6B"
+
+
+def test_sglang_args_translate_typed_params():
+    # The three common params have different SGLang flag names.
+    args = build_sglang_cli_args({
+        "model_tag": "org/m", "max_model_len": 4096,
+        "gpu_memory_utilization": 0.45, "tensor_parallel_size": 2,
+    })
+    assert args[args.index("--context-length") + 1] == "4096"
+    assert args[args.index("--mem-fraction-static") + 1] == "0.45"
+    assert args[args.index("--tp-size") + 1] == "2"
+    # vLLM names must NOT appear.
+    assert "--max-model-len" not in args
+    assert "--gpu-memory-utilization" not in args
+
+
+def test_sglang_args_bool_is_store_true_no_dual():
+    args = build_sglang_cli_args({
+        "model_tag": "org/m", "disable_radix_cache": True, "enable_metrics": False,
+    })
+    assert "--disable-radix-cache" in args          # True -> present
+    assert "--enable-metrics" not in args           # False -> omitted
+    assert "--no-enable-metrics" not in args        # never synthesise a --no- dual
+
+
+def test_sglang_args_skip_router_only_keys():
+    args = build_sglang_cli_args(
+        {"model_tag": "org/m", "engine": "sglang", "kind": "chat",
+         "routing_strategy": "session_affinity", "dtype": "bfloat16"})
+    assert "--engine" not in args and "--kind" not in args
+    assert "--routing-strategy" not in args
+    assert args[args.index("--dtype") + 1] == "bfloat16"   # real flags still pass through
+
+
+def test_sglang_args_explicit_served_name_wins():
+    args = build_sglang_cli_args({"model_tag": "org/m", "served_model_name": "my-name"})
+    assert args[args.index("--served-model-name") + 1] == "my-name"
+
+
+def test_sglang_launcher_claims_only_sglang_engine():
+    s = SglangLauncher()
+    assert s.kind == ModelKind.LLM and s.engine == "sglang"
+    assert s.keys(_sglang_config()) == ["S::a"]
+    assert s.keys(FAKE_CONFIG) == []                # FAKE_CONFIG is all vLLM
+    assert VllmLauncher().keys(_sglang_config()) == []  # vLLM doesn't claim sglang group
+
+
+def test_sglang_launcher_capabilities_no_sleep():
+    # First cut: no capabilities advertised (sleep absent in SGLang; LoRA/metrics deferred).
+    assert SglangLauncher().capabilities == frozenset()
+    assert CAP_SLEEP not in SglangLauncher().capabilities
+
+
+def test_sglang_build_spec():
+    spec = SglangLauncher().build_spec(_sglang_config({"max_model_len": 4096}), "config.yaml", "S::a")
+    assert spec.engine == "sglang"
+    assert spec.command[1:3] == ["-m", "sglang.launch_server"]
+    assert "--model-path" in spec.command
+    assert spec.command[spec.command.index("--context-length") + 1] == "4096"
+    # single-GPU cuda_device -> env, not a CLI flag; id dropped.
+    assert spec.env["CUDA_VISIBLE_DEVICES"] == "2"
+    assert "--cuda-device" not in spec.command and "--id" not in spec.command
+    assert spec.probe_url == "http://localhost:8100/health"
+    assert spec.host == "localhost" and spec.port == 8100
+    assert "--host" in spec.command and spec.command[spec.command.index("--host") + 1] == "localhost"

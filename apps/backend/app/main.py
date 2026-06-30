@@ -36,7 +36,7 @@ from app.core.leader import LeaderElector
 from app.core.logging import setup_logging
 from app.core.settings import BackendSettings
 from app.core.store import LLMOpsStore
-from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
+from app.llmops.launchers import EmbeddingLauncher, SglangLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
 from app.llmops.autoscaler import autoscaler_loop
 from app.llmops.scheduler import Scheduler
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     # Base config.yaml + dynamically-added models (overlay), merged into one view.
     config = build_merged_config(config_path)
 
-    launchers = [VllmLauncher(), EmbeddingLauncher()]
+    launchers = [VllmLauncher(), SglangLauncher(), EmbeddingLauncher()]
     registry = build_registry(config, config_path, launchers)
     # `or` (not get's default) so an env var set-but-empty (as the compose env
     # passes it) still falls back instead of yielding "" — an empty router_url

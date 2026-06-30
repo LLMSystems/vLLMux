@@ -289,3 +289,118 @@ class EmbeddingLauncher:
             port=emb.port,
             probe_url=f"http://{emb.host}:{emb.port}/health",
         )
+
+
+# ---- SGLang ---------------------------------------------------------------
+
+# Engine-neutral typed params (EngineModelConfig) -> SGLang flag names. These three
+# have different names from vLLM; everything else falls through as a kebab-cased
+# --<key> (engine-native passthrough via extra="allow"). See §2.3 of the design doc.
+_SGLANG_PARAM_MAP = {
+    "max_model_len": "context-length",
+    "gpu_memory_utilization": "mem-fraction-static",
+    "tensor_parallel_size": "tp-size",
+}
+# Keys consumed specially (model_tag/served_model_name handled up front; id is the
+# key; cuda_device becomes CUDA_VISIBLE_DEVICES) plus the router-only knobs.
+_SGLANG_SKIP_CLI_KEYS = frozenset(
+    {"model_tag", "served_model_name", "id", "cuda_device", _LORA_RUNTIME_KEY}
+) | _ROUTER_ONLY_KEYS
+
+
+def build_sglang_cli_args(model_cfg: dict) -> list[str]:
+    """dict -> ``python -m sglang.launch_server`` CLI args.
+
+    Unlike vLLM: the model is ``--model-path`` (not a positional), and we always
+    emit ``--served-model-name`` so ``/v1/models`` (and the router's forward_name)
+    is the stable ``model_tag`` rather than SGLang's default of the raw path.
+
+    Bools are SGLang's ``store_true``: a True value emits ``--flag``; a False value
+    is *omitted* — there is NO ``--no-flag`` dual (vLLM's BooleanOptionalAction),
+    and many SGLang flags are themselves negative (``--disable-radix-cache``), so we
+    must not synthesise ``--no-`` forms. The three common params above are
+    translated; the rest pass through kebab-cased.
+    """
+    model_tag = model_cfg.get("model_tag")
+    if not model_tag:
+        raise ValueError("model_config must provide 'model_tag'")
+    served = model_cfg.get("served_model_name") or model_tag
+
+    args = ["--model-path", str(model_tag), "--served-model-name", str(served)]
+    for key, value in model_cfg.items():
+        if key in _SGLANG_SKIP_CLI_KEYS or value is None:
+            continue
+        flag = "--" + _SGLANG_PARAM_MAP.get(key, key).replace("_", "-")
+        if isinstance(value, bool):
+            if value:                       # store_true: True -> present; False -> omit
+                args.append(flag)
+        elif isinstance(value, list):
+            # SGLang multi-value flags take space-separated values (e.g. --lora-paths).
+            args.append(flag)
+            args.extend(str(v) for v in value)
+        elif isinstance(value, dict):
+            args.append(flag)
+            args.append(json.dumps(value, ensure_ascii=False))
+        else:
+            args.append(flag)
+            args.append(str(value))
+    return args
+
+
+class SglangLauncher:
+    kind = ModelKind.LLM
+    engine = "sglang"
+    # First cut covers launch + route + lifecycle. SGLang *does* have runtime LoRA
+    # (POST /load_lora_adapter — note: no /v1 prefix, unlike vLLM) and sglang:* Prometheus
+    # metrics, but both need extra wiring (a per-engine LoRA endpoint path + a
+    # sglang metrics parser) — declared in a follow-up so we never advertise a
+    # capability that isn't end-to-end wired. No sleep (SGLang has no /sleep+/wake_up;
+    # `--sleep-on-idle` only lowers CPU, doesn't free VRAM) -> autoscaler degrades to
+    # ready<->stopped. See docs/multi-backend-engine-design_zh-CN.md §5.2.
+    capabilities = frozenset()
+
+    def keys(self, config) -> list[str]:
+        out: list[str] = []
+        for model_tag, engine in config.LLM_engines.items():
+            if getattr(engine.settings, "engine", "vllm") != self.engine:
+                continue
+            for inst in engine.instances:
+                out.append(f"{model_tag}::{inst.id}")
+        return out
+
+    def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
+        model_tag, _, instance_id = key.partition("::")
+        engine = config.LLM_engines.get(model_tag)
+        if engine is None:
+            raise KeyError(f"model group '{model_tag}' not in config")
+        inst = next((i for i in engine.instances if i.id == instance_id), None)
+        if inst is None:
+            raise KeyError(f"instance '{instance_id}' not in group '{model_tag}'")
+
+        # Merge shared model_config with instance overrides, mirroring VllmLauncher:
+        # single-GPU cuda_device -> CUDA_VISIBLE_DEVICES; the `id` field is dropped.
+        merged: dict = engine.settings.model_dump(by_alias=False)
+        merged.update(inst.model_dump())
+
+        env: dict[str, str] = {}
+        if merged.get("tensor_parallel_size", 1) == 1:
+            cuda_device = merged.pop("cuda_device", None)
+            if cuda_device is not None:
+                env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+        merged.pop("id", None)
+
+        command = [sys.executable, "-m", "sglang.launch_server"] + build_sglang_cli_args(merged)
+        log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
+        return LaunchSpec(
+            key=key,
+            kind=self.kind,
+            engine=self.engine,
+            capabilities=self.capabilities,
+            command=command,
+            env=env,
+            log_path=log_path,
+            host=inst.host,
+            port=inst.port,
+            probe_url=f"http://{inst.host}:{inst.port}/health",
+            model_tag=engine.settings.model_tag,
+        )
