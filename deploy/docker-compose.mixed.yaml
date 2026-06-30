@@ -46,12 +46,20 @@ services:
       - LLMOPS_NODE_API_URL=http://mixed-vllm-backend:5000
       - LLMOPS_VLLM_BIND_HOST=0.0.0.0
       - LLMOPS_ROUTER_URL=http://router:8887
+      - LLMOPS_PROMETHEUS_SD_PATH=/sd/targets-vllm.json
       - HF_HOME=/hf
+      - MODELSCOPE_CACHE=/modelscope/hub
+      - LLMOPS_LORA_DIR=/lora
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
     volumes:
       - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
       - mixed-vllm-data:/app/data
+      - mixed-sd:/sd                  # file_sd scrape targets (shared with Prometheus)
+      - mixed-kv-cache:/kv_cache
       - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
       - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+      - /etc/localtime:/etc/localtime:ro
     ports: ["${MIXED_VLLM_PORT:-5071}:5000"]
     ipc: host
     shm_size: "16gb"
@@ -78,12 +86,20 @@ services:
       - LLMOPS_NODE_API_URL=http://mixed-sglang-backend:5000
       - LLMOPS_VLLM_BIND_HOST=0.0.0.0
       - LLMOPS_ROUTER_URL=http://router:8887
+      - LLMOPS_PROMETHEUS_SD_PATH=/sd/targets-sglang.json
       - HF_HOME=/hf
+      - MODELSCOPE_CACHE=/modelscope/hub
+      - LLMOPS_LORA_DIR=/lora
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
     volumes:
       - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
       - mixed-sglang-data:/app/data
+      - mixed-sd:/sd                  # file_sd scrape targets (shared with Prometheus)
+      - mixed-kv-cache:/kv_cache
       - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
       - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+      - /etc/localtime:/etc/localtime:ro
     ports: ["${MIXED_SGLANG_PORT:-5072}:5000"]
     ipc: host
     shm_size: "16gb"
@@ -107,9 +123,49 @@ services:
     ports: ["${ROUTER_PORT:-8887}:8887"]
     restart: unless-stopped
 
+  # Metrics store. Own netns on the compose network (the two backends can't share
+  # one netns), scraping routable file_sd targets each backend writes to mixed-sd.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: mixed-prometheus
+    depends_on: [vllm-backend, sglang-backend]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus.mixed.yml:/etc/prometheus/prometheus.yml:ro
+      - mixed-sd:/etc/prometheus/targets:ro
+      - mixed-prometheus-data:/prometheus
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    container_name: mixed-dcgm-exporter
+    cap_add: [SYS_ADMIN]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu, utility]
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: mixed-node-exporter
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.1.0
     container_name: mixed-grafana
+    depends_on: [prometheus]
     environment:
       # Same as the main compose — root_url carries the external port and
       # ALLOW_EMBEDDING lets the dashboard embed Grafana in an iframe (without it,
@@ -126,6 +182,8 @@ services:
       - GRAFANA_ALERT_WEBHOOK=${GRAFANA_ALERT_WEBHOOK:-http://example.invalid/replace-me}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # Override just the datasource to point at the mixed Prometheus service.
+      - ./grafana-mixed-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - mixed-grafana-data:/var/lib/grafana
     restart: unless-stopped
@@ -146,3 +204,6 @@ volumes:
   mixed-vllm-data:
   mixed-sglang-data:
   mixed-grafana-data:
+  mixed-sd:              # shared file_sd scrape-target dir (backends write, Prometheus reads)
+  mixed-kv-cache:        # cross-instance KV-cache root
+  mixed-prometheus-data:

@@ -1,0 +1,41 @@
+# Prometheus scrape config for the MIXED-engine stack (deploy/docker-compose.mixed.yaml).
+#
+# Unlike the collapsed nginx.conf setup (one backend, Prometheus shares its netns and
+# scrapes localhost:<port>), here there are TWO backends in separate netns. So
+# Prometheus runs in its own netns on the compose network and scrapes ROUTABLE
+# addresses. Each backend writes its ready instances to a file_sd targets file in the
+# shared `mixed-sd` volume (LLMOPS_PROMETHEUS_SD_PATH -> /sd/targets-<node>.json), with
+# the address set to its advertised LLMOPS_NODE_HOST (not localhost). Prometheus reads
+# all of them via the glob below; vLLM instances expose vllm:* metrics and SGLang ones
+# expose sglang:* — both land here for the respective Grafana dashboards.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: engines
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.json
+        refresh_interval: 5s
+    relabel_configs:
+      # Stable group::instance_id as the `instance` label (survives a model moving
+      # ports / nodes); keep the engine label for per-engine dashboards.
+      - source_labels: [group, instance_id]
+        separator: "::"
+        target_label: instance
+
+  # Autoscaling/control-plane metrics from both dashboard backends.
+  - job_name: llmops-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mixed-vllm-backend:5000", "mixed-sglang-backend:5000"]
+
+  - job_name: dcgm
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]

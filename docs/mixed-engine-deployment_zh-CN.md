@@ -43,11 +43,17 @@ make down-mixed    # 收掉
 | **per-node 收斂** | 每個 node 各自把「指派給它」的模型起/停(不是只有 leader) | [reconciler.py](../apps/backend/app/llmops/reconciler.py) `converge_desired` |
 | **overlay 同步** | dashboard 動態加的模型透過 store 傳播到每個 node 的 registry | [manager.py](../apps/backend/app/llmops/manager.py) `sync_overlay_from_store` |
 | **跨容器路由** | 各 node 用 `LLMOPS_VLLM_BIND_HOST=0.0.0.0` 綁可路由位址,寫進 `instances_live`,router 依此連 | [launchers.py](../apps/backend/app/llmops/launchers.py) / [metrics_poller.py](../apps/router-server/src/llm_router/metrics_poller.py) |
+| **監控(對標主 compose)** | Prometheus + dcgm-exporter + node-exporter;各 backend 把 ready 實例以**可路由位址**寫進共享 `mixed-sd` volume 的 file_sd 檔(`build_targets(node_host=...)`),Prometheus glob `/etc/prometheus/targets/*.json` 一起抓;Grafana datasource 指向 `mixed-prometheus` | [prometheus.mixed.yml](../deploy/prometheus.mixed.yml) / [prometheus_targets.py](../apps/backend/app/services/prometheus_targets.py) |
+
+## 監控指標命名(重要)
+
+- **vLLM** 用傳統 Prometheus text 格式 → 指標名保留冒號(`vllm:num_requests_running`),官方 vLLM dashboard 照用不變。
+- **SGLang** 用 **OpenMetrics** 格式(名稱不允許冒號)→ Prometheus 入庫時把 `:` 正規化成 `_`
+  (`sglang:num_running_reqs` → `sglang_num_running_reqs`)。所以 SGLang Grafana dashboard 一律查 `sglang_*`。
+- (router 的 autoscaler 解析的是**原始 endpoint 文字**(冒號名),不經 Prometheus,所以不受影響。)
 
 ## 限制
 
 - **GPU 容量**:單機單卡上,兩個引擎的模型 + 各自的 KV 都要塞進同一張卡。8GB 卡同時跑兩個小模型會很緊
   (調低各模型的 `gpu_memory_utilization` / `max_model_len`)。真「並行多卡加速」需要實體多卡。
-- **monitoring**:mixed compose 沒附 Prometheus(各 node 的 file_sd 分散);Grafana 在(供 dashboard 的
-  Monitoring 分頁),但沒有資料源時圖會是空的。要完整監控請走 k8s SD 或自行加 Prometheus。
 - 自動 placement 只在 Postgres(HA)模式生效;SQLite 單機是 collapsed(一個 node 跑全部),行為不變。

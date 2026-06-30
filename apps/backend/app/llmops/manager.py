@@ -325,7 +325,7 @@ class ModelManager:
         from app.services.prometheus_targets import build_targets, write_targets_file
 
         instances = await self.registry.snapshot()
-        targets = build_targets(instances)
+        targets = build_targets(instances, node_host=self.settings.node_host)
         loop = asyncio.get_event_loop()
         try:
             return await loop.run_in_executor(None, write_targets_file, path, targets)

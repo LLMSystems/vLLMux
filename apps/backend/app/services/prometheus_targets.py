@@ -24,13 +24,19 @@ from app.llmops.instance import ModelInstance
 from app.llmops.state import ModelKind, ModelState
 
 
-def build_targets(instances: Iterable[ModelInstance]) -> list[dict]:
+def build_targets(instances: Iterable[ModelInstance], node_host: str = "") -> list[dict]:
     """Build the Prometheus file_sd target list from registry instances.
 
-    One entry per ready vLLM instance. `targets` is the scrape address
+    One entry per ready LLM instance. `targets` is the scrape address
     (`host:port`); Prometheus appends the configured metrics_path (`/metrics`).
     Labels carry the group/instance identity and model tag so dashboards can
     join on something meaningful instead of the volatile `host:port`.
+
+    `node_host` (the node's advertised routable host, LLMOPS_NODE_HOST) is used as
+    the scrape host when set, so a Prometheus in a *different* container/host can
+    reach the instance — required for the multi-backend mixed deployment. Empty
+    (the default / collapsed single host) keeps the instance's own host (localhost),
+    which a netns-sharing Prometheus scrapes exactly as before.
 
     Sorted by address so the serialized output is stable — the writer can then
     skip an identical rewrite and avoid churning the file (which would otherwise
@@ -41,9 +47,10 @@ def build_targets(instances: Iterable[ModelInstance]) -> list[dict]:
         if inst.kind != ModelKind.LLM or inst.state != ModelState.READY:
             continue
         group, _, instance_id = inst.key.partition("::")
+        host = node_host or inst.host
         targets.append(
             {
-                "targets": [f"{inst.host}:{inst.port}"],
+                "targets": [f"{host}:{inst.port}"],
                 "labels": {
                     "group": group,
                     "instance_id": instance_id,
