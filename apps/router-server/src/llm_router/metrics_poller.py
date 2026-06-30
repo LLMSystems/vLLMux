@@ -56,8 +56,11 @@ async def poll_metrics_forever(app, interval: float = 1.0):
             app.state.live_addrs = live_addrs
 
             index = []  # (model_key, instance_id, composite_key)
-            backends: Dict[str, str] = {}
+            backends: Dict[str, tuple] = {}  # composite -> (url, engine)
             for model_key, model_cfg in llm_engines.items():
+                # Pick the engine's metric parser (sglang exposes sglang:* names,
+                # not vllm:*). Default vllm so existing configs are unchanged.
+                engine = (model_cfg.get("model_config") or {}).get("engine", "vllm")
                 for instance in model_cfg.get("instances", []):
                     composite = f"{model_key}\x00{instance['id']}"
                     host, port = live_addrs.get(
@@ -66,7 +69,7 @@ async def poll_metrics_forever(app, interval: float = 1.0):
                     )
                     url = f"http://{host}:{port}"
                     index.append((model_key, instance["id"], composite))
-                    backends[composite] = url
+                    backends[composite] = (url, engine)
 
             flat = await metrics_client.fetch_many(backends) if backends else {}
 
@@ -82,7 +85,7 @@ async def poll_metrics_forever(app, interval: float = 1.0):
                 for instance in model_cfg.get("instances", []):
                     composite = f"{model_key}\x00{instance['id']}"
                     if composite in backends:
-                        sleep_backends[composite] = backends[composite]
+                        sleep_backends[composite] = backends[composite][0]  # url only
             sleeping = (
                 await _probe_sleeping(app.state.http_client, sleep_backends)
                 if sleep_backends else {}

@@ -135,6 +135,7 @@ CAP_RUNTIME_LORA = "runtime_lora"  # runtime LoRA load/unload endpoints
 CAP_LORA_MODULES = "lora_modules"  # static --lora-modules at launch
 CAP_KV_TRANSFER = "kv_transfer"    # cross-instance KV cache sharing
 CAP_METRICS_VLLM = "metrics_vllm"  # exposes vLLM-format Prometheus metrics (waiting queue, …)
+CAP_METRICS_SGLANG = "metrics_sglang"  # exposes sglang:* Prometheus metrics (the router parses these)
 
 # Sentinel engine name for non-LLM launchers (embedding server): they aren't
 # selected by an engine choice, so they register under one fixed value.
@@ -306,7 +307,7 @@ _SGLANG_PARAM_MAP = {
 # LoRA flags below; allow_runtime_lora is an enable_lora trigger) + router-only knobs.
 _SGLANG_SKIP_CLI_KEYS = frozenset(
     {"model_tag", "served_model_name", "id", "cuda_device",
-     "enable_lora", "lora_modules", _LORA_RUNTIME_KEY}
+     "enable_lora", "lora_modules", "enable_metrics", _LORA_RUNTIME_KEY}
 ) | _ROUTER_ONLY_KEYS
 
 
@@ -329,6 +330,10 @@ def build_sglang_cli_args(model_cfg: dict) -> list[str]:
     served = model_cfg.get("served_model_name") or model_tag
 
     args = ["--model-path", str(model_tag), "--served-model-name", str(served)]
+
+    # Always expose Prometheus /metrics (vLLM does by default; SGLang needs the
+    # flag). The router scrapes sglang:* from it for the autoscaler signal.
+    args.append("--enable-metrics")
 
     # LoRA: SGLang needs --enable-lora at launch to accept either static adapters
     # (--lora-paths NAME=PATH …) or runtime ones (POST /load_lora_adapter). Turn it
@@ -371,10 +376,11 @@ class SglangLauncher:
     # Runtime + static LoRA are wired (--enable-lora / --lora-paths at launch;
     # POST /load_lora_adapter — no /v1 prefix, unlike vLLM — for hot load/unload).
     # No sleep (SGLang has no /sleep+/wake_up; `--sleep-on-idle` only lowers CPU,
-    # doesn't free VRAM) -> autoscaler degrades to ready<->stopped. sglang:* metrics
-    # exist but need a parser, so CAP_METRICS_* is left for a follow-up.
+    # doesn't free VRAM) -> autoscaler degrades to ready<->stopped. metrics_sglang:
+    # launches with --enable-metrics and the router parses sglang:* into the same
+    # normalized load shape, so the autoscaler scales SGLang groups too.
     # See docs/multi-backend-engine-design_zh-CN.md §5.2.
-    capabilities = frozenset({CAP_RUNTIME_LORA, CAP_LORA_MODULES})
+    capabilities = frozenset({CAP_RUNTIME_LORA, CAP_LORA_MODULES, CAP_METRICS_SGLANG})
 
     def keys(self, config) -> list[str]:
         out: list[str] = []

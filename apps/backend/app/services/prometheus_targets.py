@@ -48,6 +48,9 @@ def build_targets(instances: Iterable[ModelInstance]) -> list[dict]:
                     "group": group,
                     "instance_id": instance_id,
                     "model_tag": inst.model_tag or "",
+                    # Engine lets dashboards filter vLLM (vllm:*) vs SGLang (sglang:*)
+                    # panels, since their metric names differ.
+                    "engine": getattr(inst, "engine", "vllm"),
                 },
             }
         )

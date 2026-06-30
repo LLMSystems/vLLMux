@@ -2,9 +2,10 @@ import json
 
 import pytest
 
-from app.llmops.launchers import (CAP_LORA_MODULES, CAP_RUNTIME_LORA, CAP_SLEEP,
-                                  EMBEDDING_KEY, ENGINE_DEFAULT, EmbeddingLauncher,
-                                  SglangLauncher, VllmLauncher, _write_effective_config,
+from app.llmops.launchers import (CAP_LORA_MODULES, CAP_METRICS_SGLANG,
+                                  CAP_RUNTIME_LORA, CAP_SLEEP, EMBEDDING_KEY,
+                                  ENGINE_DEFAULT, EmbeddingLauncher, SglangLauncher,
+                                  VllmLauncher, _write_effective_config,
                                   build_sglang_cli_args, build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from schema import RootConfig
@@ -342,11 +343,11 @@ def test_sglang_args_translate_typed_params():
 
 def test_sglang_args_bool_is_store_true_no_dual():
     args = build_sglang_cli_args({
-        "model_tag": "org/m", "disable_radix_cache": True, "enable_metrics": False,
+        "model_tag": "org/m", "disable_radix_cache": True, "skip_server_warmup": False,
     })
     assert "--disable-radix-cache" in args          # True -> present
-    assert "--enable-metrics" not in args           # False -> omitted
-    assert "--no-enable-metrics" not in args        # never synthesise a --no- dual
+    assert "--skip-server-warmup" not in args       # False -> omitted
+    assert "--no-skip-server-warmup" not in args    # never synthesise a --no- dual
 
 
 def test_sglang_args_skip_router_only_keys():
@@ -372,11 +373,19 @@ def test_sglang_launcher_claims_only_sglang_engine():
 
 
 def test_sglang_launcher_capabilities():
-    # Runtime + static LoRA are wired; sleep is absent in SGLang (degrades), and
-    # metrics need a parser so CAP_METRICS_* is not advertised yet.
+    # Runtime + static LoRA and sglang:* metrics are wired; sleep is absent in
+    # SGLang (autoscaler degrades to ready<->stopped).
     caps = SglangLauncher().capabilities
     assert CAP_RUNTIME_LORA in caps and CAP_LORA_MODULES in caps
+    assert CAP_METRICS_SGLANG in caps
     assert CAP_SLEEP not in caps
+
+
+def test_sglang_args_always_enable_metrics():
+    # /metrics must be on (vLLM exposes it by default; SGLang needs the flag) so the
+    # router can scrape sglang:* for the autoscaler.
+    args = build_sglang_cli_args({"model_tag": "org/m"})
+    assert "--enable-metrics" in args
 
 
 def test_sglang_args_lora_enable_and_paths():

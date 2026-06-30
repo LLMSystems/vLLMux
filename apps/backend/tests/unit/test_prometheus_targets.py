@@ -33,6 +33,7 @@ def test_build_targets_only_includes_ready_llm():
     assert entry["labels"]["group"] == "Qwen3-0.6B"
     assert entry["labels"]["instance_id"] == "qwen3"
     assert entry["labels"]["model_tag"] == "Qwen/Qwen3-0.6B"
+    assert entry["labels"]["engine"] == "vllm"  # default; lets dashboards filter by engine
 
 
 def test_build_targets_excludes_embedding_server():

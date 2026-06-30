@@ -1,0 +1,108 @@
+{
+  "uid": "sglang-overview",
+  "title": "SGLang Overview",
+  "tags": ["sglang", "llm"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "model_name",
+        "label": "Model",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${ds}" },
+        "definition": "label_values(sglang:num_running_reqs, model_name)",
+        "query": { "qryType": 1, "query": "label_values(sglang:num_running_reqs, model_name)", "refId": "var" },
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Running requests",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(sglang:num_running_reqs{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "running" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Queue depth (waiting)",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 4 }, { "color": "red", "value": 16 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(sglang:num_queue_reqs{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "queue" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Token pool usage",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2, "min": 0, "max": 1 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "avg(sglang:token_usage{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "token_usage" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Cache hit rate",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2, "min": 0, "max": 1 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "avg(sglang:cache_hit_rate{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "cache_hit" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Running vs Queue",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(sglang:num_running_reqs{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "running" },
+        { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(sglang:num_queue_reqs{model_name=~\"$model_name\"})", "range": true, "refId": "B", "legendFormat": "queue (waiting)" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Generation throughput (tok/s)",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(sglang:gen_throughput{model_name=~\"$model_name\"})", "range": true, "refId": "A", "legendFormat": "gen_throughput" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Time to first token (p95)",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum(rate(sglang:time_to_first_token_seconds_bucket{model_name=~\"$model_name\"}[5m])) by (le))", "range": true, "refId": "A", "legendFormat": "ttft p95" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Token throughput (rate)",
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(rate(sglang:prompt_tokens_total{model_name=~\"$model_name\"}[1m]))", "range": true, "refId": "A", "legendFormat": "prompt tok/s" },
+        { "datasource": { "type": "prometheus", "uid": "${ds}" }, "editorMode": "code", "expr": "sum(rate(sglang:generation_tokens_total{model_name=~\"$model_name\"}[1m]))", "range": true, "refId": "B", "legendFormat": "gen tok/s" }
+      ]
+    }
+  ]
+}
