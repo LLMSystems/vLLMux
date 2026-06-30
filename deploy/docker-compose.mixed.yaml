@@ -163,7 +163,11 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.1.0
+    # 11.6.0 (not 11.1.0 like the main compose) to match the SGLang dashboard's
+    # authored schemaVersion 41 / pluginVersion 11.6.0 (Grafana only migrates
+    # dashboards forward, never down). (The two latency heatmaps being empty was a
+    # separate bug: a stale $model_name template default — fixed in the dashboard.)
+    image: grafana/grafana:11.6.0
     container_name: mixed-grafana
     depends_on: [prometheus]
     environment:
