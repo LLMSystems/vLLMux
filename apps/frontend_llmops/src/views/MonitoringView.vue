@@ -28,7 +28,7 @@ const dashboards = computed(
       { id: 'capacity', label: t('monitoring.vllmCapacity'), icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
       { id: 'perf', label: t('monitoring.vllmPerf'), icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
       { id: 'query', label: t('monitoring.vllmQuery'), icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
-      { id: 'sglang', label: t('monitoring.sglang'), icon: Boxes, path: `${BASE}/sglang-overview/sglang-overview` },
+      { id: 'sglang', label: t('monitoring.sglang'), icon: Boxes, path: `${BASE}/sglang-dashboard/sglang-dashboard` },
       { id: 'gpu', label: t('monitoring.gpu'), icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
       { id: 'host', label: t('monitoring.host'), icon: Cpu, path: `${BASE}/rYdddlPWk/node-exporter-full` },
     ] as const,
