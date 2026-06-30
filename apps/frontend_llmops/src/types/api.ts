@@ -28,6 +28,7 @@ export interface ModelStartupMetrics {
 export interface ModelView {
   key: string
   kind: ModelKind
+  engine?: string
   model_tag: string | null
   host: string
   port: number

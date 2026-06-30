@@ -40,6 +40,12 @@ const host = ref('localhost')
 const port = ref<number>(8000)
 const cudaDevice = ref<number | null>(null)
 const modelTag = ref('')
+// Inference engine for the whole group. Different engines map the same concepts to
+// different launch flags; the launcher translates. vLLM is the default.
+const engine = ref('vllm')
+const ENGINE_OPTIONS = ['vllm', 'sglang', 'llamacpp', 'trtllm']
+// Capability gating: only vLLM supports sleep mode; hide the toggle otherwise.
+const engineHasSleep = computed(() => engine.value === 'vllm')
 const params = ref<{ key: string; value: string }[]>([])
 // Router-only load-balancing policy for the group. Lives in model_config but is
 // NOT a vLLM flag, so it's edited as its own field and kept out of the raw param
@@ -164,6 +170,7 @@ function reset() {
   port.value = 8000
   cudaDevice.value = null
   modelTag.value = ''
+  engine.value = 'vllm'
   params.value = []
   routingStrategy.value = ''
   kvShared.value = false
@@ -209,6 +216,7 @@ function prefillForEdit() {
   port.value = cfg.port
   cudaDevice.value = cfg.cuda_device ?? null
   modelTag.value = String(cfg.settings.model_tag ?? '')
+  engine.value = String(cfg.settings.engine ?? 'vllm')
   routingStrategy.value = String(cfg.settings.routing_strategy ?? '')
   kvShared.value = isKvShared(cfg.settings)
   sleepMode.value = !!cfg.settings.enable_sleep_mode
@@ -216,6 +224,7 @@ function prefillForEdit() {
     Object.entries(cfg.settings).filter(
       ([k2]) =>
         k2 !== 'model_tag' &&
+        k2 !== 'engine' &&
         k2 !== 'routing_strategy' &&
         k2 !== 'kv_transfer_config' &&
         k2 !== 'enable_sleep_mode',
@@ -252,6 +261,7 @@ async function parse() {
     port.value = p.instance.port
     cudaDevice.value = p.instance.cuda_device
     modelTag.value = String(p.model_config.model_tag ?? '')
+    engine.value = String((p.model_config as Record<string, unknown>).engine ?? 'vllm')
     routingStrategy.value = String(
       (p.model_config as Record<string, unknown>).routing_strategy ?? '',
     )
@@ -261,6 +271,7 @@ async function parse() {
       Object.entries(p.model_config).filter(
         ([k]) =>
           k !== 'model_tag' &&
+          k !== 'engine' &&
           k !== 'routing_strategy' &&
           k !== 'kv_transfer_config' &&
           k !== 'enable_sleep_mode',
@@ -421,12 +432,15 @@ async function submit() {
     lora_modules?: LoraModule[]
     kv_transfer_config?: KvTransferConfig
     enable_sleep_mode?: boolean
+    engine?: string
   } = {
     model_tag: modelTag.value,
+    // Engine for the whole group; default vllm keeps existing configs unchanged.
+    engine: engine.value,
   }
   for (const { key: k, value } of params.value) {
-    // `lora_modules`, `routing_strategy` and `kv_transfer_config` have dedicated
-    // editors below — never let a raw param (e.g. a stray "" from a null, or a
+    // `lora_modules`, `routing_strategy`, `kv_transfer_config`, `engine` have
+    // dedicated editors — never let a raw param (e.g. a stray "" from a null, or a
     // leaked key) stomp them via the generic param list.
     const kk = k.trim()
     if (
@@ -434,7 +448,8 @@ async function submit() {
       kk !== 'lora_modules' &&
       kk !== 'routing_strategy' &&
       kk !== 'kv_transfer_config' &&
-      kk !== 'enable_sleep_mode'
+      kk !== 'enable_sleep_mode' &&
+      kk !== 'engine'
     )
       settings[kk] = coerce(value)
   }
@@ -446,7 +461,7 @@ async function submit() {
   if (kvShared.value) settings.kv_transfer_config = KV_SHARE_PRESET
   // Sleep-mode warm-standby tier: launch with --enable-sleep-mode + dev mode so
   // the instance can be slept/woken (see docs/autoscaling-design_zh-CN.md).
-  if (sleepMode.value) settings.enable_sleep_mode = true
+  if (sleepMode.value && engineHasSleep.value) settings.enable_sleep_mode = true
   // Mounted adapters: keep only filled rows; drop the empty base_model_name field.
   const cleanLoras = loras.value
     .filter((l) => l.name.trim() && l.path.trim())
@@ -580,6 +595,18 @@ async function submit() {
             <span class="text-xs text-muted-foreground">{{ $t('addModel.modelTagLabel') }} <span class="text-status-failed">*</span></span>
             <Input v-model="modelTag" class="mt-1 font-mono" placeholder="org/model" />
           </label>
+          <label class="block">
+            <span class="text-xs text-muted-foreground">{{ $t('addModel.engineLabel') }}</span>
+            <select
+              v-model="engine"
+              class="mt-1 h-9 w-full rounded-md border border-input bg-background/40 px-2 text-sm font-mono"
+            >
+              <option v-for="e in ENGINE_OPTIONS" :key="e" :value="e">{{ e }}</option>
+            </select>
+            <span class="mt-1 block text-[11px] text-muted-foreground">
+              {{ $t('addModel.engineHint') }}
+            </span>
+          </label>
           <label class="col-span-2 block">
             <span class="text-xs text-muted-foreground">{{ $t('addModel.routingLabel') }}</span>
             <select
@@ -608,6 +635,7 @@ async function submit() {
             </span>
           </label>
           <label
+            v-if="engineHasSleep"
             class="col-span-2 flex cursor-pointer items-start gap-3 rounded-lg border border-input bg-background/40 px-3 py-2.5"
             :class="sleepMode && 'border-[var(--chart-4)]/50 bg-[var(--chart-4)]/5'"
           >

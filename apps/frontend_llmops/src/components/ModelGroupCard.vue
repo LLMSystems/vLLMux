@@ -136,6 +136,8 @@ const visibleInstances = computed(() =>
 const hiddenCount = computed(() => props.instances.length - visibleInstances.value.length)
 
 const kind = computed(() => props.instances[0]?.kind ?? 'llm')
+// Inference engine for the group (from the API); badge shown for non-default engines.
+const engine = computed(() => props.instances[0]?.engine ?? 'vllm')
 const modelTag = computed<string | null>(() => {
   const tag =
     props.instances[0]?.model_tag ??
@@ -274,7 +276,14 @@ const startLockTitle = computed(() =>
           <component :is="Icon" class="size-4" />
         </div>
         <div class="min-w-0">
-          <p class="truncate text-sm font-semibold leading-tight" :title="group">{{ group }}</p>
+          <p class="flex items-center gap-1.5 truncate text-sm font-semibold leading-tight" :title="group">
+            <span class="truncate">{{ group }}</span>
+            <span
+              v-if="engine !== 'vllm'"
+              class="shrink-0 rounded bg-[var(--chart-2)]/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--chart-2)]"
+              :title="`engine: ${engine}`"
+            >{{ engine }}</span>
+          </p>
           <p class="truncate font-mono text-[11px] text-muted-foreground" :title="modelTag ?? subtitle">
             {{ subtitle }}
           </p>

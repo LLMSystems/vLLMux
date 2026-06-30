@@ -877,6 +877,8 @@ export default {
     gpuLabel: 'GPU (cuda_device)',
     gpuAuto: 'None / Auto',
     modelTagLabel: 'Model tag',
+    engineLabel: 'Inference engine',
+    engineHint: 'Each engine uses different launch flags (the launcher translates); needs a backend that runs that engine to start',
     routingLabel: 'Routing strategy (load balancing)',
     routingDefault: 'Follow global default',
     routingHint: 'Traffic distribution policy for this group; empty inherits the global setting (switchable on the Traffic page). Only effective with multiple replicas.',

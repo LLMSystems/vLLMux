@@ -856,6 +856,8 @@ export default {
     gpuLabel: 'GPU（cuda_device）',
     gpuAuto: '無 / 自動',
     modelTagLabel: '模型標籤',
+    engineLabel: '推理引擎',
+    engineHint: '不同引擎用不同啟動參數（由 launcher 自動翻譯）；需有對應引擎的 backend 才能啟動',
     routingLabel: '路由策略（負載平衡）',
     routingDefault: '跟隨全域預設',
     routingHint: '此群組請求的分流方式;留空則跟隨全域設定（可在「流量」頁切換）。多副本才有效。',
