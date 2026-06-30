@@ -428,3 +428,18 @@ def test_sglang_build_spec():
     assert spec.probe_url == "http://localhost:8100/health"
     assert spec.host == "localhost" and spec.port == 8100
     assert "--host" in spec.command and spec.command[spec.command.index("--host") + 1] == "localhost"
+
+
+def test_sglang_bind_host_env_overrides_only_the_bind_address(monkeypatch):
+    # Cross-container HA: LLMOPS_VLLM_BIND_HOST binds sglang to 0.0.0.0 (--host), but
+    # the probe + recorded host stay localhost; routers reach it via NODE_HOST.
+    monkeypatch.setenv("LLMOPS_VLLM_BIND_HOST", "0.0.0.0")
+    spec = SglangLauncher().build_spec(_sglang_config(), "config.yaml", "S::a")
+    assert spec.command[spec.command.index("--host") + 1] == "0.0.0.0"  # binds all
+    assert spec.host == "localhost"                                     # record unchanged
+    assert spec.probe_url == "http://localhost:8100/health"            # local probe unchanged
+
+
+def test_sglang_binds_configured_host_by_default():
+    spec = SglangLauncher().build_spec(_sglang_config(), "config.yaml", "S::a")
+    assert spec.command[spec.command.index("--host") + 1] == "localhost"

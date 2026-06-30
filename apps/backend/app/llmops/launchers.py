@@ -412,7 +412,15 @@ class SglangLauncher:
                 env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
         merged.pop("id", None)
 
-        command = [sys.executable, "-m", "sglang.launch_server"] + build_sglang_cli_args(merged)
+        # HA split deploys: optionally bind SGLang to a routable interface (0.0.0.0)
+        # so a router in another container/host reaches it via the advertised
+        # LLMOPS_NODE_HOST (instances_live). Only the bind --host changes; the local
+        # probe + recorded host stay localhost (which a 0.0.0.0 bind also serves).
+        # Empty (default) = bind the configured host = today's localhost-only. Shares
+        # the env var with vLLM so one setting governs both engines.
+        bind_host = os.environ.get("LLMOPS_VLLM_BIND_HOST", "").strip()
+        cli_cfg = {**merged, "host": bind_host} if bind_host else merged
+        command = [sys.executable, "-m", "sglang.launch_server"] + build_sglang_cli_args(cli_cfg)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
         return LaunchSpec(
             key=key,
