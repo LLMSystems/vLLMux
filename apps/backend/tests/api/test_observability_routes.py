@@ -100,11 +100,14 @@ def test_healthz(client):
 async def test_sse_generator_emits_snapshot_on_change():
     """Test the SSE generator directly (avoids streaming a forever-loop endpoint)."""
     from tests.conftest import FAKE_CONFIG
+    from app.core.settings import BackendSettings
     from app.llmops.launchers import VllmLauncher
-    from app.llmops.manager import build_registry
+    from app.llmops.manager import ModelManager, build_registry
 
     registry = build_registry(FAKE_CONFIG, "config.yaml", [VllmLauncher()])
-    gen = observability.model_snapshot_stream(registry, interval=0.01)
+    manager = ModelManager(registry, [VllmLauncher()], None, FAKE_CONFIG, "config.yaml",
+                           BackendSettings(), store=None)  # store=None -> uses local registry
+    gen = observability.model_snapshot_stream(manager, interval=0.01)
 
     first = await gen.__anext__()  # initial snapshot always emitted
     assert first.startswith("data: ")

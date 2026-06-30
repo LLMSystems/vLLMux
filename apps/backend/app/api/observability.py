@@ -94,17 +94,22 @@ async def model_metrics(key: str, manager: ModelManager = Depends(get_manager)):
     return {"ready": True, **parse_startup_metrics(head)}
 
 
-async def model_snapshot_stream(registry, interval: float = 1.0, heartbeat_every: float = 15.0):
+async def model_snapshot_stream(manager, interval: float = 1.0, heartbeat_every: float = 15.0):
     """SSE generator: emit the full model snapshot whenever it changes.
 
-    Cheap snapshot-diff (no pub/sub bus): re-snapshot the registry each interval,
-    emit on change, and send a heartbeat comment if nothing changed for a while.
+    Cheap snapshot-diff (no pub/sub bus): re-read the fleet each interval, emit on
+    change, send a heartbeat if nothing changed for a while. In HA/multi-node mode
+    the view comes from the shared store (each node only actuates its own models, so
+    the local registry alone is incomplete — Phase 7); collapsed uses the registry.
     """
     last_sig: Optional[str] = None
     since_emit = 0.0
     while True:
-        snap = await registry.snapshot()
-        payload = [ModelView.from_instance(i).model_dump(mode="json") for i in snap]
+        payload = sorted(
+            (ModelView(**v).model_dump(mode="json")
+             for v in await manager.fleet_views(prefer_store=manager.prefer_store_view())),
+            key=lambda m: m["key"],
+        )
         sig = json.dumps(payload, sort_keys=True, default=str)
         if sig != last_sig:
             last_sig = sig
@@ -122,6 +127,6 @@ async def model_snapshot_stream(registry, interval: float = 1.0, heartbeat_every
 async def stream_models(request: Request):
     """Live model state via Server-Sent Events (replaces frontend polling)."""
     return StreamingResponse(
-        model_snapshot_stream(request.app.state.registry),
+        model_snapshot_stream(request.app.state.manager),
         media_type="text/event-stream",
     )

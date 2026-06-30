@@ -52,13 +52,11 @@ class CreateModelRequest(BaseModel):
 
 @router.get("", response_model=list[ModelView])
 async def list_models(request: Request, manager: ModelManager = Depends(get_manager)):
-    # HA Phase 3d: a non-leader replica reports the fleet from the shared store's
-    # observed state (the leader/owning agents backfill it), since its own registry
-    # is idle. The leader (and a single-host collapsed deploy) uses its live
-    # registry — identical to before.
-    elector = getattr(request.app.state, "leader", None)
-    prefer_store = elector is not None and not elector.is_leader
-    return [ModelView(**v) for v in await manager.fleet_views(prefer_store=prefer_store)]
+    # HA: in Postgres/multi-node mode the fleet view comes from the shared store
+    # (each node backfills its *owned* observed state) — on leader and follower
+    # alike, since with per-node actuation (Phase 7) no single registry is complete.
+    # SQLite collapsed: the local registry is the truth — identical to before.
+    return [ModelView(**v) for v in await manager.fleet_views(prefer_store=manager.prefer_store_view())]
 
 
 @router.post("/parse", dependencies=[Depends(require_operator)])
@@ -167,6 +165,13 @@ async def unload_lora(key: str, name: str, manager: ModelManager = Depends(get_m
 
 @router.get("/{key}", response_model=ModelView)
 async def get_model(key: str, manager: ModelManager = Depends(get_manager)):
+    # HA: like list_models, prefer the shared store's observed state in multi-node
+    # mode so a model owned by another node shows its real state (not this node's
+    # idle registry). Falls back to the local registry (collapsed / not in store).
+    if manager.prefer_store_view():
+        for v in await manager.fleet_views(prefer_store=True):
+            if v.get("key") == key:
+                return ModelView(**v)
     try:
         return ModelView.from_instance(await manager.get(key))
     except ModelNotFound:

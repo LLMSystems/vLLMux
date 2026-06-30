@@ -317,6 +317,17 @@ class ModelManager:
     async def list(self) -> list[ModelInstance]:
         return await self.registry.snapshot()
 
+    def prefer_store_view(self) -> bool:
+        """Whether model-state views should come from the shared store rather than
+        this node's local registry. In HA/Postgres mode every node only actuates the
+        models assigned to it (Phase 7), so no single registry is the full truth —
+        each node backfills its *owned* observed state to the store, which is the
+        only complete view. Use it on leader and follower alike. SQLite collapsed:
+        one node owns everything, so the local registry is the truth (unchanged)."""
+        return (self.store is not None
+                and getattr(self.store, "db_url", None) is not None
+                and hasattr(self.store, "list_instance_observed"))
+
     async def fleet_views(self, prefer_store: bool = False) -> list[dict]:
         """The fleet's model-view dicts. Leader (prefer_store=False): from the live
         local registry — identical to before. Follower (prefer_store=True): the
