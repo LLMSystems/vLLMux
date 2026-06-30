@@ -2,14 +2,28 @@ import json
 
 import pytest
 
-from app.llmops.launchers import (EMBEDDING_KEY, EmbeddingLauncher,
-                                  VllmLauncher, _write_effective_config,
-                                  build_vllm_cli_args)
+from app.llmops.launchers import (CAP_SLEEP, EMBEDDING_KEY, ENGINE_DEFAULT,
+                                  EmbeddingLauncher, VllmLauncher,
+                                  _write_effective_config, build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from schema import RootConfig
 from tests.conftest import FAKE_CONFIG
 
 pytestmark = pytest.mark.unit
+
+
+def _engine_config(engine: str) -> RootConfig:
+    """A one-group LLM config whose engine is `engine` (no field = default)."""
+    mc = {"model_tag": "org/m"}
+    if engine is not None:
+        mc["engine"] = engine
+    return RootConfig.model_validate({
+        "server": {"host": "0.0.0.0", "port": 8887},
+        "LLM_engines": {"G": {
+            "instances": [{"id": "a", "host": "localhost", "port": 8000}],
+            "model_config": mc,
+        }},
+    })
 
 
 def _lora_config() -> RootConfig:
@@ -245,3 +259,44 @@ def test_embedding_launcher_keys_and_spec():
     assert spec.env["CUDA_VISIBLE_DEVICES"] == "1"
     assert "PYTHONPATH" in spec.env
     assert spec.probe_url == "http://localhost:8005/health"
+
+
+# ---- multi-engine abstraction (docs/multi-backend-engine-design_zh-CN.md) ----
+
+def test_engine_defaults_to_vllm_when_unset():
+    """A config with no `engine` field is all vLLM = historical behaviour."""
+    cfg = _engine_config(engine=None)
+    assert cfg.LLM_engines["G"].settings.engine == "vllm"
+
+
+def test_vllm_launcher_claims_only_its_engine():
+    """keys() returns groups for this launcher's engine; a non-vllm group is
+    skipped so a future SGLang launcher can claim it instead."""
+    v = VllmLauncher()
+    assert v.engine == "vllm"
+    assert v.keys(_engine_config(None)) == ["G::a"]       # default
+    assert v.keys(_engine_config("vllm")) == ["G::a"]     # explicit
+    assert v.keys(_engine_config("sglang")) == []         # not mine
+
+
+def test_vllm_launcher_declares_capabilities_on_spec():
+    v = VllmLauncher()
+    spec = v.build_spec(_engine_config("vllm"), "config.yaml", "G::a")
+    assert spec.engine == "vllm"
+    assert CAP_SLEEP in spec.capabilities
+    assert spec.capabilities == v.capabilities
+
+
+def test_embedding_launcher_registers_under_default_engine():
+    e = EmbeddingLauncher()
+    assert e.engine == ENGINE_DEFAULT
+    assert e.capabilities == frozenset()
+    spec = e.build_spec(FAKE_CONFIG, "config.yaml", EMBEDDING_KEY)
+    assert spec.engine == ENGINE_DEFAULT
+
+
+def test_engine_is_never_passed_to_vllm_cli():
+    """`engine` is launcher-meta; it must not reach `vllm serve` (unknown arg)."""
+    args = build_vllm_cli_args({"model_tag": "org/m", "engine": "vllm", "kind": "chat"})
+    assert "--engine" not in args
+    assert "--kind" not in args

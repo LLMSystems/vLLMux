@@ -16,7 +16,7 @@ from typing import Optional
 from app.core.settings import BackendSettings
 from app.llmops.events import emit_transition
 from app.llmops.instance import ModelInstance
-from app.llmops.launchers import Launcher
+from app.llmops.launchers import CAP_RUNTIME_LORA, CAP_SLEEP, Launcher
 from app.llmops.process import spawn_process, terminate_process_group
 from app.llmops.registry import ModelRegistry
 from app.llmops.state import Desired, ModelKind, ModelState
@@ -68,6 +68,7 @@ def build_registry(config, config_path: str, launchers: list[Launcher]) -> Model
                 ModelInstance(
                     key=key,
                     kind=launcher.kind,
+                    engine=spec.engine,
                     host=spec.host,
                     port=spec.port,
                     spec=spec,
@@ -93,7 +94,11 @@ class ModelManager:
         notifier=None,
     ) -> None:
         self.registry = registry
-        self._launchers: dict[ModelKind, Launcher] = {l.kind: l for l in launchers}
+        # Dispatch is keyed on (kind, engine): vLLM and SGLang are both ModelKind.LLM
+        # but distinct launchers. Embedding registers under ENGINE_DEFAULT.
+        self._launchers: dict[tuple[ModelKind, str], Launcher] = {
+            (l.kind, l.engine): l for l in launchers
+        }
         self.http_client = http_client
         self.config = config
         self.config_path = config_path
@@ -110,6 +115,22 @@ class ModelManager:
         if inst is None:
             raise ModelNotFound(key)
         return inst
+
+    def _launcher_for(self, inst: ModelInstance) -> Launcher:
+        """The launcher that owns an instance, by its (kind, engine)."""
+        return self._launchers[(inst.kind, inst.engine)]
+
+    def _llm_engine_capabilities(self, group: str) -> frozenset:
+        """Capabilities of the engine an LLM group is configured for. Callers gate
+        optional features (sleep, runtime LoRA, …) on these rather than the engine
+        name, so a new engine only needs to declare its capability set. Empty if the
+        group / its engine's launcher is unknown."""
+        engine = self.config.LLM_engines.get(group)
+        if engine is None:
+            return frozenset()
+        engine_name = getattr(engine.settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, engine_name))
+        return launcher.capabilities if launcher else frozenset()
 
     async def _record(self, inst, from_state, to_state, detail=None) -> None:
         """Persist a state transition + dispatch any alert, via the shared funnel.
@@ -357,7 +378,7 @@ class ModelManager:
 
     async def start(self, key: str, force: bool = False, reset_restart: bool = True) -> ModelInstance:
         inst = self._require(key)
-        launcher = self._launchers[inst.kind]
+        launcher = self._launcher_for(inst)
 
         # Re-resolve the spec (config may have changed) outside the lock so the
         # GPU pre-flight's nvidia-smi call never extends the critical section.
@@ -617,13 +638,17 @@ class ModelManager:
         save_overlay(overlay, self.overlay_path)
         self.config = new_config
 
-        launcher = self._launchers[ModelKind.LLM]
+        group_engine = getattr(new_config.LLM_engines[group].settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, group_engine))
+        if launcher is None:
+            raise ModelConflict(f"unsupported engine '{group_engine}' (no launcher registered)")
         spec = launcher.build_spec(self.config, self.config_path, key)
         async with self.registry.lock:
             self.registry.add(
                 ModelInstance(
                     key=key,
                     kind=ModelKind.LLM,
+                    engine=spec.engine,
                     host=spec.host,
                     port=spec.port,
                     spec=spec,
@@ -679,10 +704,15 @@ class ModelManager:
         save_overlay(overlay, self.overlay_path)
         self.config = new_config
 
-        # Re-resolve the spec so the next start uses the edited values.
-        launcher = self._launchers[ModelKind.LLM]
+        # Re-resolve the spec so the next start uses the edited values. The edit may
+        # have changed the group's engine, so pick the launcher by the new config.
+        group_engine = getattr(new_config.LLM_engines[group].settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, group_engine))
+        if launcher is None:
+            raise ModelConflict(f"unsupported engine '{group_engine}' (no launcher registered)")
         spec = launcher.build_spec(self.config, self.config_path, key)
         async with self.registry.lock:
+            inst.engine = spec.engine
             inst.host = spec.host
             inst.port = spec.port
             inst.spec = spec
@@ -752,6 +782,11 @@ class ModelManager:
         engine = self.config.LLM_engines.get(group)
         if engine is None:
             raise ModelNotFound(group)
+        if CAP_RUNTIME_LORA not in self._llm_engine_capabilities(group):
+            engine_name = getattr(engine.settings, "engine", "vllm")
+            raise ModelConflict(
+                f"{group}'s engine ({engine_name}) does not support runtime LoRA"
+            )
         if not getattr(engine.settings, "allow_runtime_lora", False):
             raise ModelConflict(
                 f"{group} was not started with runtime LoRA updating — enable "
@@ -897,13 +932,14 @@ class ModelManager:
         for key in added:
             kind, spec = desired[key]
             self.registry.add(ModelInstance(
-                key=key, kind=kind, host=spec.host, port=spec.port, spec=spec,
-                model_tag=spec.model_tag, log_path=spec.log_path,
+                key=key, kind=kind, engine=spec.engine, host=spec.host, port=spec.port,
+                spec=spec, model_tag=spec.model_tag, log_path=spec.log_path,
             ))
         for key in changed:
             kind, spec = desired[key]
             inst = self.registry.get(key)
             inst.spec, inst.host, inst.port = spec, spec.host, spec.port
+            inst.engine = spec.engine
             inst.model_tag, inst.log_path = spec.model_tag, spec.log_path
         return {"added": added, "removed": removed, "changed": changed}
 

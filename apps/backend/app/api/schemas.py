@@ -14,6 +14,8 @@ class ModelView(BaseModel):
 
     key: str
     kind: ModelKind
+    # Which inference engine backs this instance ("vllm" / "sglang" / …).
+    engine: str = "vllm"
     model_tag: Optional[str] = None
     host: str
     port: int
@@ -35,6 +37,7 @@ class ModelView(BaseModel):
         return cls(
             key=inst.key,
             kind=inst.kind,
+            engine=inst.engine,
             model_tag=inst.model_tag,
             host=inst.host,
             port=inst.port,

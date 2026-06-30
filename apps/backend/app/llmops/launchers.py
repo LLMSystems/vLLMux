@@ -55,8 +55,9 @@ LOG_DIR = "./logs"
 _LORA_RUNTIME_KEY = "allow_runtime_lora"
 # Router-only knobs that ride the shared model_config (EngineModelConfig is
 # extra="allow") but belong to the router, not vLLM — never pass them to
-# `vllm serve` or it errors on an unknown argument.
-_ROUTER_ONLY_KEYS = frozenset({"routing_strategy", "kind"})
+# `vllm serve` or it errors on an unknown argument. `engine` is launcher-meta
+# (which backend to run); it too must never reach the vLLM CLI.
+_ROUTER_ONLY_KEYS = frozenset({"routing_strategy", "kind", "engine"})
 # Everything build_vllm_cli_args must skip (model_tag is the positional arg).
 _SKIP_CLI_KEYS = frozenset({"model_tag", _LORA_RUNTIME_KEY}) | _ROUTER_ONLY_KEYS
 
@@ -126,11 +127,31 @@ def build_vllm_cli_args(model_cfg: dict) -> list[str]:
     return cli_args
 
 
+# Engine capability flags. Callers gate optional features on *capabilities*, never
+# on the engine name (`if "sleep" in caps`, never `if engine == "vllm"`), so adding
+# an engine is just declaring its capability set. See docs/multi-backend-engine-design_zh-CN.md §4.
+CAP_SLEEP = "sleep"                # /sleep + /wake_up (warm standby, frees VRAM, process stays up)
+CAP_RUNTIME_LORA = "runtime_lora"  # runtime LoRA load/unload endpoints
+CAP_LORA_MODULES = "lora_modules"  # static --lora-modules at launch
+CAP_KV_TRANSFER = "kv_transfer"    # cross-instance KV cache sharing
+CAP_METRICS_VLLM = "metrics_vllm"  # exposes vLLM-format Prometheus metrics (waiting queue, …)
+
+# Sentinel engine name for non-LLM launchers (embedding server): they aren't
+# selected by an engine choice, so they register under one fixed value.
+ENGINE_DEFAULT = "default"
+
+
 class Launcher(Protocol):
     kind: ModelKind
+    # Which engine this launcher serves; dispatch is keyed on (kind, engine).
+    engine: str
+    # Optional features this engine supports (see CAP_* above). Threaded onto the
+    # LaunchSpec so callers (autoscaler, sleep/LoRA APIs, metrics) can gate without
+    # re-checking the engine name.
+    capabilities: frozenset[str]
 
     def keys(self, config) -> list[str]:
-        """All instance keys this launcher's kind defines in the config."""
+        """All instance keys this launcher defines in the config (its engine only)."""
         ...
 
     def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
@@ -140,10 +161,19 @@ class Launcher(Protocol):
 
 class VllmLauncher:
     kind = ModelKind.LLM
+    engine = "vllm"
+    capabilities = frozenset({
+        CAP_SLEEP, CAP_RUNTIME_LORA, CAP_LORA_MODULES, CAP_KV_TRANSFER, CAP_METRICS_VLLM,
+    })
 
     def keys(self, config) -> list[str]:
         out: list[str] = []
         for model_tag, engine in config.LLM_engines.items():
+            # Only claim groups configured for this engine. `engine` defaults to
+            # "vllm" (EngineModelConfig), so a config with no engine field is all
+            # vLLM = today's behaviour.
+            if getattr(engine.settings, "engine", "vllm") != self.engine:
+                continue
             for inst in engine.instances:
                 out.append(f"{model_tag}::{inst.id}")
         return out
@@ -204,6 +234,8 @@ class VllmLauncher:
         return LaunchSpec(
             key=key,
             kind=self.kind,
+            engine=self.engine,
+            capabilities=self.capabilities,
             command=command,
             env=env,
             log_path=log_path,
@@ -217,6 +249,8 @@ class VllmLauncher:
 
 class EmbeddingLauncher:
     kind = ModelKind.EMBEDDING
+    engine = ENGINE_DEFAULT  # not engine-selectable; one launcher for the embedding server
+    capabilities = frozenset()
 
     def keys(self, config) -> list[str]:
         emb = config.embedding_server
@@ -246,6 +280,8 @@ class EmbeddingLauncher:
         return LaunchSpec(
             key=key,
             kind=self.kind,
+            engine=self.engine,
+            capabilities=self.capabilities,
             command=command,
             env=env,
             log_path=log_path,
