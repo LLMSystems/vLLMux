@@ -139,7 +139,7 @@ The **router only routes** — the **backend owns model lifecycle**. The fronten
 backend, and Grafana sit behind nginx on a single origin; backend, router, and Prometheus
 share one network namespace so the spawned vLLM instances are reachable on `localhost`.
 
-### Mixed vLLM + SGLang (`make up-mixed`)
+### Mixed vLLM + SGLang + llama.cpp (`make up-mixed`)
 
 Each engine runs as its own backend container (they can't share a netns), sharing one
 Postgres (scheduling / desired intent), one router, one dashboard and one monitoring stack.
@@ -163,6 +163,10 @@ flowchart LR
         BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
         SINS["SGLang instances"]
     end
+    subgraph lbe["llama.cpp backend (engine-llamacpp.Dockerfile)"]
+        BL["<b>backend</b> · :5073<br/>NODE_ENGINES=llamacpp"]
+        LINS["llama-server instances"]
+    end
 
     Client --> FE
     FE -->|/api| BV
@@ -170,18 +174,23 @@ flowchart LR
     FE -->|/grafana| GF
     BV -->|launch| VINS
     BS -->|launch| SINS
+    BL -->|launch| LINS
     RT -->|route| VINS
     RT -->|route| SINS
+    RT -->|route| LINS
     BV <-->|leader/schedule| PG
     BS <-->|converge desired| PG
+    BL <-->|converge desired| PG
     PR -->|scrape| VINS
     PR -->|scrape| SINS
+    PR -->|scrape| LINS
     GF -->|query| PR
 ```
 
 The leader's **engine-aware scheduler** places each model on a backend that can run its engine;
 a control action landing on the wrong node is deferred to the owning one. SGLang serves
-OpenMetrics, so Prometheus stores its metrics as `sglang_*` (underscore) while vLLM keeps colons.
+OpenMetrics, so Prometheus stores its metrics as `sglang_*` (underscore), while vLLM and
+llama.cpp keep colons (`vllm:*`, `llamacpp:*`).
 
 ## Documentation
 

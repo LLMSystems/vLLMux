@@ -137,9 +137,9 @@ flowchart LR
 Grafana 都在 nginx 之後以單一來源對外；backend、router、Prometheus 共用一個 network
 namespace，所以被拉起的 vLLM 實例可在 `localhost` 互相連到。
 
-### vLLM + SGLang 混合（`make up-mixed`）
+### vLLM + SGLang + llama.cpp 混合（`make up-mixed`）
 
-兩個引擎各跑一個 backend 容器（無法共用 netns），共用一顆 Postgres（排程／desired 意圖）、
+三個引擎各跑一個 backend 容器（無法共用 netns），共用一顆 Postgres（排程／desired 意圖）、
 一個 router、一個 dashboard 與一套監控；各 backend 把自己 ready 的實例以**可路由位址**寫進
 共享 file_sd，Prometheus 一起抓。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
 
@@ -160,6 +160,10 @@ flowchart LR
         BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
         SINS["SGLang 實例"]
     end
+    subgraph lbe["llama.cpp backend (engine-llamacpp.Dockerfile)"]
+        BL["<b>backend</b> · :5073<br/>NODE_ENGINES=llamacpp"]
+        LINS["llama-server 實例"]
+    end
 
     Client --> FE
     FE -->|/api| BV
@@ -167,17 +171,22 @@ flowchart LR
     FE -->|/grafana| GF
     BV -->|拉起| VINS
     BS -->|拉起| SINS
+    BL -->|拉起| LINS
     RT -->|路由| VINS
     RT -->|路由| SINS
+    RT -->|路由| LINS
     BV <-->|leader/排程| PG
     BS <-->|收斂 desired| PG
+    BL <-->|收斂 desired| PG
     PR -->|scrape| VINS
     PR -->|scrape| SINS
+    PR -->|scrape| LINS
     GF -->|查詢| PR
 ```
 
 leader 的 **engine-aware 排程器**把每顆模型擺到「跑得動它引擎」的 backend；落錯 node 的控制
-動作會延後給擁有者執行。SGLang 走 OpenMetrics，指標入庫為底線的 `sglang_*`，vLLM 則保留冒號。
+動作會延後給擁有者執行。SGLang 走 OpenMetrics，指標入庫為底線的 `sglang_*`，vLLM 與 llama.cpp
+則保留冒號（`vllm:*`、`llamacpp:*`）。
 
 ## 文件
 
