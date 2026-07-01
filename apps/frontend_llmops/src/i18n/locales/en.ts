@@ -970,6 +970,12 @@ export default {
     toolAuto: 'Auto-detect (auto)',
     toolCallingDescSglang: 'SGLang enables tool calling just by setting tool_call_parser=<parser> (no enable_auto_tool_choice); reasoning models also need reasoning_parser. Use auto to detect from the chat template. Parser must match the model output format.',
     toolCallingDocRefSglang: 'Parser list from sglang.launch_server --tool-call-parser / --reasoning-parser. No matching parser = don\'t add it.',
+    accelTitleLlamacpp: '⚡ Acceleration settings (llama.cpp params)',
+    accelHintLlamacpp: 'Empty = llama.cpp default. Changes require model restart. GGUF quant is set via -hf repo:QUANT; n_gpu_layers controls VRAM offload (0 = CPU-only).',
+    llamacppNglAll: 'all layers on GPU',
+    toolLlamacppJinja: 'Enable tool calling (--jinja)',
+    toolCallingDescLlamacpp: 'llama.cpp is template-driven: enable --jinja so tools / tool_choice are honoured (it uses the model\'s built-in chat template). There is no per-family tool-call-parser; if the built-in template is insufficient, add a chat_template / chat_template_file param.',
+    toolCallingDocRefLlamacpp: 'See llama-server --jinja / --chat-template. Tool-call support depends on the GGUF\'s embedded chat template.',
   },
 
   // ---- ModelDetailDrawer ----

@@ -106,6 +106,48 @@ services:
     deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
     restart: unless-stopped
 
+  # Third engine backend: llama.cpp. Same backend code, FROM the llama.cpp base
+  # (deploy/engine-llamacpp.Dockerfile) so it can spawn `llama-server`. Declares
+  # LLMOPS_NODE_ENGINES=llamacpp so the scheduler only places llamacpp groups here.
+  # Unlike SGLang it needs no large shm / ipc=host. Writes its own file_sd targets
+  # file, auto-discovered by Prometheus's `engines` glob job (no scrape-config change).
+  llamacpp-backend:
+    build: { context: .., dockerfile: deploy/engine-llamacpp.Dockerfile }
+    image: llmops-engine-llamacpp:latest
+    container_name: mixed-llamacpp-backend
+    working_dir: /app/apps/backend
+    command: uvicorn main:app --host 0.0.0.0 --port 5000
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - LLMOPS_DB_PATH=/app/data/llmops.db
+      - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      - LLMOPS_INSTANCE_ID=llamacpp-node
+      - LLMOPS_NODE_HOST=mixed-llamacpp-backend
+      - LLMOPS_NODE_ENGINES=llamacpp
+      - LLMOPS_NODE_API_URL=http://mixed-llamacpp-backend:5000
+      - LLMOPS_VLLM_BIND_HOST=0.0.0.0
+      - LLMOPS_ROUTER_URL=http://router:8887
+      - LLMOPS_PROMETHEUS_SD_PATH=/sd/targets-llamacpp.json
+      - HF_HOME=/hf
+      - MODELSCOPE_CACHE=/modelscope/hub
+      - LLMOPS_LORA_DIR=/lora
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+      - mixed-llamacpp-data:/app/data
+      - mixed-sd:/sd                  # file_sd scrape targets (shared with Prometheus)
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+      - /etc/localtime:/etc/localtime:ro
+    ports: ["${MIXED_LLAMACPP_PORT:-5073}:5000"]
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
   router:
     image: llmops-engine:latest
     container_name: mixed-router
@@ -128,7 +170,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.54.1
     container_name: mixed-prometheus
-    depends_on: [vllm-backend, sglang-backend]
+    depends_on: [vllm-backend, sglang-backend, llamacpp-backend]
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -207,6 +249,7 @@ volumes:
   mixed-pg-data:
   mixed-vllm-data:
   mixed-sglang-data:
+  mixed-llamacpp-data:
   mixed-grafana-data:
   mixed-sd:              # shared file_sd scrape-target dir (backends write, Prometheus reads)
   mixed-kv-cache:        # cross-instance KV-cache root

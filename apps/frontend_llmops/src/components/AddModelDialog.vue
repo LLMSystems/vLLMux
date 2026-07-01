@@ -56,6 +56,7 @@ const pastePlaceholder = computed(() => PASTE_PLACEHOLDER[pasteEngine.value] ?? 
 // shows what the selected engine actually has (see launchers.py CAP_* flags).
 const engineIsVllm = computed(() => engine.value === 'vllm')
 const engineIsSglang = computed(() => engine.value === 'sglang')
+const engineIsLlamacpp = computed(() => engine.value === 'llamacpp')
 const engineHasSleep = computed(() => engine.value === 'vllm') // /sleep + /wake_up (vLLM only)
 const engineHasKvShare = computed(() => engine.value === 'vllm') // OffloadingConnector (vLLM only)
 const params = ref<{ key: string; value: string }[]>([])
@@ -367,13 +368,29 @@ const SGLANG_TOOL_PRESETS = [
   { label: 'Kimi K2', parser: 'kimi_k2', reasoning: '' },
   { label: 'GPT-OSS', parser: 'gpt-oss', reasoning: 'gpt-oss' },
 ]
-const toolPresets = computed(() => (engineIsSglang.value ? SGLANG_TOOL_PRESETS : VLLM_TOOL_PRESETS))
+// llama.cpp tool calling is template-driven (--jinja + --chat-template), not a
+// per-family tool-call-parser like vLLM/SGLang. So the single "preset" just turns on
+// --jinja; a specific template is entered as a raw chat_template / chat_template_file
+// param if the model's built-in one isn't enough.
+const LLAMACPP_TOOL_PRESETS = [{ label: 'addModel.toolLlamacppJinja', parser: '__jinja__', reasoning: '' }]
+const toolPresets = computed(() =>
+  engineIsLlamacpp.value
+    ? LLAMACPP_TOOL_PRESETS
+    : engineIsSglang.value
+      ? SGLANG_TOOL_PRESETS
+      : VLLM_TOOL_PRESETS,
+)
 function setParam(key: string, value: string) {
   const existing = params.value.find((p) => p.key === key)
   if (existing) existing.value = value
   else params.value.push({ key, value })
 }
 function applyToolPreset(parser: string, reasoning: string) {
+  if (engineIsLlamacpp.value) {
+    // Enable the Jinja chat-template path so `tools` / `tool_choice` are honoured.
+    setParam('jinja', 'true')
+    return
+  }
   if (engineIsSglang.value) {
     // SGLang enables tool calling just by setting --tool-call-parser; there's no
     // --enable-auto-tool-choice (and 'auto' lets it detect from the chat template).
@@ -384,6 +401,21 @@ function applyToolPreset(parser: string, reasoning: string) {
   }
   if (reasoning) setParam('reasoning_parser', reasoning)
 }
+// Tool-calling copy differs per engine (parser-based vs jinja-based).
+const toolDescKey = computed(() =>
+  engineIsLlamacpp.value
+    ? 'addModel.toolCallingDescLlamacpp'
+    : engineIsSglang.value
+      ? 'addModel.toolCallingDescSglang'
+      : 'addModel.toolCallingDesc',
+)
+const toolDocRefKey = computed(() =>
+  engineIsLlamacpp.value
+    ? 'addModel.toolCallingDocRefLlamacpp'
+    : engineIsSglang.value
+      ? 'addModel.toolCallingDocRefSglang'
+      : 'addModel.toolCallingDocRef',
+)
 
 // ---- vLLM acceleration presets (see docs/vllm_推理加速參數整理.md) ----
 // All ten are plain model_config keys, edited through the same `params` list so
@@ -480,6 +512,27 @@ const SGLANG_ACCEL_PRESETS: Record<string, Record<string, string>> = {
 function applySglangAccelPreset(name: 'latency' | 'throughput') {
   clearSglangAccel()
   for (const [k, v] of Object.entries(SGLANG_ACCEL_PRESETS[name]!)) setParam(k, v)
+  showAccel.value = true
+}
+
+// ---- llama.cpp acceleration (native flags; the launcher passes these through
+// kebab-cased. gguf_quant/max_model_len are model-source/context settings kept on
+// clear, like SGLang's. Choices verified against `llama-server --help` b9853). ----
+const LLAMACPP_ACCEL_KEYS = [
+  'n_gpu_layers', 'batch_size', 'ubatch_size', 'parallel', 'flash_attn',
+  'cache_type_k', 'cache_type_v', 'split_mode', 'tensor_split', 'main_gpu',
+]
+function clearLlamacppAccel() {
+  for (const k of LLAMACPP_ACCEL_KEYS) clearParam(k)
+}
+const LLAMACPP_ACCEL_PRESETS: Record<string, Record<string, string>> = {
+  // All layers on GPU + flash-attn for lowest latency; more server slots for throughput.
+  latency: { n_gpu_layers: '99', flash_attn: 'on', ubatch_size: '512' },
+  throughput: { n_gpu_layers: '99', parallel: '4', batch_size: '2048' },
+}
+function applyLlamacppAccelPreset(name: 'latency' | 'throughput') {
+  clearLlamacppAccel()
+  for (const [k, v] of Object.entries(LLAMACPP_ACCEL_PRESETS[name]!)) setParam(k, v)
   showAccel.value = true
 }
 
@@ -777,13 +830,13 @@ async function submit() {
 
         <!-- Acceleration presets (curated subset of model_config) — engine-specific:
              vLLM and SGLang expose different knobs, so each gets its own panel. -->
-        <div v-if="engineIsVllm || engineIsSglang" class="rounded-md border border-border/60 bg-muted/20">
+        <div v-if="engineIsVllm || engineIsSglang || engineIsLlamacpp" class="rounded-md border border-border/60 bg-muted/20">
           <button
             type="button"
             class="flex w-full items-center justify-between px-3 py-2 text-left"
             @click="showAccel = !showAccel"
           >
-            <span class="text-xs font-medium">{{ engineIsSglang ? $t('addModel.accelTitleSglang') : $t('addModel.accelTitle') }}</span>
+            <span class="text-xs font-medium">{{ engineIsLlamacpp ? $t('addModel.accelTitleLlamacpp') : engineIsSglang ? $t('addModel.accelTitleSglang') : $t('addModel.accelTitle') }}</span>
             <span class="text-xs text-muted-foreground">{{ showAccel ? '▾' : '▸' }}</span>
           </button>
           <div v-if="showAccel" class="space-y-3 border-t border-border/60 p-3">
@@ -1059,6 +1112,107 @@ async function submit() {
                 {{ $t('addModel.accelHintSglang') }}
               </p>
             </template>
+
+            <!-- ===== llama.cpp acceleration ===== -->
+            <template v-else-if="engineIsLlamacpp">
+              <!-- Scenario templates -->
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-[11px] text-muted-foreground">{{ $t('addModel.accelTemplates') }}</span>
+                <Button size="sm" variant="outline" @click="applyLlamacppAccelPreset('latency')">{{ $t('addModel.accelLatency') }}</Button>
+                <Button size="sm" variant="outline" @click="applyLlamacppAccelPreset('throughput')">{{ $t('addModel.accelThroughput') }}</Button>
+                <Button size="sm" variant="ghost" @click="clearLlamacppAccel">{{ $t('addModel.accelClear') }}</Button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                <!-- gguf_quant (model source: -hf repo:QUANT) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">gguf_quant <span class="font-normal">(→ -hf repo:QUANT)</span></span>
+                  <select :value="getParam('gguf_quant')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('gguf_quant', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (Q4_K_M)</option>
+                    <option value="Q2_K">Q2_K</option>
+                    <option value="Q3_K_M">Q3_K_M</option>
+                    <option value="Q4_K_M">Q4_K_M</option>
+                    <option value="Q5_K_M">Q5_K_M</option>
+                    <option value="Q6_K">Q6_K</option>
+                    <option value="Q8_0">Q8_0</option>
+                    <option value="F16">F16</option>
+                  </select>
+                </label>
+                <!-- max_model_len (-> --ctx-size) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">max_model_len <span class="font-normal">(→ ctx-size)</span></span>
+                  <Input :model-value="getParam('max_model_len')" type="number" min="0" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('max_model_len', String($event))" />
+                </label>
+                <!-- n_gpu_layers (offload; 99 = all on GPU, 0 = CPU-only) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">n_gpu_layers <span class="font-normal">(99 = {{ $t('addModel.llamacppNglAll') }})</span></span>
+                  <Input :model-value="getParam('n_gpu_layers')" type="number" min="0" placeholder="99" class="h-8 text-xs" @update:model-value="setParamOrClear('n_gpu_layers', String($event))" />
+                </label>
+                <!-- parallel (-np server slots) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">parallel <span class="font-normal">(-np, {{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                  <Input :model-value="getParam('parallel')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('parallel', String($event))" />
+                </label>
+                <!-- batch_size (-b) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">batch_size <span class="font-normal">(-b, {{ $t('addModel.defaultLabel') }} 2048)</span></span>
+                  <Input :model-value="getParam('batch_size')" type="number" min="1" placeholder="2048" class="h-8 text-xs" @update:model-value="setParamOrClear('batch_size', String($event))" />
+                </label>
+                <!-- ubatch_size (-ub) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">ubatch_size <span class="font-normal">(-ub, {{ $t('addModel.defaultLabel') }} 512)</span></span>
+                  <Input :model-value="getParam('ubatch_size')" type="number" min="1" placeholder="512" class="h-8 text-xs" @update:model-value="setParamOrClear('ubatch_size', String($event))" />
+                </label>
+                <!-- flash_attn (on/off/auto) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">flash_attn <span class="font-normal">({{ $t('addModel.defaultLabel') }} auto)</span></span>
+                  <select :value="getParam('flash_attn')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('flash_attn', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (auto)</option>
+                    <option value="on">on</option>
+                    <option value="off">off</option>
+                  </select>
+                </label>
+                <!-- split_mode (multi-GPU) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">split_mode <span class="font-normal">({{ $t('addModel.defaultLabel') }} layer)</span></span>
+                  <select :value="getParam('split_mode')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('split_mode', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (layer)</option>
+                    <option value="none">none</option>
+                    <option value="layer">layer</option>
+                    <option value="row">row</option>
+                  </select>
+                </label>
+                <!-- cache_type_k -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">cache_type_k <span class="font-normal">({{ $t('addModel.defaultLabel') }} f16)</span></span>
+                  <select :value="getParam('cache_type_k')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('cache_type_k', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (f16)</option>
+                    <option value="q8_0">q8_0</option>
+                    <option value="q4_0">q4_0</option>
+                    <option value="f16">f16</option>
+                  </select>
+                </label>
+                <!-- cache_type_v -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">cache_type_v <span class="font-normal">({{ $t('addModel.defaultLabel') }} f16)</span></span>
+                  <select :value="getParam('cache_type_v')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('cache_type_v', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (f16)</option>
+                    <option value="q8_0">q8_0</option>
+                    <option value="q4_0">q4_0</option>
+                    <option value="f16">f16</option>
+                  </select>
+                </label>
+                <!-- tensor_split (multi-GPU fractions) -->
+                <label class="space-y-1 sm:col-span-2">
+                  <span class="text-[11px] font-medium text-muted-foreground">tensor_split <span class="font-normal">(e.g. 0.6,0.4 — {{ $t('addModel.autoLabel') }})</span></span>
+                  <Input :model-value="getParam('tensor_split')" :placeholder="$t('addModel.autoLabel')" class="h-8 font-mono text-xs" @update:model-value="setParamOrClear('tensor_split', String($event))" />
+                </label>
+              </div>
+
+              <p class="text-[10px] text-muted-foreground">
+                {{ $t('addModel.accelHintLlamacpp') }}
+              </p>
+            </template>
           </div>
         </div>
 
@@ -1088,7 +1242,7 @@ async function submit() {
               <span>{{ showToolHint ? '▾' : '▸' }}</span>
             </button>
             <div v-if="showToolHint" class="mt-2 space-y-2 text-[11px] text-muted-foreground">
-              <p>{{ engineIsSglang ? $t('addModel.toolCallingDescSglang') : $t('addModel.toolCallingDesc') }}</p>
+              <p>{{ $t(toolDescKey) }}</p>
               <p class="font-medium text-foreground">{{ $t('addModel.toolCallingPresetHint') }}</p>
               <div class="flex flex-wrap gap-1.5">
                 <Button
@@ -1104,7 +1258,7 @@ async function submit() {
                 </Button>
               </div>
               <p class="text-muted-foreground/80">
-                {{ engineIsSglang ? $t('addModel.toolCallingDocRefSglang') : $t('addModel.toolCallingDocRef') }}
+                {{ $t(toolDocRefKey) }}
               </p>
             </div>
           </div>

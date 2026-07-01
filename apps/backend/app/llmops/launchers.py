@@ -136,6 +136,7 @@ CAP_LORA_MODULES = "lora_modules"  # static --lora-modules at launch
 CAP_KV_TRANSFER = "kv_transfer"    # cross-instance KV cache sharing
 CAP_METRICS_VLLM = "metrics_vllm"  # exposes vLLM-format Prometheus metrics (waiting queue, …)
 CAP_METRICS_SGLANG = "metrics_sglang"  # exposes sglang:* Prometheus metrics (the router parses these)
+CAP_METRICS_LLAMACPP = "metrics_llamacpp"  # exposes llamacpp:* Prometheus metrics (no kv-usage dim)
 
 # Sentinel engine name for non-LLM launchers (embedding server): they aren't
 # selected by an engine choice, so they register under one fixed value.
@@ -422,6 +423,166 @@ class SglangLauncher:
         cli_cfg = {**merged, "host": bind_host} if bind_host else merged
         command = [sys.executable, "-m", "sglang.launch_server"] + build_sglang_cli_args(cli_cfg)
         log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
+        return LaunchSpec(
+            key=key,
+            kind=self.kind,
+            engine=self.engine,
+            capabilities=self.capabilities,
+            command=command,
+            env=env,
+            log_path=log_path,
+            host=inst.host,
+            port=inst.port,
+            probe_url=f"http://{inst.host}:{inst.port}/health",
+            model_tag=engine.settings.model_tag,
+        )
+
+
+# ---- llama.cpp ------------------------------------------------------------
+
+# engine-neutral typed params with NO meaningful llama.cpp equivalent — dropped
+# rather than translated: quantization is baked into the GGUF (no --dtype), VRAM is
+# governed by --n-gpu-layers offload (not a utilization ratio), and multi-GPU is
+# --split-mode/--tensor-split (not a single tp size). See §2.2 of the design doc.
+_LLAMACPP_DROP_KEYS = frozenset({"gpu_memory_utilization", "tensor_parallel_size", "dtype"})
+# The one common typed param that maps cleanly.
+_LLAMACPP_PARAM_MAP = {"max_model_len": "ctx-size"}
+# Consumed specially (model addressing / served name / LoRA / meta) + router-only + dropped.
+_LLAMACPP_SKIP_CLI_KEYS = frozenset(
+    {"model_tag", "served_model_name", "id", "cuda_device",
+     "enable_lora", "lora_modules", "gguf_quant", "hf_file", _LORA_RUNTIME_KEY}
+) | _ROUTER_ONLY_KEYS | _LLAMACPP_DROP_KEYS
+
+
+def build_llamacpp_cli_args(model_cfg: dict) -> list[str]:
+    """dict -> ``llama-server`` CLI args.
+
+    Model addressing differs from vLLM/SGLang: llama.cpp serves GGUF, not a HF
+    safetensors repo. A ``model_tag`` ending in ``.gguf`` is a local file (``-m``);
+    otherwise it is a HF GGUF repo (``-hf``), with an optional ``gguf_quant`` appended
+    as ``repo:QUANT`` and an optional ``hf_file`` pinning the exact file (``-hff``).
+    ``--alias`` is always emitted so /v1/models (and the router's forward_name) is the
+    stable model_tag rather than llama.cpp's default of the raw model path.
+
+    ``max_model_len`` maps to ``--ctx-size``; ``gpu_memory_utilization`` /
+    ``tensor_parallel_size`` / ``dtype`` have no equivalent and are dropped. Everything
+    else passes through kebab-cased (extra="allow" engine-native flags: n_gpu_layers,
+    split_mode, cache_type_k, …).
+
+    Bools are store_true: True -> ``--flag``; False -> *omitted*. We do NOT synthesise
+    ``--no-<flag>`` because llama.cpp does not guarantee a paired negative form (e.g.
+    ``--mlock`` / ``--check-tensors`` have none) — to pass a native negative flag,
+    configure its own key (``no_cont_batching: true`` -> ``--no-cont-batching``, which
+    is exactly how llama.cpp names it). Verified against ``llama-server --help`` (b9853).
+
+    LoRA: each configured module becomes ``--lora <path>`` (or ``--lora-scaled
+    <path>:<scale>`` when a scale is set). llama.cpp loads GGUF adapters at launch;
+    there is no vLLM ``--lora-modules`` JSON nor SGLang ``NAME=PATH`` form, and the
+    adapter must be a GGUF matching the base.
+    """
+    model_tag = model_cfg.get("model_tag")
+    if not model_tag:
+        raise ValueError("model_config must provide 'model_tag'")
+    served = model_cfg.get("served_model_name") or model_tag
+
+    args: list[str] = []
+    if str(model_tag).endswith(".gguf"):
+        args += ["-m", str(model_tag)]                      # local GGUF file
+    else:
+        quant = model_cfg.get("gguf_quant")
+        args += ["-hf", f"{model_tag}:{quant}" if quant else str(model_tag)]  # HF GGUF repo
+        hf_file = model_cfg.get("hf_file")
+        if hf_file:
+            args += ["-hff", str(hf_file)]
+
+    # Stable served name for /v1/models + router forward_name.
+    args += ["--alias", str(served)]
+    # Always expose Prometheus /metrics (disabled by default in llama.cpp; the router
+    # parses llamacpp:* for the autoscaler signal).
+    args.append("--metrics")
+
+    # LoRA: launch-time GGUF adapters. (Runtime hot-add of a *new* adapter is not
+    # supported by llama.cpp — only rescaling already-loaded ones — so LlamacppLauncher
+    # does not declare CAP_RUNTIME_LORA. See docs/llama_cpp_serve.md E-LoRA.)
+    for m in (model_cfg.get("lora_modules") or []):
+        path = m.get("path")
+        if not path:
+            continue
+        scale = m.get("scale")
+        args += ["--lora-scaled", f"{path}:{scale}"] if scale is not None else ["--lora", str(path)]
+
+    for key, value in model_cfg.items():
+        if key in _LLAMACPP_SKIP_CLI_KEYS or value is None:
+            continue
+        flag = "--" + _LLAMACPP_PARAM_MAP.get(key, key).replace("_", "-")
+        if isinstance(value, bool):
+            if value:                       # store_true: True -> present; False -> omit
+                args.append(flag)
+        elif isinstance(value, list):
+            args.append(flag)
+            args.extend(str(v) for v in value)
+        elif isinstance(value, dict):
+            args.append(flag)
+            args.append(json.dumps(value, ensure_ascii=False))
+        else:
+            args.append(flag)
+            args.append(str(value))
+    return args
+
+
+class LlamacppLauncher:
+    kind = ModelKind.LLM
+    engine = "llamacpp"
+    # Only static launch-time LoRA + metrics. No sleep (llama.cpp has auto idle-sleep,
+    # not vLLM's /sleep+/wake_up), no kv_transfer, and NO runtime_lora in this project's
+    # sense: llama.cpp can only rescale/toggle adapters loaded at launch via
+    # POST /lora-adapters, not hot-add a new one (unlike vLLM/SGLang /load_lora_adapter).
+    # metrics_llamacpp: launches with --metrics; the router normalizes llamacpp:* into
+    # the same {waiting,running} load shape (no kv-usage dim). See §3/§10 of the design doc.
+    capabilities = frozenset({CAP_LORA_MODULES, CAP_METRICS_LLAMACPP})
+
+    def keys(self, config) -> list[str]:
+        out: list[str] = []
+        for model_tag, engine in config.LLM_engines.items():
+            if getattr(engine.settings, "engine", "vllm") != self.engine:
+                continue
+            for inst in engine.instances:
+                out.append(f"{model_tag}::{inst.id}")
+        return out
+
+    def build_spec(self, config, config_path: str, key: str) -> LaunchSpec:
+        model_tag, _, instance_id = key.partition("::")
+        engine = config.LLM_engines.get(model_tag)
+        if engine is None:
+            raise KeyError(f"model group '{model_tag}' not in config")
+        inst = next((i for i in engine.instances if i.id == instance_id), None)
+        if inst is None:
+            raise KeyError(f"instance '{instance_id}' not in group '{model_tag}'")
+
+        # Merge shared model_config with instance overrides, mirroring the other LLM
+        # launchers: single-GPU cuda_device -> CUDA_VISIBLE_DEVICES; drop the `id` field.
+        merged: dict = engine.settings.model_dump(by_alias=False)
+        merged.update(inst.model_dump())
+
+        env: dict[str, str] = {}
+        if merged.get("tensor_parallel_size", 1) == 1:
+            cuda_device = merged.pop("cuda_device", None)
+            if cuda_device is not None:
+                env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+        merged.pop("id", None)
+
+        # HA split deploys: optionally bind to a routable interface (0.0.0.0) so a router
+        # in another container/host reaches it via the advertised LLMOPS_NODE_HOST. Only
+        # the bind --host changes; the local probe + recorded host stay localhost (which
+        # a 0.0.0.0 bind also serves). Shares the env var with vLLM/SGLang.
+        bind_host = os.environ.get("LLMOPS_VLLM_BIND_HOST", "").strip()
+        cli_cfg = {**merged, "host": bind_host} if bind_host else merged
+        command = ["llama-server"] + build_llamacpp_cli_args(cli_cfg)
+        log_path = os.path.join(LOG_DIR, f"{model_tag}__{instance_id}.log")
+        # NOTE readiness: llama-server binds the port only AFTER the model finishes
+        # loading, so during startup /health is connection-refused (not 503 like
+        # vLLM/SGLang). The reconciler's probe already treats "not yet 200" as
+        # not-ready, so a refused connection is handled the same way.
         return LaunchSpec(
             key=key,
             kind=self.kind,

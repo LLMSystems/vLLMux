@@ -949,6 +949,12 @@ export default {
     toolAuto: '自動偵測（auto）',
     toolCallingDescSglang: 'SGLang 只需設 tool_call_parser=<parser> 即可啟用工具調用（不需 enable_auto_tool_choice）；reasoning 模型再加 reasoning_parser。可用 auto 讓它從 chat template 自動偵測。parser 要對得上模型輸出格式。',
     toolCallingDocRefSglang: 'parser 清單來自 sglang.launch_server 的 --tool-call-parser / --reasoning-parser。沒有對應 parser 的模型請勿亂加。',
+    accelTitleLlamacpp: '⚡ 加速設定（llama.cpp 參數）',
+    accelHintLlamacpp: '空白＝用 llama.cpp 預設。改了需重啟模型生效。GGUF 量化用 -hf repo:QUANT 指定；n_gpu_layers 控制 VRAM offload（0 = 純 CPU）。',
+    llamacppNglAll: '全部層放 GPU',
+    toolLlamacppJinja: '啟用工具調用（--jinja）',
+    toolCallingDescLlamacpp: 'llama.cpp 走 template 驅動：開 --jinja 才會處理 tools / tool_choice（用模型內建 chat template）。沒有分模型家族的 tool-call-parser；若內建 template 不夠，再加 chat_template / chat_template_file 參數。',
+    toolCallingDocRefLlamacpp: '參考 llama-server 的 --jinja / --chat-template。工具調用支援度取決於 GGUF 內嵌的 chat template。',
   },
 
   modelDetail: {

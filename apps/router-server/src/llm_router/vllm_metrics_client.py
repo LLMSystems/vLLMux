@@ -71,6 +71,17 @@ METRIC_NAMES_BY_ENGINE = {
         "prompt_tokens": "sglang:prompt_tokens_total",
         "generation_tokens": "sglang:generation_tokens_total",
     },
+    "llamacpp": {
+        # llama.cpp exposes llamacpp:* with --metrics. It has no KV-cache-usage gauge
+        # (verified live: the metric is absent), so kv_cache_usage_perc points at a
+        # non-existent name and parse() falls back to 0.0 — the autoscaler scales
+        # llamacpp groups on waiting/running only. See docs/llama_cpp_serve.md §D.
+        "running": "llamacpp:requests_processing",
+        "waiting": "llamacpp:requests_deferred",
+        "kv_cache_usage_perc": "llamacpp:__no_kv_metric__",
+        "prompt_tokens": "llamacpp:prompt_tokens_total",
+        "generation_tokens": "llamacpp:tokens_predicted_total",
+    },
 }
 
 

@@ -2,11 +2,13 @@ import json
 
 import pytest
 
-from app.llmops.launchers import (CAP_LORA_MODULES, CAP_METRICS_SGLANG,
+from app.llmops.launchers import (CAP_KV_TRANSFER, CAP_LORA_MODULES,
+                                  CAP_METRICS_LLAMACPP, CAP_METRICS_SGLANG,
                                   CAP_RUNTIME_LORA, CAP_SLEEP, EMBEDDING_KEY,
-                                  ENGINE_DEFAULT, EmbeddingLauncher, SglangLauncher,
-                                  VllmLauncher, _write_effective_config,
-                                  build_sglang_cli_args, build_vllm_cli_args)
+                                  ENGINE_DEFAULT, EmbeddingLauncher, LlamacppLauncher,
+                                  SglangLauncher, VllmLauncher, _write_effective_config,
+                                  build_llamacpp_cli_args, build_sglang_cli_args,
+                                  build_vllm_cli_args)
 from app.llmops.state import ModelKind
 from schema import RootConfig
 from tests.conftest import FAKE_CONFIG
@@ -443,3 +445,163 @@ def test_sglang_bind_host_env_overrides_only_the_bind_address(monkeypatch):
 def test_sglang_binds_configured_host_by_default():
     spec = SglangLauncher().build_spec(_sglang_config(), "config.yaml", "S::a")
     assert spec.command[spec.command.index("--host") + 1] == "localhost"
+
+
+# ---- llama.cpp launcher (docs/llamacpp-launcher-impl-design_zh-CN.md) ---------
+
+def _llamacpp_config(extra: dict | None = None) -> RootConfig:
+    mc = {"model_tag": "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "engine": "llamacpp"}
+    if extra:
+        mc.update(extra)
+    return RootConfig.model_validate({
+        "server": {"host": "0.0.0.0", "port": 8887},
+        "LLM_engines": {"L": {
+            "instances": [{"id": "a", "host": "localhost", "port": 8100, "cuda_device": 3}],
+            "model_config": mc,
+        }},
+    })
+
+
+def test_llamacpp_args_hf_repo_addressing_and_alias():
+    # HF GGUF repo -> -hf; gguf_quant -> repo:QUANT; --alias always set (stable
+    # /v1/models id + router forward_name).
+    args = build_llamacpp_cli_args({
+        "model_tag": "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "gguf_quant": "Q4_K_M",
+    })
+    assert args[:2] == ["-hf", "Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M"]
+    assert args[args.index("--alias") + 1] == "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+
+
+def test_llamacpp_args_hf_file_pins_exact_file():
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/repo-GGUF", "hf_file": "model-q4.gguf",
+    })
+    assert args[:2] == ["-hf", "org/repo-GGUF"]
+    assert args[args.index("-hff") + 1] == "model-q4.gguf"
+
+
+def test_llamacpp_args_local_gguf_uses_dash_m():
+    # A .gguf model_tag is a local file, not a HF repo.
+    args = build_llamacpp_cli_args({"model_tag": "/models/foo.gguf"})
+    assert args[:2] == ["-m", "/models/foo.gguf"]
+    assert "-hf" not in args
+
+
+def test_llamacpp_args_explicit_served_name_wins():
+    args = build_llamacpp_cli_args({"model_tag": "org/m-GGUF", "served_model_name": "my-name"})
+    assert args[args.index("--alias") + 1] == "my-name"
+
+
+def test_llamacpp_args_ctx_size_translation():
+    # max_model_len -> --ctx-size (the one cleanly-mapped typed param).
+    args = build_llamacpp_cli_args({"model_tag": "org/m-GGUF", "max_model_len": 4096})
+    assert args[args.index("--ctx-size") + 1] == "4096"
+    assert "--max-model-len" not in args and "--context-length" not in args
+
+
+def test_llamacpp_args_drops_inapplicable_typed_params():
+    # gpu_memory_utilization / tensor_parallel_size / dtype have no llama.cpp
+    # equivalent and must be dropped (not translated, not passed raw).
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF",
+        "gpu_memory_utilization": 0.9, "tensor_parallel_size": 2, "dtype": "bfloat16",
+    })
+    for f in ("--gpu-memory-utilization", "--mem-fraction-static", "--tensor-parallel-size",
+              "--tp-size", "--dtype"):
+        assert f not in args
+
+
+def test_llamacpp_args_native_flags_pass_through():
+    # extra="allow" engine-native flags pass through kebab-cased.
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF", "n_gpu_layers": 99, "split_mode": "row",
+        "cache_type_k": "q8_0", "parallel": 4,
+    })
+    assert args[args.index("--n-gpu-layers") + 1] == "99"
+    assert args[args.index("--split-mode") + 1] == "row"
+    assert args[args.index("--cache-type-k") + 1] == "q8_0"
+    assert args[args.index("--parallel") + 1] == "4"
+
+
+def test_llamacpp_args_bool_is_store_true_no_dual():
+    # True -> --flag; False -> omitted. Never synthesise --no-<flag> (llama.cpp has no
+    # guaranteed paired negative). Native negatives are their own key.
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF", "flash_attn": True, "mlock": False,
+        "no_cont_batching": True,
+    })
+    assert "--flash-attn" in args
+    assert "--mlock" not in args and "--no-mlock" not in args
+    assert "--no-cont-batching" in args     # native negative flag via its own key
+
+
+def test_llamacpp_args_always_metrics():
+    args = build_llamacpp_cli_args({"model_tag": "org/m-GGUF"})
+    assert "--metrics" in args
+
+
+def test_llamacpp_args_skip_router_only_and_meta_keys():
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF", "engine": "llamacpp", "kind": "chat",
+        "routing_strategy": "p2c", "gguf_quant": "Q4_K_M",
+    })
+    for f in ("--engine", "--kind", "--routing-strategy", "--gguf-quant"):
+        assert f not in args
+
+
+def test_llamacpp_args_static_lora():
+    # lora_modules -> --lora <path>; with a scale -> --lora-scaled <path>:<scale>.
+    # No vLLM JSON, no SGLang NAME=PATH.
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF",
+        "lora_modules": [{"name": "a", "path": "/lora/a.gguf"},
+                         {"name": "b", "path": "/lora/b.gguf", "scale": 0.7}],
+    })
+    assert args[args.index("--lora") + 1] == "/lora/a.gguf"
+    assert args[args.index("--lora-scaled") + 1] == "/lora/b.gguf:0.7"
+    assert "--lora-modules" not in args and "--lora-paths" not in args
+
+
+def test_llamacpp_args_requires_model_tag():
+    with pytest.raises(ValueError):
+        build_llamacpp_cli_args({"max_model_len": 4096})
+
+
+def test_llamacpp_launcher_claims_only_llamacpp_engine():
+    l = LlamacppLauncher()
+    assert l.kind == ModelKind.LLM and l.engine == "llamacpp"
+    assert l.keys(_llamacpp_config()) == ["L::a"]
+    assert l.keys(FAKE_CONFIG) == []                        # FAKE_CONFIG is all vLLM
+    assert l.keys(_sglang_config()) == []                   # doesn't claim sglang group
+    assert VllmLauncher().keys(_llamacpp_config()) == []    # vLLM doesn't claim llamacpp group
+
+
+def test_llamacpp_launcher_capabilities():
+    # Only static LoRA + metrics. No sleep, no kv_transfer, and crucially NO
+    # runtime_lora (llama.cpp can't hot-add a new adapter; see design §0.2).
+    caps = LlamacppLauncher().capabilities
+    assert CAP_LORA_MODULES in caps and CAP_METRICS_LLAMACPP in caps
+    assert CAP_RUNTIME_LORA not in caps
+    assert CAP_SLEEP not in caps and CAP_KV_TRANSFER not in caps
+
+
+def test_llamacpp_build_spec():
+    spec = LlamacppLauncher().build_spec(_llamacpp_config({"max_model_len": 8192}),
+                                         "config.yaml", "L::a")
+    assert spec.engine == "llamacpp"
+    assert spec.command[0] == "llama-server"
+    assert "-hf" in spec.command
+    assert spec.command[spec.command.index("--ctx-size") + 1] == "8192"
+    # single-GPU cuda_device -> env, not a CLI flag; id dropped.
+    assert spec.env["CUDA_VISIBLE_DEVICES"] == "3"
+    assert "--cuda-device" not in spec.command and "--id" not in spec.command
+    assert spec.probe_url == "http://localhost:8100/health"
+    assert spec.host == "localhost" and spec.port == 8100
+
+
+def test_llamacpp_bind_host_env_overrides_only_the_bind_address(monkeypatch):
+    monkeypatch.setenv("LLMOPS_VLLM_BIND_HOST", "0.0.0.0")
+    spec = LlamacppLauncher().build_spec(_llamacpp_config(), "config.yaml", "L::a")
+    assert spec.command[spec.command.index("--host") + 1] == "0.0.0.0"  # binds all
+    assert spec.host == "localhost"                                     # record unchanged
+    assert spec.probe_url == "http://localhost:8100/health"            # local probe unchanged
