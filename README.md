@@ -106,6 +106,8 @@ Request/response shapes and auth details are in [docs/API.md](docs/API.md).
 
 ## Architecture
 
+### vLLM-only (`make up`)
+
 ```mermaid
 flowchart LR
     Client([Clients])
@@ -136,6 +138,50 @@ flowchart LR
 The **router only routes** — the **backend owns model lifecycle**. The frontend, router,
 backend, and Grafana sit behind nginx on a single origin; backend, router, and Prometheus
 share one network namespace so the spawned vLLM instances are reachable on `localhost`.
+
+### Mixed vLLM + SGLang (`make up-mixed`)
+
+Each engine runs as its own backend container (they can't share a netns), sharing one
+Postgres (scheduling / desired intent), one router, one dashboard and one monitoring stack.
+Each backend publishes its ready instances as **routable addresses** to a shared file_sd that
+Prometheus scrapes. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
+
+```mermaid
+flowchart LR
+    Client([Clients])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    PG[("<b>postgres</b><br/>shared store · scheduling/desired")]
+    PR["<b>prometheus</b> · :9090<br/>scrapes routable file_sd targets"]
+    RT["<b>router</b> · :8887<br/>OpenAI-compatible LB"]
+
+    subgraph vbe["vLLM backend (engine.Dockerfile)"]
+        BV["<b>backend</b> · :5071<br/>NODE_ENGINES=vllm"]
+        VINS["vLLM instances"]
+    end
+    subgraph sbe["SGLang backend (engine-sglang.Dockerfile)"]
+        BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
+        SINS["SGLang instances"]
+    end
+
+    Client --> FE
+    FE -->|/api| BV
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BV -->|launch| VINS
+    BS -->|launch| SINS
+    RT -->|route| VINS
+    RT -->|route| SINS
+    BV <-->|leader/schedule| PG
+    BS <-->|converge desired| PG
+    PR -->|scrape| VINS
+    PR -->|scrape| SINS
+    GF -->|query| PR
+```
+
+The leader's **engine-aware scheduler** places each model on a backend that can run its engine;
+a control action landing on the wrong node is deferred to the owning one. SGLang serves
+OpenMetrics, so Prometheus stores its metrics as `sglang_*` (underscore) while vLLM keeps colons.
 
 ## Documentation
 

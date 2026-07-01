@@ -104,6 +104,8 @@ curl http://localhost:8887/v1/chat/completions \
 
 ## 架構
 
+### 純 vLLM（`make up`）
+
 ```mermaid
 flowchart LR
     Client([Clients 用戶端])
@@ -134,6 +136,48 @@ flowchart LR
 **router 只負責路由**——**模型生命週期由 backend 掌管**。frontend、router、backend 與
 Grafana 都在 nginx 之後以單一來源對外；backend、router、Prometheus 共用一個 network
 namespace，所以被拉起的 vLLM 實例可在 `localhost` 互相連到。
+
+### vLLM + SGLang 混合（`make up-mixed`）
+
+兩個引擎各跑一個 backend 容器（無法共用 netns），共用一顆 Postgres（排程／desired 意圖）、
+一個 router、一個 dashboard 與一套監控；各 backend 把自己 ready 的實例以**可路由位址**寫進
+共享 file_sd，Prometheus 一起抓。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
+
+```mermaid
+flowchart LR
+    Client([Clients 用戶端])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    PG[("<b>postgres</b><br/>共用 store · 排程/desired")]
+    PR["<b>prometheus</b> · :9090<br/>抓可路由 file_sd targets"]
+    RT["<b>router</b> · :8887<br/>OpenAI 相容負載平衡"]
+
+    subgraph vbe["vLLM backend (engine.Dockerfile)"]
+        BV["<b>backend</b> · :5071<br/>NODE_ENGINES=vllm"]
+        VINS["vLLM 實例"]
+    end
+    subgraph sbe["SGLang backend (engine-sglang.Dockerfile)"]
+        BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
+        SINS["SGLang 實例"]
+    end
+
+    Client --> FE
+    FE -->|/api| BV
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BV -->|拉起| VINS
+    BS -->|拉起| SINS
+    RT -->|路由| VINS
+    RT -->|路由| SINS
+    BV <-->|leader/排程| PG
+    BS <-->|收斂 desired| PG
+    PR -->|scrape| VINS
+    PR -->|scrape| SINS
+    GF -->|查詢| PR
+```
+
+leader 的 **engine-aware 排程器**把每顆模型擺到「跑得動它引擎」的 backend；落錯 node 的控制
+動作會延後給擁有者執行。SGLang 走 OpenMetrics，指標入庫為底線的 `sglang_*`，vLLM 則保留冒號。
 
 ## 文件
 
