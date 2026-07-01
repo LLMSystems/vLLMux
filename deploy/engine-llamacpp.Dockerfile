@@ -59,3 +59,9 @@ COPY packages ./packages
 # compose `command:` (uvicorn for the backend) runs verbatim.
 ENTRYPOINT []
 CMD ["bash"]
+
+# The base also ships a HEALTHCHECK probing llama-server on :8080, but this container
+# runs the control-plane backend (uvicorn on :5000), not llama-server — so the
+# inherited check always fails and the container shows "unhealthy". Clear it to match
+# the vLLM/SGLang engine images (which define no healthcheck).
+HEALTHCHECK NONE

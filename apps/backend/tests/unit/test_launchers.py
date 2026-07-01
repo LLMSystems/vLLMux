@@ -562,6 +562,21 @@ def test_llamacpp_args_static_lora():
     assert "--lora-modules" not in args and "--lora-paths" not in args
 
 
+def test_llamacpp_args_drops_vllm_lora_knobs():
+    # vLLM/SGLang LoRA knobs have no llama.cpp flag; passing e.g. --max-lora-rank makes
+    # llama-server exit "invalid argument". They must be dropped (the frontend also
+    # stops injecting them, but the launcher is the safety net for config/paste).
+    args = build_llamacpp_cli_args({
+        "model_tag": "org/m-GGUF", "enable_lora": True, "max_lora_rank": 16,
+        "max_loras": 4, "lora_target_modules": ["q_proj"], "fully_sharded_loras": True,
+        "lora_modules": [{"name": "a", "path": "/lora/a.gguf"}],
+    })
+    assert args[args.index("--lora") + 1] == "/lora/a.gguf"   # the adapter still loads
+    for f in ("--max-lora-rank", "--max-loras", "--lora-target-modules",
+              "--fully-sharded-loras", "--enable-lora"):
+        assert f not in args
+
+
 def test_llamacpp_args_requires_model_tag():
     with pytest.raises(ValueError):
         build_llamacpp_cli_args({"max_model_len": 4096})

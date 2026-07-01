@@ -920,6 +920,7 @@ export default {
     addLora: 'Add',
     loraServedName: 'served name (e.g. sql-lora)',
     loraPickAdapter: '— Pick adapter / type path —',
+    loraPickAdapterGguf: '— Pick GGUF adapter / type .gguf path —',
     loraTyped: '(typed)',
     noLora: 'No LoRA. Adding a row auto-adds enable_lora=true; served name is the name to put in the model field for inference. Pick adapters from the LoRA Library, or type a path.',
     loraAutoHint: 'Picking from the library auto-fills base and sets max_lora_rank to the aligned rank. Base model must support LoRA (vLLM SupportsLoRA).',

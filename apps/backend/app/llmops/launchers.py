@@ -450,7 +450,11 @@ _LLAMACPP_PARAM_MAP = {"max_model_len": "ctx-size"}
 # Consumed specially (model addressing / served name / LoRA / meta) + router-only + dropped.
 _LLAMACPP_SKIP_CLI_KEYS = frozenset(
     {"model_tag", "served_model_name", "id", "cuda_device",
-     "enable_lora", "lora_modules", "gguf_quant", "hf_file", _LORA_RUNTIME_KEY}
+     "enable_lora", "lora_modules", "gguf_quant", "hf_file", _LORA_RUNTIME_KEY,
+     # vLLM/SGLang LoRA knobs with no llama.cpp equivalent — llama.cpp just takes
+     # `--lora <gguf>`. Passing e.g. --max-lora-rank makes llama-server exit with
+     # "invalid argument". Drop them so a config/paste carrying them still launches.
+     "max_lora_rank", "max_loras", "lora_target_modules", "fully_sharded_loras"}
 ) | _ROUTER_ONLY_KEYS | _LLAMACPP_DROP_KEYS
 
 

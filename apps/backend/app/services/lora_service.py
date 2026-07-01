@@ -56,27 +56,47 @@ def _read_adapter_config(folder: str) -> Optional[dict]:
 
 
 def scan() -> list[dict[str, Any]]:
-    """Adapter folders under the LoRA root, with base model + rank parsed out."""
+    """Adapters under the LoRA root.
+
+    Two shapes coexist:
+      - a **folder** with a PEFT ``adapter_config.json`` (HF/safetensors LoRA for
+        vLLM/SGLang) — base model + rank are parsed from the config;
+      - a loose **``*.gguf``** file (a GGUF LoRA for llama.cpp) — llama.cpp loads it by
+        path via ``--lora``. GGUF metadata isn't cheaply readable here, so base/rank
+        are left null; the ``format`` field lets the dashboard route it to the right
+        engine picker.
+    """
     root = lora_root()
     out: list[dict[str, Any]] = []
     if not os.path.isdir(root):
         return out
     for name in sorted(os.listdir(root)):
-        folder = os.path.join(root, name)
-        if not os.path.isdir(folder):
-            continue
-        cfg = _read_adapter_config(folder)
-        if cfg is None:
-            continue  # not an adapter (no adapter_config.json)
-        out.append({
-            "name": name,
-            "path": folder,
-            "base_model": cfg.get("base_model_name_or_path"),
-            "rank": cfg.get("r"),
-            "alpha": cfg.get("lora_alpha"),
-            "target_modules": list(cfg.get("target_modules") or []),
-            "size_on_disk": dir_size(folder),
-        })
+        entry = os.path.join(root, name)
+        if os.path.isdir(entry):
+            cfg = _read_adapter_config(entry)
+            if cfg is None:
+                continue  # not an adapter (no adapter_config.json)
+            out.append({
+                "name": name,
+                "path": entry,
+                "base_model": cfg.get("base_model_name_or_path"),
+                "rank": cfg.get("r"),
+                "alpha": cfg.get("lora_alpha"),
+                "target_modules": list(cfg.get("target_modules") or []),
+                "size_on_disk": dir_size(entry),
+                "format": "peft",
+            })
+        elif os.path.isfile(entry) and name.lower().endswith(".gguf"):
+            out.append({
+                "name": name,
+                "path": entry,
+                "base_model": None,  # not cheaply readable from GGUF metadata here
+                "rank": None,
+                "alpha": None,
+                "target_modules": [],
+                "size_on_disk": os.path.getsize(entry),
+                "format": "gguf",
+            })
     return out
 
 
@@ -89,12 +109,15 @@ def disk_usage() -> dict[str, int]:
 
 
 def delete(name: str) -> bool:
-    """Remove an adapter folder. False if it wasn't there."""
-    folder = adapter_dir(name)
-    if not os.path.isdir(folder):
-        return False
-    shutil.rmtree(folder)
-    return True
+    """Remove an adapter (a PEFT folder or a loose .gguf file). False if absent."""
+    target = adapter_dir(name)
+    if os.path.isdir(target):
+        shutil.rmtree(target)
+        return True
+    if os.path.isfile(target):
+        os.remove(target)
+        return True
+    return False
 
 
 def download(repo_id: str, name: str, token: Optional[str] = None) -> str:

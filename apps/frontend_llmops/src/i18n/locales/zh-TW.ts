@@ -899,6 +899,7 @@ export default {
     addLora: '新增',
     loraServedName: 'served name（如 sql-lora）',
     loraPickAdapter: '— 選 adapter / 自填 path —',
+    loraPickAdapterGguf: '— 選 GGUF adapter / 自填 .gguf path —',
     loraTyped: '（自填）',
     noLora: '無 LoRA。新增一列會自動補上 enable_lora=true；served name 即推論時 model 欄位要填的名稱。adapter 從 LoRA 庫挑選，或自填 path。',
     loraAutoHint: '從庫選 adapter 會自動帶入 base 並把 max_lora_rank 設到對齊的 rank。Base model 須支援 LoRA（vLLM SupportsLoRA）。',

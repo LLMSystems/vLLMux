@@ -1,6 +1,7 @@
 import pytest
 
-from app.services.vllm_command import parse_command, parse_sglang_command, parse_vllm_command
+from app.services.vllm_command import (parse_command, parse_llamacpp_command,
+                                        parse_sglang_command, parse_vllm_command)
 
 pytestmark = pytest.mark.unit
 
@@ -70,7 +71,37 @@ def test_parse_sglang_lora_paths():
 def test_parse_command_dispatch_by_sniffing_and_hint():
     # Sniffed from the command text.
     assert parse_command("python -m sglang.launch_server --model-path org/m")["model_config"]["engine"] == "sglang"
+    assert parse_command("llama-server -hf org/m-GGUF --port 8091")["model_config"]["engine"] == "llamacpp"
     # vLLM path leaves engine unset (frontend defaults to vllm).
     assert "engine" not in parse_command("vllm serve org/m --port 8001")["model_config"]
     # Explicit hint wins even for an ambiguous command.
     assert parse_command("--model-path org/m --port 8030", engine="sglang")["model_config"]["engine"] == "sglang"
+    assert parse_command("-hf org/m-GGUF --port 8091", engine="llamacpp")["model_config"]["engine"] == "llamacpp"
+
+
+def test_parse_llamacpp_hf_repo_quant_and_short_flags():
+    p = parse_llamacpp_command(
+        "CUDA_VISIBLE_DEVICES=1 llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M "
+        "-a q25-gguf -c 4096 -ngl 99 --port 8091"
+    )
+    mc = p["model_config"]
+    assert mc["model_tag"] == "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+    assert mc["engine"] == "llamacpp"
+    assert mc["gguf_quant"] == "Q4_K_M"          # quant split off the repo
+    assert mc["max_model_len"] == 4096           # -c mapped to engine-neutral key
+    assert mc["n_gpu_layers"] == 99              # short -ngl normalised
+    assert mc["served_model_name"] == "q25-gguf"
+    assert p["instance"]["port"] == 8091
+    assert p["instance"]["cuda_device"] == 1
+    assert "ctx_size" not in mc and "hf_repo" not in mc  # nothing leaks un-mapped
+
+
+def test_parse_llamacpp_local_gguf_and_lora():
+    p = parse_llamacpp_command(
+        "llama-server -m /models/foo.gguf --lora /lora/a.gguf --lora-scaled /lora/b.gguf:0.7 --port 8092"
+    )
+    mc = p["model_config"]
+    assert mc["model_tag"] == "/models/foo.gguf" and "gguf_quant" not in mc
+    assert mc["enable_lora"] is True
+    assert [m["path"] for m in mc["lora_modules"]] == ["/lora/a.gguf", "/lora/b.gguf"]
+    assert p["instance"]["port"] == 8092

@@ -50,6 +50,7 @@ const pasteEngine = ref('vllm')
 const PASTE_PLACEHOLDER: Record<string, string> = {
   vllm: 'CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85',
   sglang: 'CUDA_VISIBLE_DEVICES=0 python -m sglang.launch_server --model-path Qwen/Qwen3-0.6B --port 8030 --context-length 4096 --mem-fraction-static 0.85',
+  llamacpp: 'CUDA_VISIBLE_DEVICES=0 llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M -a qwen25-05b-gguf -c 4096 -ngl 99 --port 8091',
 }
 const pastePlaceholder = computed(() => PASTE_PLACEHOLDER[pasteEngine.value] ?? PASTE_PLACEHOLDER.vllm)
 // Capability gating — the two engines support different things, so the form only
@@ -92,7 +93,12 @@ function adapterByPath(path: string): LoraAdapter | undefined {
 function loraBaseWarning(l: LoraModule): string {
   const a = adapterByPath(l.path)
   if (!a || !a.base_model) return ''
-  return a.base_model === modelTag.value
+  // A GGUF/llama.cpp model_tag carries a -GGUF suffix (+ maybe :quant) while a LoRA
+  // records its base as the plain repo (Qwen3-0.6B-GGUF vs Qwen3-0.6B) — the same base
+  // model, so don't warn on the suffix alone. (Note: llama.cpp still needs the adapter
+  // itself in GGUF format; this check is only about the base model identity.)
+  const base = modelTag.value.replace(/:.*$/, '').replace(/[-.]gguf$/i, '')
+  return a.base_model === modelTag.value || a.base_model === base
     ? ''
     : t('addModel.loraBaseMismatch', {
       adapterBase: a.base_model,
@@ -234,16 +240,25 @@ function prefillForEdit() {
   routingStrategy.value = String(cfg.settings.routing_strategy ?? '')
   kvShared.value = isKvShared(cfg.settings)
   sleepMode.value = !!cfg.settings.enable_sleep_mode
+  // vLLM/SGLang compute knobs that the schema serialises for every group but that
+  // don't apply to llama.cpp (the launcher drops them). Filtered out when editing a
+  // llamacpp model so they don't clutter the raw param editor or round-trip on save.
+  const llamacppInapplicable = new Set(['gpu_memory_utilization', 'tensor_parallel_size', 'dtype'])
   params.value = extractLoras(
     Object.entries(cfg.settings).filter(
-      ([k2]) =>
+      ([k2, v]) =>
+        // Drop null-valued typed optionals (e.g. gpu_memory_utilization/dtype the
+        // schema serialises as null when unset) — loading them as empty params would
+        // round-trip back as "" and fail typed float/int parsing on save.
+        v !== null &&
         k2 !== 'model_tag' &&
         k2 !== 'engine' &&
         k2 !== 'routing_strategy' &&
         k2 !== 'kv_transfer_config' &&
-        k2 !== 'enable_sleep_mode',
+        k2 !== 'enable_sleep_mode' &&
+        !(engine.value === 'llamacpp' && llamacppInapplicable.has(k2)),
     ),
-  ).map(([k2, v]) => ({ key: k2, value: v === null ? '' : String(v) }))
+  ).map(([k2, v]) => ({ key: k2, value: String(v) }))
   warnings.value = []
   parsed.value = true // skip the paste/parse step
 }
@@ -324,22 +339,35 @@ function addLora() {
 function removeLora(i: number) {
   loras.value.splice(i, 1)
 }
-/** Add --enable-lora as a flag when the first adapter is mounted (vLLM needs it). */
+/** Add --enable-lora as a flag when the first adapter is mounted (vLLM/SGLang need it;
+ *  llama.cpp takes `--lora <gguf>` directly and has no such flag). */
 function ensureEnableLora() {
+  if (engineIsLlamacpp.value) return
   if (!params.value.some((p) => p.key === 'enable_lora')) setParam('enable_lora', 'true')
 }
-/** Picked an adapter from the library: default served name, base, and bump
- *  max_lora_rank to cover every mounted adapter's rank. */
+/** Picked an adapter from the library: default served name, base, and (vLLM/SGLang
+ *  only) bump max_lora_rank to cover every mounted adapter's rank. llama.cpp has no
+ *  --max-lora-rank (passing it makes llama-server exit "invalid argument"), so skip it. */
 function onPickLora(l: LoraModule) {
   ensureEnableLora()
   const a = adapterByPath(l.path)
   if (!a) return
   if (!l.name.trim()) l.name = a.name
   if (a.base_model && !l.base_model_name) l.base_model_name = a.base_model
+  if (engineIsLlamacpp.value) return
   const ranks = loras.value.map((m) => adapterByPath(m.path)?.rank ?? 0)
   const maxRank = Math.max(0, ...ranks)
   if (maxRank > 0) setParam('max_lora_rank', String(maxRank))
 }
+/** Adapters offered in the picker, split by format so each engine only sees what it
+ *  can load: llama.cpp takes GGUF adapters (*.gguf), while vLLM/SGLang take PEFT
+ *  folders (not GGUF). A free-typed path is always still allowed either way. */
+const pickableLoras = computed(() => {
+  const isGguf = (a: LoraAdapter) => a.path.toLowerCase().endsWith('.gguf')
+  return engineIsLlamacpp.value
+    ? loraLibrary.value.filter(isGguf)
+    : loraLibrary.value.filter((a) => !isGguf(a))
+})
 
 // ---- Tool-calling presets ----
 // Recommended (tool_call_parser, reasoning_parser) by model family — the parser
@@ -556,6 +584,7 @@ async function submit() {
     const kk = k.trim()
     if (
       kk &&
+      value.trim() !== '' && // empty = unset; never send "" (fails typed float/int fields)
       kk !== 'lora_modules' &&
       kk !== 'routing_strategy' &&
       kk !== 'kv_transfer_config' &&
@@ -637,7 +666,7 @@ async function submit() {
                to the parser (vLLM `serve` vs SGLang `launch_server` differ). -->
           <div class="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
             <button
-              v-for="e in ['vllm', 'sglang']"
+              v-for="e in ['vllm', 'sglang', 'llamacpp']"
               :key="e"
               type="button"
               class="rounded px-2 py-0.5 text-[11px] font-medium transition-colors"
@@ -1285,11 +1314,11 @@ async function submit() {
                   class="h-9 flex-[1.4] rounded-md border border-input bg-background/40 px-2 font-mono text-xs"
                   @change="onPickLora(l)"
                 >
-                  <option value="">{{ $t('addModel.loraPickAdapter') }}</option>
-                  <option v-for="a in loraLibrary" :key="a.path" :value="a.path">
+                  <option value="">{{ engineIsLlamacpp ? $t('addModel.loraPickAdapterGguf') : $t('addModel.loraPickAdapter') }}</option>
+                  <option v-for="a in pickableLoras" :key="a.path" :value="a.path">
                     {{ a.name }}{{ a.rank != null ? ` (r${a.rank})` : '' }}
                   </option>
-                  <option v-if="l.path && !loraLibrary.some((a) => a.path === l.path)" :value="l.path">
+                  <option v-if="l.path && !pickableLoras.some((a) => a.path === l.path)" :value="l.path">
                     {{ l.path }} {{ $t('addModel.loraTyped') }}
                   </option>
                 </select>

@@ -265,15 +265,142 @@ def parse_sglang_command(command: str) -> dict[str, Any]:
     }
 
 
+# llama.cpp short flags -> their long form, so the walker can normalise both. Only
+# the ones the dashboard cares about; other long flags pass through as-is.
+_LLAMACPP_SHORT = {
+    "-m": "model", "-hf": "hf-repo", "-hfr": "hf-repo", "-hff": "hf-file",
+    "-c": "ctx-size", "-ngl": "n-gpu-layers", "-b": "batch-size", "-ub": "ubatch-size",
+    "-np": "parallel", "-fa": "flash-attn", "-ctk": "cache-type-k", "-ctv": "cache-type-v",
+    "-sm": "split-mode", "-ts": "tensor-split", "-mg": "main-gpu", "-a": "alias",
+}
+
+
+def parse_llamacpp_command(command: str) -> dict[str, Any]:
+    """Return {group, instance, model_config, warnings} from a ``llama-server …``
+    command.
+
+    Differs from vLLM/SGLang: the model is ``-hf <repo>[:quant]`` (HF GGUF, quant
+    split into ``gguf_quant``) or ``-m <file.gguf>`` (local); the served name is
+    ``--alias``; LoRA is repeatable ``--lora <gguf>`` / ``--lora-scaled <gguf>:<s>``;
+    ``-c/--ctx-size`` maps to the engine-neutral ``max_model_len``; and many flags
+    have short aliases. The result carries ``model_config.engine = "llamacpp"``.
+    """
+    warnings: list[str] = []
+    if not command or not command.strip():
+        raise ValueError("empty command")
+
+    tokens = shlex.split(command, comments=False)
+    env: dict[str, str] = {}
+    while tokens and _ENV_ASSIGN.match(tokens[0]):
+        k, _, v = tokens[0].partition("=")
+        env[k] = v
+        tokens = tokens[1:]
+    # Drop leading non-flag tokens (llama-server, python, -m …) up to the first flag.
+    rest = tokens
+    while rest and not rest[0].startswith("-"):
+        rest = rest[1:]
+
+    flags: dict[str, Any] = {}
+    loras: list[dict[str, Any]] = []
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok.startswith("--"):
+            long = tok[2:]
+        elif tok in _LLAMACPP_SHORT:
+            long = _LLAMACPP_SHORT[tok]
+        else:
+            # Unknown short flag: skip it (+ any value) and warn, rather than emit an
+            # invalid long flag the launcher would pass through verbatim.
+            warnings.append(f"unrecognised flag {tok}; add it manually if needed")
+            i += 2 if (i + 1 < len(rest) and not rest[i + 1].startswith("-")) else 1
+            continue
+        if "=" in long:  # inline --flag=value
+            k, _, v = long.partition("=")
+            flags[k] = _coerce(v)
+            i += 1
+            continue
+        if long in ("lora", "lora-scaled"):
+            if i + 1 < len(rest) and not rest[i + 1].startswith("-"):
+                val = rest[i + 1]
+                path = val.rsplit(":", 1)[0] if long == "lora-scaled" and ":" in val else val
+                loras.append({"name": path.split("/")[-1].replace(".gguf", ""), "path": path})
+                i += 2
+                continue
+        if i + 1 < len(rest) and not rest[i + 1].startswith("-"):
+            flags[long] = _coerce(rest[i + 1])
+            i += 2
+        else:
+            flags[long] = True
+            i += 1
+
+    norm: dict[str, Any] = {k.replace("-", "_"): v for k, v in flags.items()}
+
+    # Model addressing: -hf <repo>[:quant] (split quant) or -m <file.gguf>.
+    gguf_quant: str | None = None
+    hf_repo = norm.pop("hf_repo", None)
+    if hf_repo is not None:
+        s = str(hf_repo)
+        model_tag, _, quant = s.partition(":")
+        gguf_quant = quant or None
+    else:
+        model_tag = norm.pop("model", None)
+    hf_file = norm.pop("hf_file", None)
+    served = norm.pop("alias", None)
+    port = norm.pop("port", None)
+    host = norm.pop("host", "localhost")
+
+    # ctx-size -> engine-neutral max_model_len (inverse of launcher's mapping).
+    if "ctx_size" in norm:
+        norm["max_model_len"] = norm.pop("ctx_size")
+
+    cuda_device: int | None = None
+    if env.get("CUDA_VISIBLE_DEVICES"):
+        first = env["CUDA_VISIBLE_DEVICES"].split(",")[0]
+        cuda_device = int(first) if first.isdigit() else None
+
+    if not model_tag:
+        warnings.append("could not detect a model (expected `-hf <repo>` or `-m <file.gguf>`)")
+    if port is None:
+        warnings.append("no --port found; defaulting to 8080")
+        port = 8080  # llama-server's default
+
+    base = str(model_tag).split("/")[-1].replace(".gguf", "") if model_tag else "model"
+    group = served or base
+    instance_id = _slug(served) if served else f"{_slug(group)}-1"
+
+    model_config: dict[str, Any] = {"model_tag": model_tag, "engine": "llamacpp", **norm}
+    if gguf_quant:
+        model_config["gguf_quant"] = gguf_quant
+    if hf_file:
+        model_config["hf_file"] = hf_file
+    if served:
+        model_config["served_model_name"] = served
+    if loras:
+        model_config["lora_modules"] = loras
+        model_config["enable_lora"] = True
+
+    return {
+        "group": group,
+        "instance": {"id": instance_id, "host": host, "port": port, "cuda_device": cuda_device},
+        "model_config": model_config,
+        "warnings": warnings,
+    }
+
+
 def parse_command(command: str, engine: str | None = None) -> dict[str, Any]:
     """Engine-aware entry point for the dashboard's paste-a-command flow.
 
-    ``engine`` ('vllm' | 'sglang') forces the parser; when omitted it is sniffed
-    from the command (``sglang.launch_server`` → sglang, else vLLM).
+    ``engine`` ('vllm' | 'sglang' | 'llamacpp') forces the parser; when omitted it
+    is sniffed from the command (``llama-server`` → llamacpp, ``sglang.launch_server``
+    → sglang, else vLLM).
     """
     eng = (engine or "").strip().lower()
     if not eng:
-        eng = "sglang" if "sglang" in command.lower() else "vllm"
+        cl = command.lower()
+        eng = "llamacpp" if "llama-server" in cl else "sglang" if "sglang" in cl else "vllm"
+    if eng == "llamacpp":
+        return parse_llamacpp_command(command)
     if eng == "sglang":
         return parse_sglang_command(command)
     return parse_vllm_command(command)

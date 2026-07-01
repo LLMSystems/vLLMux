@@ -33,6 +33,28 @@ def test_scan_parses_base_and_rank(tmp_path, monkeypatch):
     assert a["path"].endswith("/sql-lora")
 
 
+def test_scan_lists_loose_gguf_adapters(tmp_path, monkeypatch):
+    # llama.cpp GGUF LoRA: a loose *.gguf file (not a folder) is a valid adapter.
+    monkeypatch.setenv("LLMOPS_LORA_DIR", str(tmp_path))
+    _make_adapter(tmp_path, "peft-lora")                       # PEFT folder
+    (tmp_path / "qwen3-test-lora-f16.gguf").write_bytes(b"GGUF" + b"\0" * 100)
+    (tmp_path / "notes.txt").write_text("ignored")            # non-.gguf file -> skipped
+
+    out = {a["name"]: a for a in lora_service.scan()}
+    assert set(out) == {"peft-lora", "qwen3-test-lora-f16.gguf"}
+    assert out["peft-lora"]["format"] == "peft"
+    g = out["qwen3-test-lora-f16.gguf"]
+    assert g["format"] == "gguf" and g["base_model"] is None
+    assert g["path"].endswith("/qwen3-test-lora-f16.gguf") and g["size_on_disk"] > 0
+
+
+def test_delete_removes_loose_gguf(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLMOPS_LORA_DIR", str(tmp_path))
+    (tmp_path / "adapter.gguf").write_bytes(b"GGUF")
+    assert lora_service.delete("adapter.gguf") is True
+    assert not (tmp_path / "adapter.gguf").exists()
+
+
 def test_scan_empty_when_root_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("LLMOPS_LORA_DIR", str(tmp_path / "nope"))
     assert lora_service.scan() == []
