@@ -53,7 +53,14 @@ class EngineModelConfig(BaseModel):
     # silences the spurious "model_" field warnings.
     model_config = ConfigDict(extra="allow", protected_namespaces=())
     model_tag: str
-    # Router-facing endpoint kind (NOT a vLLM flag — the launcher skips it):
+    # Which inference engine runs this group. Picks the launcher (and its
+    # capabilities); orthogonal to `kind` below. Default "vllm" = historical
+    # behaviour, byte-for-byte unchanged. Engine-specific flags ride extra="allow"
+    # and are interpreted by that engine's arg builder. A group is single-engine
+    # (all its instances are replicas of one model); mix engines across groups.
+    # See docs/multi-backend-engine-design_zh-CN.md.
+    engine: Literal["vllm", "sglang", "llamacpp", "trtllm"] = "vllm"
+    # Router-facing endpoint kind (NOT an engine flag — the launcher skips it):
     #   chat   -> /v1/chat/completions + /v1/completions (a generate model)
     #   embed  -> /v1/embeddings        (a vLLM pooling embedding model)
     #   rerank -> /v1/rerank + /v1/score (a vLLM cross-encoder/classify model)

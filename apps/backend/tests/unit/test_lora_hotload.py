@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from app.llmops.launchers import VllmLauncher
 from app.llmops.manager import LoraRuntimeError, ModelConflict, ModelManager, ModelNotFound
 from app.llmops.registry import ModelRegistry
 from app.llmops.state import ModelKind, ModelState
@@ -64,7 +65,9 @@ def _ready_instances(ports):
 
 
 def _mgr(config, client, registry):
-    return ModelManager(registry, [], client, config, "config.yaml",
+    # Register the vLLM launcher so runtime-LoRA capability resolves (the gate
+    # checks the group's engine supports it).
+    return ModelManager(registry, [VllmLauncher()], client, config, "config.yaml",
                         BackendSettings(), overlay_path="overlay.json")
 
 

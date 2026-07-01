@@ -30,32 +30,66 @@ def node_free_vram(node: dict) -> int:
     return sum(max(0, g.get("memory_total", 0) - g.get("memory_used", 0)) for g in gpus)
 
 
+def node_supports(node: dict, engine: str) -> bool:
+    """Whether a node can run a given engine. A node that doesn't advertise engines
+    (engines NULL/empty) is unspecified and accepts any engine — so collapsed single
+    host and pre-Phase-7 deploys behave exactly as before."""
+    raw = node.get("engines")
+    if not raw:
+        return True
+    try:
+        return engine in json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return True
+
+
 def place(
     desired: set[str], nodes: list[dict], assignments: dict[str, str],
+    key_engines: Optional[dict[str, str]] = None,
 ) -> dict[str, str]:
-    """Decide assignments to (re)write. For every desired-running instance whose
-    current assignment is missing or points to a node not in `nodes` (dead), pick
-    the live node with the most free VRAM. Returns only the *changes* {key: node};
-    instances already on a live node are left where they are (no churn).
+    """Decide assignments to (re)write. For every desired-running instance, pick the
+    emptiest live node that can run the instance's engine — unless it's already on a
+    live, engine-matching node (no churn). Returns only the *changes* {key: node}.
 
-    `nodes` is the set of currently-alive nodes (each a row with node_id+capacity).
+    `key_engines` maps key -> engine (default "vllm"). A key whose engine no live
+    node supports is left unassigned until a matching node appears — and one sitting
+    on a non-matching node (e.g. started on the wrong backend) is moved to a matching
+    one. `nodes` is the set of alive nodes (node_id + capacity + engines).
     """
-    alive = {n["node_id"] for n in nodes}
-    if not alive:
+    if not nodes:
         return {}  # nowhere to place; leave as-is until a node appears
-    # Greedy: prefer the emptiest node. Stable tiebreak on node_id for determinism.
-    ranked = sorted(nodes, key=lambda n: (-node_free_vram(n), n["node_id"]))
-    target = ranked[0]["node_id"]
+    key_engines = key_engines or {}
+    by_id = {n["node_id"]: n for n in nodes}
     changes: dict[str, str] = {}
     for key in desired:
-        cur = assignments.get(key)
-        if cur is None or cur not in alive:
-            changes[key] = target
+        engine = key_engines.get(key, "vllm")
+        candidates = [n for n in nodes if node_supports(n, engine)]
+        if not candidates:
+            continue  # no live node can run this engine; leave unassigned
+        cur_node = by_id.get(assignments.get(key))
+        # Keep the current placement only if its node is alive AND engine-matching.
+        if cur_node is not None and node_supports(cur_node, engine):
+            continue
+        # Greedy: emptiest matching node; stable tiebreak on node_id.
+        target = sorted(candidates, key=lambda n: (-node_free_vram(n), n["node_id"]))[0]
+        changes[key] = target["node_id"]
     return changes
 
 
 class Scheduler:
-    """Leader-only loop: keep desired instances placed on live nodes."""
+    """Leader-only loop: keep desired instances placed on live, engine-matching nodes.
+
+    `registry` (optional) resolves each instance's engine so placement can match it
+    to a node that can run it. Without it, engines default to "vllm" — fine for a
+    single-engine fleet."""
+
+    def __init__(self, registry=None) -> None:
+        self.registry = registry
+
+    def _key_engines(self) -> dict[str, str]:
+        if self.registry is None:
+            return {}
+        return {inst.key: getattr(inst, "engine", "vllm") for inst in self.registry.values()}
 
     async def reschedule_once(self, store, settings) -> dict[str, str]:
         """One placement pass. Reads desired-running instances, live nodes and
@@ -73,7 +107,7 @@ class Scheduler:
         from app.llmops.state import Desired
 
         desired = {k for k, v in desired_map.items() if v == Desired.RUNNING.value}
-        changes = place(desired, nodes, assignments)
+        changes = place(desired, nodes, assignments, self._key_engines())
         for key, node_id in changes.items():
             try:
                 await store.set_assignment(key, node_id)

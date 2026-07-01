@@ -136,6 +136,16 @@ const visibleInstances = computed(() =>
 const hiddenCount = computed(() => props.instances.length - visibleInstances.value.length)
 
 const kind = computed(() => props.instances[0]?.kind ?? 'llm')
+// Inference engine for the group (from the API); shown as a colour-coded badge on
+// every LLM group so the engine is always visible at a glance.
+const engine = computed(() => props.instances[0]?.engine ?? 'vllm')
+const ENGINE_COLORS: Record<string, string> = {
+  vllm: 'var(--chart-1)',
+  sglang: 'var(--chart-2)',
+  llamacpp: 'var(--chart-3)',
+  trtllm: 'var(--chart-4)',
+}
+const engineColor = computed(() => ENGINE_COLORS[engine.value] ?? 'var(--chart-1)')
 const modelTag = computed<string | null>(() => {
   const tag =
     props.instances[0]?.model_tag ??
@@ -274,7 +284,18 @@ const startLockTitle = computed(() =>
           <component :is="Icon" class="size-4" />
         </div>
         <div class="min-w-0">
-          <p class="truncate text-sm font-semibold leading-tight" :title="group">{{ group }}</p>
+          <p class="flex items-center gap-1.5 truncate text-sm font-semibold leading-tight" :title="group">
+            <span class="truncate">{{ group }}</span>
+            <span
+              v-if="kind === 'llm'"
+              class="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
+              :style="{
+                color: engineColor,
+                backgroundColor: `color-mix(in srgb, ${engineColor} 15%, transparent)`,
+              }"
+              :title="`engine: ${engine}`"
+            >{{ engine }}</span>
+          </p>
           <p class="truncate font-mono text-[11px] text-muted-foreground" :title="modelTag ?? subtitle">
             {{ subtitle }}
           </p>

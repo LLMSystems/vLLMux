@@ -30,6 +30,7 @@
 ## 功能亮點
 
 - **一個 router 掌控整個集群** — 單一 OpenAI 與 Anthropic 相容入口統管所有模型。以 `model` 欄位路由 `/v1/chat/completions`、`/v1/messages`、`/v1/embeddings`、`/v1/rerank`、`/v1/score`、`/tokenize` 等端點；router 自動解析群組並在實例間負載平衡，客戶端永遠不直接連到單一實例。
+- **兩種推理引擎、同一個控制平面 — vLLM + SGLang** — 每顆模型可各自選引擎（*新增模型*對話框有引擎選擇器）；engine-aware 排程器把每顆模型擺到「跑得動它」的 backend 上，並由同一個 router／控制台／監控統一前置。可只跑 **vLLM**（`make up`），或跑 **vLLM + SGLang 混合**集群（`make up-mixed`）。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
 - **貼上 `vllm serve …` 即可新增模型** — 解析成表單、以動態 overlay 疊加；router 熱重載。
 - **生命週期** — 每實例狀態機（`stopped → starting → ready → sleeping → failed`）、VRAM 預檢防呆、GPU 自動擺放、崩潰指數退避自動重啟。
 - **自動擴縮（含暖待命層）** — 每群組保留 `min_ready` 暖機副本，依佇列深度擴容（優先喚醒、其次冷啟）到 `max_ready`；閒置時逐階縮回 `ready → sleep → stop`。vLLM **sleep mode**（level-1）釋放副本 VRAM 但秒級喚醒，所以縮容不必付出數分鐘冷啟代價。config.yaml 或控制台皆可設定，內建即時 Grafana 面板與告警。
@@ -58,6 +59,11 @@ make up                              # 建置並啟動整套服務
 ```
 
 `make down` 停止 · `make logs` 追蹤所有服務日誌 · `make ps` 看狀態。
+
+**兩種啟動方式：**
+
+- **`make up`** — 預設的**純 vLLM** 集群。
+- **`make up-mixed`** — **vLLM + SGLang** 混合集群：一個 vLLM backend 與一個 SGLang backend 共用同一顆 Postgres、router、控制台與 Grafana。從 *新增模型 → 引擎：`sglang`* 新增的模型會自動擺到 SGLang backend。對應 `make down-mixed`／`make logs-mixed`。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
 
 ```bash
 curl http://localhost:8887/v1/models     # router：列出設定的模型群組
@@ -98,6 +104,8 @@ curl http://localhost:8887/v1/chat/completions \
 
 ## 架構
 
+### 純 vLLM（`make up`）
+
 ```mermaid
 flowchart LR
     Client([Clients 用戶端])
@@ -129,11 +137,54 @@ flowchart LR
 Grafana 都在 nginx 之後以單一來源對外；backend、router、Prometheus 共用一個 network
 namespace，所以被拉起的 vLLM 實例可在 `localhost` 互相連到。
 
+### vLLM + SGLang 混合（`make up-mixed`）
+
+兩個引擎各跑一個 backend 容器（無法共用 netns），共用一顆 Postgres（排程／desired 意圖）、
+一個 router、一個 dashboard 與一套監控；各 backend 把自己 ready 的實例以**可路由位址**寫進
+共享 file_sd，Prometheus 一起抓。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
+
+```mermaid
+flowchart LR
+    Client([Clients 用戶端])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    PG[("<b>postgres</b><br/>共用 store · 排程/desired")]
+    PR["<b>prometheus</b> · :9090<br/>抓可路由 file_sd targets"]
+    RT["<b>router</b> · :8887<br/>OpenAI 相容負載平衡"]
+
+    subgraph vbe["vLLM backend (engine.Dockerfile)"]
+        BV["<b>backend</b> · :5071<br/>NODE_ENGINES=vllm"]
+        VINS["vLLM 實例"]
+    end
+    subgraph sbe["SGLang backend (engine-sglang.Dockerfile)"]
+        BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
+        SINS["SGLang 實例"]
+    end
+
+    Client --> FE
+    FE -->|/api| BV
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BV -->|拉起| VINS
+    BS -->|拉起| SINS
+    RT -->|路由| VINS
+    RT -->|路由| SINS
+    BV <-->|leader/排程| PG
+    BS <-->|收斂 desired| PG
+    PR -->|scrape| VINS
+    PR -->|scrape| SINS
+    GF -->|查詢| PR
+```
+
+leader 的 **engine-aware 排程器**把每顆模型擺到「跑得動它引擎」的 backend；落錯 node 的控制
+動作會延後給擁有者執行。SGLang 走 OpenMetrics，指標入庫為底線的 `sglang_*`，vLLM 則保留冒號。
+
 ## 文件
 
 | 主題 | |
 |---|---|
 | 部署與架構 | [docs/deployment_zh-CN.md](docs/deployment_zh-CN.md) |
+| 混合引擎（vLLM + SGLang） | [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md) |
 | 配置（`config.yaml`） | [docs/configuration_zh-CN.md](docs/configuration_zh-CN.md) |
 | 功能特色（詳細） | [docs/features_zh-CN.md](docs/features_zh-CN.md) |
 | 監控（Prometheus + Grafana） | [docs/monitoring_zh-CN.md](docs/monitoring_zh-CN.md) |

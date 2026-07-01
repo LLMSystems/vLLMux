@@ -51,12 +51,21 @@ class NodeAgent:
         ]
         return json.dumps(slim)
 
+    def _engines(self) -> Optional[str]:
+        """Engines this node can run, as JSON, or None when unspecified (runs any).
+        Set per engine image via LLMOPS_NODE_ENGINES so the scheduler places each
+        model on an engine-matching node."""
+        engines = self.settings.node_engines
+        return json.dumps(engines) if engines else None
+
     async def heartbeat_once(self) -> None:
         """Register/refresh this node. No-op if the store can't track nodes."""
         if self.store is None or not hasattr(self.store, "upsert_node"):
             return
         await self.store.upsert_node(
-            self.node_id, self.hostname, self._capacity(), ttl=self.settings.node_ttl
+            self.node_id, self.hostname, self._capacity(),
+            ttl=self.settings.node_ttl, engines=self._engines(),
+            api_url=self.settings.node_api_url or None,
         )
         # Housekeeping so a vanished peer's row doesn't linger past its lease.
         if hasattr(self.store, "prune_nodes"):

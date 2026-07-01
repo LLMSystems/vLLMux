@@ -33,6 +33,7 @@ def test_build_targets_only_includes_ready_llm():
     assert entry["labels"]["group"] == "Qwen3-0.6B"
     assert entry["labels"]["instance_id"] == "qwen3"
     assert entry["labels"]["model_tag"] == "Qwen/Qwen3-0.6B"
+    assert entry["labels"]["engine"] == "vllm"  # default; lets dashboards filter by engine
 
 
 def test_build_targets_excludes_embedding_server():
@@ -97,3 +98,19 @@ async def test_manager_writes_ready_targets_when_path_set(tmp_path):
     assert await mgr.write_prometheus_targets() is True
     written = json.loads(open(path).read())
     assert [t["targets"][0] for t in written] == ["localhost:8002"]
+
+
+def test_build_targets_uses_node_host_when_set():
+    # Multi-backend: a routable node_host replaces the instance's localhost so a
+    # Prometheus in another container can scrape it.
+    reg = _registry()
+    reg.get(HEALTHY).state = ModelState.READY
+    targets = build_targets(reg.values(), node_host="mixed-vllm-backend")
+    assert targets[0]["targets"] == ["mixed-vllm-backend:8002"]
+
+
+def test_build_targets_defaults_to_instance_host():
+    # Empty node_host (collapsed / main compose) keeps localhost — unchanged.
+    reg = _registry()
+    reg.get(HEALTHY).state = ModelState.READY
+    assert build_targets(reg.values())[0]["targets"] == ["localhost:8002"]

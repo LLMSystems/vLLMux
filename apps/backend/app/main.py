@@ -36,7 +36,7 @@ from app.core.leader import LeaderElector
 from app.core.logging import setup_logging
 from app.core.settings import BackendSettings
 from app.core.store import LLMOpsStore
-from app.llmops.launchers import EmbeddingLauncher, VllmLauncher
+from app.llmops.launchers import EmbeddingLauncher, SglangLauncher, VllmLauncher
 from app.llmops.manager import ModelManager, build_registry
 from app.llmops.autoscaler import autoscaler_loop
 from app.llmops.scheduler import Scheduler
@@ -94,6 +94,18 @@ async def _gpu_poll_loop(app: FastAPI, interval: float) -> None:
         await asyncio.sleep(interval)
 
 
+async def _overlay_sync_loop(manager, interval: float = 5.0) -> None:
+    """HA Phase 7: per-node loop pulling the fleet's shared overlay from the store so
+    a model added/edited on any replica appears in this node's registry too (then an
+    engine-matching node can actuate it). No-op outside Postgres/HA mode."""
+    while True:
+        try:
+            await manager.sync_overlay_from_store()
+        except Exception:
+            logger.exception("overlay sync pass failed")
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = get_config_path()
@@ -113,7 +125,7 @@ async def lifespan(app: FastAPI):
     # Base config.yaml + dynamically-added models (overlay), merged into one view.
     config = build_merged_config(config_path)
 
-    launchers = [VllmLauncher(), EmbeddingLauncher()]
+    launchers = [VllmLauncher(), SglangLauncher(), EmbeddingLauncher()]
     registry = build_registry(config, config_path, launchers)
     # `or` (not get's default) so an env var set-but-empty (as the compose env
     # passes it) still falls back instead of yielding "" — an empty router_url
@@ -186,23 +198,27 @@ async def lifespan(app: FastAPI):
 
     async def _on_acquire() -> None:
         # Restore desired state on the leader only (a follower must not also start
-        # models). Skips anything adopt already found alive.
+        # models). Skips anything adopt already found alive. The per-node reconcile
+        # loop's converge_desired also restores it, but this gives the leader an
+        # immediate boot replay rather than waiting a poll interval.
         if settings.replay_desired:
             await manager.replay_desired()
+        # SINGLETON loops — global decisions, one place only: scheduler (placement),
+        # autoscaler (desired counts), load-monitor (global router view), pruning.
+        # The per-node loops (reconcile/actuation + gpu-poll) run on every replica;
+        # see below.
         leader_loops[:] = [
-            asyncio.create_task(reconcile_loop(registry, http_client, settings, store, manager, notifier)),
-            asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
             asyncio.create_task(
                 load_monitor_loop(app, registry, http_client, router_url, settings.load_poll_interval)
             ),
             asyncio.create_task(autoscaler_loop(app, manager, settings.autoscale_interval)),
             asyncio.create_task(
-                Scheduler().run(store, settings, settings.schedule_interval)
+                Scheduler(registry).run(store, settings, settings.schedule_interval)
             ),
             asyncio.create_task(_audit_prune_loop(store, settings.audit_max_rows)),
             asyncio.create_task(_config_versions_prune_loop(store, settings.config_versions_max)),
         ]
-        logger.info("Control loops started (leader)")
+        logger.info("Singleton control loops started (leader)")
 
     async def _on_release() -> None:
         for t in leader_loops:
@@ -226,9 +242,25 @@ async def lifespan(app: FastAPI):
     app.state.node_agent = node_agent
     node_agent_task = asyncio.create_task(node_agent.run())
 
+    # PER-NODE loops (HA Phase 7): reconcile/actuation + GPU polling run on EVERY
+    # replica, not just the leader — actuation must happen on the host that holds
+    # the GPU, and each node reports its own GPU. They converge only the instances
+    # assigned to this node (foreign_assignments gates ownership), so collapsed
+    # single-host is unchanged (one node owns + converges everything).
+    node_loops = [
+        asyncio.create_task(
+            reconcile_loop(registry, http_client, settings, store, manager, notifier)
+        ),
+        asyncio.create_task(_gpu_poll_loop(app, settings.gpu_poll_interval)),
+        asyncio.create_task(_overlay_sync_loop(manager)),
+    ]
+
     try:
         yield
     finally:
+        for t in node_loops:
+            t.cancel()
+        await asyncio.gather(*node_loops, return_exceptions=True)
         node_agent_task.cancel()
         try:
             await node_agent_task

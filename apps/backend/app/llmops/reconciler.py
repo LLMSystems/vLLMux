@@ -262,6 +262,58 @@ async def _backfill_node_state(
             logger.debug("prune_instance_observed failed", exc_info=True)
 
 
+async def converge_desired(
+    registry: ModelRegistry, settings: BackendSettings, store, manager, foreign: set[str],
+) -> None:
+    """Drive every *owned* instance toward its persisted desired state — the per-node
+    actuation step (HA Phase 7). Generalises boot-time `replay_desired` into a
+    continuous convergence so a node actuates whatever is assigned to it, no matter
+    which replica received the API/autoscaler write:
+
+      desired=running & STOPPED        -> start   (a STOPPED-but-wanted instance, e.g.
+                                                   just assigned to this node)
+      desired=stopped & live           -> stop    (ready/starting/sleeping)
+      desired=asleep  & READY          -> sleep
+      desired=running & SLEEPING       -> wake
+
+    FAILED + desired=running recovery is intentionally left to `_process_restarts`
+    (restart budget + backoff), so this never fights the crash-loop guard. `foreign`
+    keys (owned by another live node) are skipped. Collapsed single host: the one
+    node owns everything, so this converges the whole fleet — same end state as the
+    sync API path, just driven by the loop. Best-effort per key."""
+    if store is None or manager is None or not hasattr(store, "list_instance_desired"):
+        return
+    try:
+        desired = await store.list_instance_desired()
+    except Exception:
+        logger.debug("converge_desired: failed to read desired", exc_info=True)
+        return
+
+    # Snapshot (key, state) under the lock; act outside it (start/stop take the lock).
+    async with registry.lock:
+        states = {
+            inst.key: inst.state for inst in registry.values()
+        }
+
+    for key, want in desired.items():
+        if key in foreign or key not in states:
+            continue
+        state = states[key]
+        try:
+            if want == Desired.RUNNING.value and state == ModelState.STOPPED:
+                await manager.start(key)
+            elif want == Desired.STOPPED.value and state in (
+                ModelState.READY, ModelState.STARTING, ModelState.SLEEPING
+            ):
+                await manager.stop(key)
+            elif want == Desired.ASLEEP.value and state == ModelState.READY:
+                await manager.sleep(key)
+            elif want == Desired.RUNNING.value and state == ModelState.SLEEPING:
+                await manager.wake(key)
+        except Exception:
+            logger.debug("converge_desired: action for %s (want=%s) failed", key, want, exc_info=True)
+
+
 async def reconcile_once(
     registry: ModelRegistry, http_client, settings: BackendSettings, store=None,
     manager=None, notifier=None,
@@ -300,6 +352,10 @@ async def reconcile_once(
         await manager.write_prometheus_targets()
     if manager is not None and settings.auto_restart:
         await _process_restarts(registry, settings, store, manager, foreign)
+    # Per-node actuation (HA Phase 7): converge owned instances to their persisted
+    # desired state. Reuses the `foreign` set computed above. Collapsed = no-op
+    # beyond what the sync API already did (idempotent).
+    await converge_desired(registry, settings, store, manager, foreign)
 
 
 async def adopt_running(

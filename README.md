@@ -29,6 +29,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 ## Highlights
 
 - **One router controls the whole fleet** — a single OpenAI- & Anthropic-compatible origin fronts every model. Route by the `model` field across `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/rerank`, `/v1/score`, `/tokenize` and more; the router resolves the group and load-balances its instances, so clients never address an instance directly.
+- **Two inference engines, one control plane — vLLM + SGLang** — choose the engine per model (the *Add Model* dialog has an engine selector); an engine-aware scheduler places each model on a backend that can run it, and the same router / dashboard / monitoring front both. Run a **vLLM-only** stack (`make up`) or a **mixed vLLM + SGLang** fleet (`make up-mixed`). See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
 - **Add a model by pasting `vllm serve …`** — parsed into a form and layered on as a dynamic overlay; the router hot-reloads, no `config.yaml` edits.
 - **Lifecycle + self-healing** — per-instance state machine (`stopped → starting → ready → sleeping → failed`), VRAM pre-flight guard, GPU auto-placement, crash auto-restart with backoff.
 - **Autoscaling with a warm-standby tier** — per group, keep `min_ready` replicas warm and scale up on queue depth (wake first, else cold-start) to `max_ready`; fold idle replicas back down `ready → sleep → stop`. vLLM **sleep mode** (level-1) frees a replica's VRAM but wakes in seconds, so scaling down needn't mean a minute-long cold start. Set it from config.yaml or the dashboard; a live Grafana dashboard + alerts are bundled.
@@ -58,6 +59,11 @@ make up                              # build + start the whole stack
 ```
 
 `make down` stops it · `make logs` tails all services · `make ps` shows status.
+
+**Two deployment modes:**
+
+- **`make up`** — the default **vLLM-only** stack.
+- **`make up-mixed`** — a **vLLM + SGLang** fleet: a vLLM backend and a SGLang backend sharing one Postgres, router, dashboard and Grafana. Add a SGLang model from *Add Model → engine: `sglang`* and it is auto-placed on the SGLang backend. `make down-mixed` / `make logs-mixed` manage it. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
 
 ```bash
 curl http://localhost:8887/v1/models     # router: configured model groups
@@ -100,6 +106,8 @@ Request/response shapes and auth details are in [docs/API.md](docs/API.md).
 
 ## Architecture
 
+### vLLM-only (`make up`)
+
 ```mermaid
 flowchart LR
     Client([Clients])
@@ -131,11 +139,56 @@ The **router only routes** — the **backend owns model lifecycle**. The fronten
 backend, and Grafana sit behind nginx on a single origin; backend, router, and Prometheus
 share one network namespace so the spawned vLLM instances are reachable on `localhost`.
 
+### Mixed vLLM + SGLang (`make up-mixed`)
+
+Each engine runs as its own backend container (they can't share a netns), sharing one
+Postgres (scheduling / desired intent), one router, one dashboard and one monitoring stack.
+Each backend publishes its ready instances as **routable addresses** to a shared file_sd that
+Prometheus scrapes. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
+
+```mermaid
+flowchart LR
+    Client([Clients])
+    FE["<b>frontend</b><br/>nginx · :8884"]
+    GF["<b>grafana</b><br/>/grafana"]
+    PG[("<b>postgres</b><br/>shared store · scheduling/desired")]
+    PR["<b>prometheus</b> · :9090<br/>scrapes routable file_sd targets"]
+    RT["<b>router</b> · :8887<br/>OpenAI-compatible LB"]
+
+    subgraph vbe["vLLM backend (engine.Dockerfile)"]
+        BV["<b>backend</b> · :5071<br/>NODE_ENGINES=vllm"]
+        VINS["vLLM instances"]
+    end
+    subgraph sbe["SGLang backend (engine-sglang.Dockerfile)"]
+        BS["<b>backend</b> · :5072<br/>NODE_ENGINES=sglang"]
+        SINS["SGLang instances"]
+    end
+
+    Client --> FE
+    FE -->|/api| BV
+    FE -->|/v1| RT
+    FE -->|/grafana| GF
+    BV -->|launch| VINS
+    BS -->|launch| SINS
+    RT -->|route| VINS
+    RT -->|route| SINS
+    BV <-->|leader/schedule| PG
+    BS <-->|converge desired| PG
+    PR -->|scrape| VINS
+    PR -->|scrape| SINS
+    GF -->|query| PR
+```
+
+The leader's **engine-aware scheduler** places each model on a backend that can run its engine;
+a control action landing on the wrong node is deferred to the owning one. SGLang serves
+OpenMetrics, so Prometheus stores its metrics as `sglang_*` (underscore) while vLLM keeps colons.
+
 ## Documentation
 
 | Topic | |
 |---|---|
 | Deployment & topology | [docs/deployment.md](docs/deployment.md) |
+| Mixed-engine (vLLM + SGLang) | [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md) |
 | Configuration (`config.yaml`) | [docs/configuration.md](docs/configuration.md) |
 | Features in depth | [docs/features.md](docs/features.md) |
 | Monitoring (Prometheus + Grafana) | [docs/monitoring.md](docs/monitoring.md) |

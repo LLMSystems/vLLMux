@@ -16,8 +16,10 @@ class FakeNodeStore:
         self.nodes = {}
         self.pruned = 0
 
-    async def upsert_node(self, node_id, hostname, capacity, ttl, ts=None):
-        self.nodes[node_id] = {"hostname": hostname, "capacity": capacity, "ttl": ttl}
+    async def upsert_node(self, node_id, hostname, capacity, ttl, ts=None, engines=None,
+                          api_url=None):
+        self.nodes[node_id] = {"hostname": hostname, "capacity": capacity, "ttl": ttl,
+                               "engines": engines, "api_url": api_url}
 
     async def prune_nodes(self, ts=None):
         self.pruned += 1
@@ -72,3 +74,21 @@ async def test_heartbeat_tolerates_gpu_probe_failure(monkeypatch):
     agent = NodeAgent(store, _settings())
     await agent.heartbeat_once()
     assert store.nodes["node-A"]["capacity"] is None
+
+
+async def test_heartbeat_advertises_engines(monkeypatch):
+    import app.llmops.node_agent as na
+    monkeypatch.setattr(na, "get_gpu_info", lambda: [])
+    store = FakeNodeStore()
+    agent = NodeAgent(store, BackendSettings(instance_id="node-A", node_engines=["sglang"]))
+    await agent.heartbeat_once()
+    assert store.nodes["node-A"]["engines"] == '["sglang"]'
+
+
+async def test_heartbeat_engines_null_when_unspecified(monkeypatch):
+    import app.llmops.node_agent as na
+    monkeypatch.setattr(na, "get_gpu_info", lambda: [])
+    store = FakeNodeStore()
+    agent = NodeAgent(store, BackendSettings(instance_id="node-A"))  # no node_engines
+    await agent.heartbeat_once()
+    assert store.nodes["node-A"]["engines"] is None

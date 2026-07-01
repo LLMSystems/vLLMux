@@ -1,0 +1,213 @@
+# Mixed-engine HA deployment: a vLLM backend + a SGLang backend share one Postgres,
+# one router and one dashboard. Each backend runs only its engine's image and
+# advertises it (LLMOPS_NODE_ENGINES); the leader's engine-aware scheduler places
+# each model on a matching node, and a control action that lands on the wrong node
+# is deferred to the owning one (HA Phase 7). The router reaches both backends over
+# the network via the addresses they publish to instances_live (Phase 3a).
+#
+#   make up-mixed   /   make down-mixed
+#
+# Add a SGLang model from the dashboard (Add Model -> Engine: sglang) or config; it
+# is auto-placed on the SGLang backend. Needs deploy/.env (admin token, secrets).
+name: vllmux-mixed
+services:
+  postgres:
+    image: postgres:16
+    container_name: mixed-postgres
+    environment:
+      - POSTGRES_USER=llmops
+      - POSTGRES_PASSWORD=llmops
+      - POSTGRES_DB=llmops
+    volumes:
+      - mixed-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmops"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  vllm-backend:
+    build: { context: .., dockerfile: deploy/engine.Dockerfile }
+    image: llmops-engine:latest
+    container_name: mixed-vllm-backend
+    working_dir: /app/apps/backend
+    command: uvicorn main:app --host 0.0.0.0 --port 5000
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - LLMOPS_DB_PATH=/app/data/llmops.db
+      - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      - LLMOPS_INSTANCE_ID=vllm-node
+      - LLMOPS_NODE_HOST=mixed-vllm-backend
+      - LLMOPS_NODE_ENGINES=vllm
+      - LLMOPS_NODE_API_URL=http://mixed-vllm-backend:5000
+      - LLMOPS_VLLM_BIND_HOST=0.0.0.0
+      - LLMOPS_ROUTER_URL=http://router:8887
+      - LLMOPS_PROMETHEUS_SD_PATH=/sd/targets-vllm.json
+      - HF_HOME=/hf
+      - MODELSCOPE_CACHE=/modelscope/hub
+      - LLMOPS_LORA_DIR=/lora
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+      - mixed-vllm-data:/app/data
+      - mixed-sd:/sd                  # file_sd scrape targets (shared with Prometheus)
+      - mixed-kv-cache:/kv_cache
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+      - /etc/localtime:/etc/localtime:ro
+    ports: ["${MIXED_VLLM_PORT:-5071}:5000"]
+    ipc: host
+    shm_size: "16gb"
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
+  sglang-backend:
+    build: { context: .., dockerfile: deploy/engine-sglang.Dockerfile }
+    image: llmops-engine-sglang:latest
+    container_name: mixed-sglang-backend
+    working_dir: /app/apps/backend
+    command: uvicorn main:app --host 0.0.0.0 --port 5000
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      - LLM_ROUTER_SERVER_CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - LLMOPS_DB_PATH=/app/data/llmops.db
+      - LLMOPS_OVERLAY_PATH=/app/data/dynamic_models.json
+      - LLMOPS_INSTANCE_ID=sglang-node
+      - LLMOPS_NODE_HOST=mixed-sglang-backend
+      - LLMOPS_NODE_ENGINES=sglang
+      - LLMOPS_NODE_API_URL=http://mixed-sglang-backend:5000
+      - LLMOPS_VLLM_BIND_HOST=0.0.0.0
+      - LLMOPS_ROUTER_URL=http://router:8887
+      - LLMOPS_PROMETHEUS_SD_PATH=/sd/targets-sglang.json
+      - HF_HOME=/hf
+      - MODELSCOPE_CACHE=/modelscope/hub
+      - LLMOPS_LORA_DIR=/lora
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+      - mixed-sglang-data:/app/data
+      - mixed-sd:/sd                  # file_sd scrape targets (shared with Prometheus)
+      - mixed-kv-cache:/kv_cache
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
+      - ${MODELSCOPE_CACHE_DIR:-${HOME}/.cache/modelscope}:/modelscope
+      - ${LORA_ADAPTERS_DIR:-${HOME}/.cache/lora_adapters}:/lora
+      - /etc/localtime:/etc/localtime:ro
+    ports: ["${MIXED_SGLANG_PORT:-5072}:5000"]
+    ipc: host
+    shm_size: "16gb"
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, capabilities: [gpu] }] } } }
+    restart: unless-stopped
+
+  router:
+    image: llmops-engine:latest
+    container_name: mixed-router
+    depends_on: [vllm-backend]
+    working_dir: /app/apps/router-server
+    command: gunicorn src.llm_router.main:app -c configs/gunicorn.conf.py
+    env_file: .env
+    environment:
+      - CONFIG_PATH=/app/packages/config-schema/config.yaml
+      - LLMOPS_DB_URL=postgresql://llmops:llmops@postgres:5432/llmops
+      - PYTHONPATH=/app/apps/router-server
+      - ROUTER_WORKERS=${ROUTER_WORKERS:-1}
+    volumes:
+      - ../packages/config-schema/config.yaml:/app/packages/config-schema/config.yaml
+    ports: ["${ROUTER_PORT:-8887}:8887"]
+    restart: unless-stopped
+
+  # Metrics store. Own netns on the compose network (the two backends can't share
+  # one netns), scraping routable file_sd targets each backend writes to mixed-sd.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: mixed-prometheus
+    depends_on: [vllm-backend, sglang-backend]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus.mixed.yml:/etc/prometheus/prometheus.yml:ro
+      - mixed-sd:/etc/prometheus/targets:ro
+      - mixed-prometheus-data:/prometheus
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    container_name: mixed-dcgm-exporter
+    cap_add: [SYS_ADMIN]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu, utility]
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: mixed-node-exporter
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
+  grafana:
+    # 11.6.0 (not 11.1.0 like the main compose) to match the SGLang dashboard's
+    # authored schemaVersion 41 / pluginVersion 11.6.0 (Grafana only migrates
+    # dashboards forward, never down). (The two latency heatmaps being empty was a
+    # separate bug: a stale $model_name template default — fixed in the dashboard.)
+    image: grafana/grafana:11.6.0
+    container_name: mixed-grafana
+    depends_on: [prometheus]
+    environment:
+      # Same as the main compose — root_url carries the external port and
+      # ALLOW_EMBEDDING lets the dashboard embed Grafana in an iframe (without it,
+      # Grafana sends X-Frame-Options: deny and the Monitoring tab shows a blocked
+      # placeholder).
+      - GF_SERVER_ROOT_URL=http://localhost:${FRONTEND_PORT:-8884}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_USERS_DEFAULT_THEME=dark
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Alerting provisioning (contactpoints.yaml) needs this; harmless default.
+      - GRAFANA_ALERT_WEBHOOK=${GRAFANA_ALERT_WEBHOOK:-http://example.invalid/replace-me}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # Override just the datasource to point at the mixed Prometheus service.
+      - ./grafana-mixed-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - mixed-grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  frontend:
+    build: { context: .., dockerfile: deploy/frontend.Dockerfile }
+    image: llmops-frontend:latest
+    container_name: mixed-frontend
+    depends_on: [vllm-backend, router, grafana]
+    # Mixed topology: the router is its own service, so override the baked nginx.
+    volumes:
+      - ./nginx.mixed.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["${FRONTEND_PORT:-8884}:80"]
+    restart: unless-stopped
+
+volumes:
+  mixed-pg-data:
+  mixed-vllm-data:
+  mixed-sglang-data:
+  mixed-grafana-data:
+  mixed-sd:              # shared file_sd scrape-target dir (backends write, Prometheus reads)
+  mixed-kv-cache:        # cross-instance KV-cache root
+  mixed-prometheus-data:

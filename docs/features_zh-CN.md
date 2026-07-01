@@ -5,6 +5,13 @@
 ## 模型管理
 
 - 基於 vLLM 的多模型、多實例管理（LLM、Embedding、Reranker）。
+- **可插拔推理引擎 — vLLM 與 SGLang。** 每顆模型宣告 `engine`（預設 `vllm`）；*新增模型*
+  對話框有引擎選擇器，啟動參數會依引擎翻譯。混合部署下，一個 vLLM backend 與一個 SGLang
+  backend 共用同一個 router／控制台，並由 **engine-aware 排程器**把每顆模型擺到「跑得動它」
+  的 backend 上。SGLang 支援路由、推理、生命週期、runtime LoRA、metrics + autoscaling（沒有
+  sleep mode，autoscaler 對它退化成 `ready ↔ stopped`）。見
+  [mixed-engine-deployment_zh-CN.md](mixed-engine-deployment_zh-CN.md) 與
+  [multi-backend-engine-design_zh-CN.md](multi-backend-engine-design_zh-CN.md)。
 - 每個實例獨立的生命週期（啟動/停止），具即時狀態機
   （`stopped → starting → ready → failed/stopping`），由 reconciler 從「進程存活 +
   `/health` 探測」推導真實狀態。

@@ -100,13 +100,36 @@
 
 ## 5. 分階段執行（collapsed-first、每步單機 0 行為改變）
 
-| 子階段 | 產出 | 單機 collapsed? | 風險 |
-|---|---|---|---|
-| **A** 把 reconcile 的「desired→observed 收斂(start/stop/sleep/wake)」抽成一個函式 | 邏輯就位,仍 leader 跑、行為不變 | ✅ | 中 |
-| **B** un-leader-gate reconcile(每 node 跑)、ownership-scoped | follower 開始收斂自己擁有的(單機沒有 follower → 不變) | ✅ | 中高(改執行模型) |
-| **C** API/autoscaler 改寫 desired/assignment(非同步收斂)+ 保留軟預檢 | 寫入與執行解耦 | ✅(owning=self) | 高(API 時序/預檢語意) |
-| **D** scheduler 加 node 拒絕回饋 + 重指派 | 放置自我修正 | — | 中 |
-| **E** 真多 GPU 主機 live 驗:並行起模型、node failover 接管 | 真並行多節點 | — | 需實體多機 |
+| 子階段 | 產出 | 單機 collapsed? | 風險 | 狀態 |
+|---|---|---|---|---|
+| **A** 把 reconcile 的「desired→observed 收斂(start/stop/sleep/wake)」抽成一個函式 | 邏輯就位,仍 leader 跑、行為不變 | ✅ | 中 | ✅ 已完成 |
+| **B** un-leader-gate reconcile(每 node 跑)、ownership-scoped | follower 開始收斂自己擁有的(單機沒有 follower → 不變) | ✅ | 中高(改執行模型) | ✅ 已完成 |
+| **C** API/autoscaler 改寫 desired/assignment(非同步收斂)+ 保留軟預檢 | 寫入與執行解耦 | ✅(owning=self) | 高(API 時序/預檢語意) | ✅ 已完成 |
+| **D** scheduler 加 node 拒絕回饋 + 重指派 | 放置自我修正 | — | 中 | ⬜（剩這個) |
+| **E** 真多 GPU 主機 live 驗:並行起模型、node failover 接管 | 真並行多節點 | — | 需實體多機 | ✅ 單機驗完(真多卡加速需實體機) |
+
+> **C 已完成 + engine-aware 排程 + overlay 同步**(commit `c29b231`/`ec72ba0`):`manager.start/stop/sleep/wake`
+> 在「本 node 跑不了該引擎」時改成寫 desired(不本機 spawn),由 engine-matching 的 node 收斂;node 用
+> `LLMOPS_NODE_ENGINES` 宣告引擎,scheduler 依此 placement;dashboard 動態加的模型透過 `sync_overlay_from_store`
+> 傳播到每個 node。**單機混合 fleet(vLLM+SGLang 各一容器)live 驗證全鏈通過**(見
+> [mixed-engine-deployment](mixed-engine-deployment_zh-CN.md))。**只剩 D**(本機預檢失敗→標記拒絕→換 node,
+> 僅在「同引擎多 node」才有意義)。
+
+> **A+B 已完成**([reconciler.py](../apps/backend/app/llmops/reconciler.py) `converge_desired` +
+> [main.py](../apps/backend/app/main.py) 迴圈拆分):reconcile/actuation + gpu-poll 移到 lifespan(每 node 跑);
+> scheduler / autoscaler / load-monitor / prune 留 leader-only。`converge_desired` 對 owned(非 foreign)實例做
+> desired→observed 收斂(STOPPED→start、live→stop、ready→sleep、sleeping→wake;FAILED 留給 `_process_restarts`)。
+> 單機 collapsed 行為不變(唯一 node=leader=全擁有);全測 409 綠 + live collapsed 起模型→READY 驗過。
+> 多 node 收斂以 fake 多 node unit test(foreign 排除等)覆蓋。剩 C/D(寫意圖解耦 + 排程拒絕回饋)。
+>
+> **E 大部分可在單機驗(已做)**:原以為要實體多機,實際上**單機跑 2 個 backend 容器(vLLM image +
+> SGLang image)共享一顆 Postgres + 一個 router + 一張 GPU** 就能驗證 per-node ownership / 跨容器路由 /
+> follower 自我修復。Live 驗證結果:兩個不同引擎的模型各自被「對的 node」起起來、各自 backfill 到
+> `instances_live`(`mixed-vllm-backend:8002`/vllm-node、`mixed-sglang-backend:8100`/sglang-node)、**同一個
+> router** 路由到兩者(`2+2=4` 走 vLLM、`3+3=6` 走 SGLang)。期間 vLLM 首次啟動因並發競爭逾時 FAILED,
+> **由 follower(vllm-node)自己的 reconcile loop auto-restart 回 READY** —— 直接證明 B 解除 leader 綁定後
+> follower 真的會 actuate 自己那份。SGLang 跨容器路由靠新加的 `LLMOPS_VLLM_BIND_HOST` bind-host 支援。
+> 真「並行多 GPU 加速」仍需實體多卡,但**功能正確性已單機驗完**。
 
 > 每一步:**單機先過既有全套測試 0 退化**、SQLite + Postgres 雙驗;多 node 邏輯以 fake 多 node 寫 unit test。
 > A→D 都能在單機完成且行為不變;**E 一定要有第二台 GPU 主機**才驗得起來。

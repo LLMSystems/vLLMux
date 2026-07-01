@@ -5,6 +5,15 @@
 ## Model management
 
 - Multi-model, multi-instance management on vLLM (LLM, Embedding, Reranker).
+- **Pluggable inference engines — vLLM & SGLang.** Each model declares an `engine`
+  (default `vllm`); the *Add Model* dialog has an engine selector and engine-specific
+  launch args are translated per engine. In the mixed deployment a vLLM backend and a
+  SGLang backend share one router/dashboard, and an **engine-aware scheduler** places
+  each model on a backend that can run it. SGLang supports routing, inference, the
+  lifecycle, runtime LoRA, and metrics + autoscaling (it has no sleep mode, so the
+  autoscaler degrades it to `ready ↔ stopped`). See
+  [mixed-engine-deployment.md](mixed-engine-deployment.md) and
+  [multi-backend-engine-design_zh-CN.md](multi-backend-engine-design_zh-CN.md).
 - Per-instance lifecycle (start/stop) with a live state machine
   (`stopped → starting → ready → failed/stopping`), driven by a reconciler that
   derives the true state from process liveness + `/health` probes.

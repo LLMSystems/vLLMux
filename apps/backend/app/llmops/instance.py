@@ -29,6 +29,11 @@ class LaunchSpec:
     host: str
     port: int
     probe_url: str
+    # Which inference engine this spec launches ("vllm" / "sglang" / …) and the
+    # optional features it supports. Callers gate on capabilities, not the engine
+    # name. See launchers.CAP_* and docs/multi-backend-engine-design_zh-CN.md.
+    engine: str = "vllm"
+    capabilities: frozenset = field(default_factory=frozenset)
     model_tag: Optional[str] = None
     # True when launched with --enable-sleep-mode + VLLM_SERVER_DEV_MODE=1, so the
     # /sleep, /wake_up and /is_sleeping dev endpoints are available.
@@ -51,6 +56,9 @@ class ModelInstance:
     port: int
     spec: LaunchSpec
     model_tag: Optional[str] = None
+    # Inference engine backing this instance (mirrors spec.engine); surfaced in the
+    # fleet view + persisted to the shared store (HA) so any replica can render it.
+    engine: str = "vllm"
 
     desired: Desired = Desired.STOPPED
     state: ModelState = ModelState.STOPPED
@@ -85,6 +93,7 @@ class ModelInstance:
         return {
             "key": self.key,
             "kind": self.kind.value,
+            "engine": self.engine,
             "model_tag": self.model_tag,
             "host": self.host,
             "port": self.port,

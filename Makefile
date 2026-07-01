@@ -6,10 +6,11 @@ PY   := $(VENV)/bin/python
 PYTEST := $(PY) -m pytest
 
 COMPOSE := docker compose -f deploy/docker-compose.yaml
+COMPOSE_MIXED := docker compose -f deploy/docker-compose.mixed.yaml
 
 .PHONY: help test test-backend test-router test-schema \
         dev-backend dev-frontend build-frontend install-frontend \
-        up down logs ps build
+        up down logs ps build up-mixed down-mixed logs-mixed
 
 help:
 	@echo "Targets:"
@@ -26,6 +27,10 @@ help:
 	@echo "  logs            Tail logs from all services"
 	@echo "  ps              Show service status"
 	@echo "  build           Build images without starting"
+	@echo "  --- mixed-engine HA (deploy/docker-compose.mixed.yaml) ---"
+	@echo "  up-mixed        vLLM + SGLang backends sharing one Postgres/router/dashboard"
+	@echo "  down-mixed      Stop + remove the mixed stack"
+	@echo "  logs-mixed      Tail logs from the mixed stack"
 
 up:
 	$(COMPOSE) up -d --build
@@ -41,6 +46,16 @@ ps:
 
 build:
 	$(COMPOSE) build
+
+# --- mixed-engine HA deployment (vLLM + SGLang backends, shared Postgres) ---
+up-mixed:
+	$(COMPOSE_MIXED) up -d --build
+
+down-mixed:
+	$(COMPOSE_MIXED) down
+
+logs-mixed:
+	$(COMPOSE_MIXED) logs -f
 
 test: test-backend test-router test-schema
 

@@ -52,48 +52,63 @@ class VLLMInstanceMetrics:
         }
         
         
-class VLLMMetricsClient:
-    METRIC_NAMES = {
+# Each engine exposes the same concepts under different Prometheus metric names.
+# Parsing normalises both into the identical VLLMInstanceMetrics shape, so the
+# downstream load-monitor / autoscaler / routing stay engine-agnostic. SGLang's
+# token_usage (0..1 of the token pool) is the closest analog to vLLM's KV usage.
+METRIC_NAMES_BY_ENGINE = {
+    "vllm": {
         "running": "vllm:num_requests_running",
         "waiting": "vllm:num_requests_waiting",
         "kv_cache_usage_perc": "vllm:kv_cache_usage_perc",
         "prompt_tokens": "vllm:prompt_tokens",
         "generation_tokens": "vllm:generation_tokens",
-    }
-    
+    },
+    "sglang": {
+        "running": "sglang:num_running_reqs",
+        "waiting": "sglang:num_queue_reqs",
+        "kv_cache_usage_perc": "sglang:token_usage",
+        "prompt_tokens": "sglang:prompt_tokens_total",
+        "generation_tokens": "sglang:generation_tokens_total",
+    },
+}
+
+
+class VLLMMetricsClient:
+    # Default (vLLM) names; engine-specific lookups use METRIC_NAMES_BY_ENGINE.
+    METRIC_NAMES = METRIC_NAMES_BY_ENGINE["vllm"]
+
     def __init__(self, http_client: httpx.AsyncClient, timeout: float = 2.0) -> None:
         self.http_client = http_client
         self.timeout = timeout
-        
-    async def fetch(self, base_url: str) -> Optional[VLLMInstanceMetrics]:
+
+    async def fetch(self, base_url: str, engine: str = "vllm") -> Optional[VLLMInstanceMetrics]:
         metrics_url = base_url.rstrip("/") + "/metrics"
 
         resp = await self.http_client.get(metrics_url, timeout=self.timeout)
         resp.raise_for_status()
-        
+
         parsed = self.parse_metrics(resp.text)
-            
+        names = METRIC_NAMES_BY_ENGINE.get(engine, self.METRIC_NAMES)
+
         return VLLMInstanceMetrics(
             base_url=base_url,
-            running=parsed.get(self.METRIC_NAMES["running"], 0.0),
-            waiting=parsed.get(self.METRIC_NAMES["waiting"], 0.0),
-            kv_cache_usage_perc=parsed.get(
-                self.METRIC_NAMES["kv_cache_usage_perc"], 0.0
-            ),
-            prompt_tokens=parsed.get(self.METRIC_NAMES["prompt_tokens"], 0.0),
-            generation_tokens=parsed.get(
-                self.METRIC_NAMES["generation_tokens"], 0.0
-            ),
+            running=parsed.get(names["running"], 0.0),
+            waiting=parsed.get(names["waiting"], 0.0),
+            kv_cache_usage_perc=parsed.get(names["kv_cache_usage_perc"], 0.0),
+            prompt_tokens=parsed.get(names["prompt_tokens"], 0.0),
+            generation_tokens=parsed.get(names["generation_tokens"], 0.0),
             raw_metrics=resp.text,
         )
-        
+
     async def _safe_fetch(
         self,
         backend_name: str,
         base_url: str,
+        engine: str = "vllm",
     ) -> tuple[str, VLLMInstanceMetrics]:
         try:
-            metrics = await self.fetch(base_url)
+            metrics = await self.fetch(base_url, engine)
             return backend_name, metrics
         except Exception:
             return backend_name, VLLMInstanceMetrics(
@@ -110,26 +125,27 @@ class VLLMMetricsClient:
     
     async def fetch_many(
         self,
-        backends: Dict[str, str],
+        backends: Dict[str, object],
     ) -> Dict[str, VLLMInstanceMetrics]:
         """
         Fetch metrics for many backends.
 
         Args:
-            backends: mapping like
+            backends: mapping of name -> base_url, or name -> (base_url, engine) to
+                scrape multi-engine fleets. A bare string defaults engine to "vllm":
                 {
                     "qwen14b-a": "http://127.0.0.1:8001",
-                    "qwen14b-b": "http://127.0.0.1:8002",
+                    "sgl-b": ("http://127.0.0.1:8100", "sglang"),
                 }
 
         Returns:
             Dict[str, VLLMInstanceMetrics]
-        """       
-         
-        tasks = [
-            self._safe_fetch(backend_name, base_url) for backend_name, base_url in backends.items()
-        ]
-        
+        """
+        tasks = []
+        for backend_name, value in backends.items():
+            base_url, engine = value if isinstance(value, tuple) else (value, "vllm")
+            tasks.append(self._safe_fetch(backend_name, base_url, engine))
+
         pairs = await asyncio.gather(*tasks)
         return dict(pairs)
 

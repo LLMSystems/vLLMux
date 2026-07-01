@@ -71,3 +71,36 @@ async def test_safe_fetch_returns_infinite_load_on_error():
 async def test_to_dict_keeps_real_kv_cache_value():
     m = VLLMInstanceMetrics("x", running=1, waiting=0, kv_cache_usage_perc=0.42)
     assert m.to_dict()["kv_cache_usage_perc"] == 0.42
+
+
+async def test_fetch_parses_sglang_names_into_normalized_shape():
+    # SGLang exposes sglang:* names; the client must normalise them to the same
+    # running/waiting/kv fields the autoscaler reads, so downstream is engine-agnostic.
+    text = (
+        "sglang:num_running_reqs 3\n"
+        "sglang:num_queue_reqs 5\n"
+        "sglang:token_usage 0.4\n"
+    )
+    client = VLLMMetricsClient(http_client=_FakeClient(text))
+    m = await client.fetch("http://localhost:8100", engine="sglang")
+    assert m.running == 3.0
+    assert m.waiting == 5.0
+    assert m.kv_cache_usage_perc == 0.4
+
+
+async def test_fetch_vllm_engine_ignores_sglang_names():
+    # A vLLM scrape of sglang:* (wrong engine) yields zeros, never crashes.
+    text = "sglang:num_queue_reqs 7\n"
+    client = VLLMMetricsClient(http_client=_FakeClient(text))
+    m = await client.fetch("http://localhost:8002", engine="vllm")
+    assert m.waiting == 0.0
+
+
+async def test_fetch_many_accepts_url_and_url_engine_tuple():
+    client = VLLMMetricsClient(http_client=_FakeClient("sglang:num_queue_reqs 2\n"))
+    out = await client.fetch_many({
+        "v": "http://localhost:8002",                    # bare url -> vllm
+        "s": ("http://localhost:8100", "sglang"),        # (url, engine)
+    })
+    assert out["v"].waiting == 0.0          # vllm parser doesn't see sglang:*
+    assert out["s"].waiting == 2.0          # sglang parser does

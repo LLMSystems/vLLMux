@@ -76,3 +76,54 @@ async def test_reschedule_once_places_via_store():
 
 async def test_reschedule_noop_without_store():
     assert await Scheduler().reschedule_once(None, BackendSettings()) == {}
+
+
+# ---- engine-aware placement (HA Phase 7) ------------------------------------
+
+from app.llmops.scheduler import node_supports  # noqa: E402
+
+
+def _enode(node_id, engines, *gpus):
+    n = _node(node_id, *gpus)
+    n["engines"] = json.dumps(engines) if engines is not None else None
+    return n
+
+
+def test_node_supports_unspecified_runs_any():
+    assert node_supports({"engines": None}, "sglang") is True
+    assert node_supports({}, "vllm") is True
+
+
+def test_node_supports_matches_advertised():
+    n = _enode("n", ["sglang"])
+    assert node_supports(n, "sglang") is True
+    assert node_supports(n, "vllm") is False
+
+
+def test_place_matches_engine_to_capable_node():
+    nodes = [_enode("vllm-node", ["vllm"], (8192, 0)),
+             _enode("sglang-node", ["sglang"], (8192, 0))]
+    changes = place({"G::v", "G::s"}, nodes, {},
+                    key_engines={"G::v": "vllm", "G::s": "sglang"})
+    assert changes["G::v"] == "vllm-node"
+    assert changes["G::s"] == "sglang-node"
+
+
+def test_place_leaves_unassigned_when_no_capable_node():
+    nodes = [_enode("vllm-node", ["vllm"], (8192, 0))]
+    changes = place({"G::s"}, nodes, {}, key_engines={"G::s": "sglang"})
+    assert "G::s" not in changes  # no sglang node -> stays unassigned
+
+
+def test_place_moves_model_off_wrong_engine_node():
+    # Started on the vllm node by mistake; scheduler moves it to the sglang node.
+    nodes = [_enode("vllm-node", ["vllm"], (8192, 0)),
+             _enode("sglang-node", ["sglang"], (8192, 0))]
+    changes = place({"G::s"}, nodes, {"G::s": "vllm-node"}, key_engines={"G::s": "sglang"})
+    assert changes["G::s"] == "sglang-node"
+
+
+def test_place_keeps_well_placed_engine_match():
+    nodes = [_enode("sglang-node", ["sglang"], (8192, 0))]
+    changes = place({"G::s"}, nodes, {"G::s": "sglang-node"}, key_engines={"G::s": "sglang"})
+    assert changes == {}  # already on a matching live node -> no churn

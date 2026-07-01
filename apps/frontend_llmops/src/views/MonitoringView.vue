@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Activity, Cpu, ExternalLink, Gauge, Layers, LayoutDashboard, Server, TrendingUp } from '@lucide/vue'
+import { Activity, Boxes, Cpu, ExternalLink, Gauge, Layers, LayoutDashboard, Server, TrendingUp } from '@lucide/vue'
 import { useTheme } from '@/composables/useTheme'
 import { useModelsStore } from '@/stores/models'
 
@@ -10,7 +10,7 @@ import { useModelsStore } from '@/stores/models'
 // from the provisioned dashboards (deploy/grafana/dashboards).
 const BASE = '/grafana/d'
 
-type DashboardId = 'overview' | 'autoscaling' | 'capacity' | 'perf' | 'query' | 'gpu' | 'host'
+type DashboardId = 'overview' | 'autoscaling' | 'capacity' | 'perf' | 'query' | 'sglang' | 'gpu' | 'host'
 
 const ranges = [
   { label: '15m', from: 'now-15m' },
@@ -20,17 +20,35 @@ const ranges = [
 ] as const
 
 const { t } = useI18n()
+// Tabs grouped by engine + a shared section, so a 4-vLLM-vs-1-SGLang flat list reads
+// as per-engine sections instead of looking lopsided. `group` keys into GROUPS below.
 const dashboards = computed(
   () =>
     [
-      { id: 'overview', label: t('monitoring.overview'), icon: LayoutDashboard, path: `${BASE}/vllm-overview/vllm-overview` },
-      { id: 'autoscaling', label: t('monitoring.autoscaling'), icon: Layers, path: `${BASE}/llmops-autoscaling/autoscaling` },
-      { id: 'capacity', label: t('monitoring.vllmCapacity'), icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
-      { id: 'perf', label: t('monitoring.vllmPerf'), icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
-      { id: 'query', label: t('monitoring.vllmQuery'), icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
-      { id: 'gpu', label: t('monitoring.gpu'), icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
-      { id: 'host', label: t('monitoring.host'), icon: Cpu, path: `${BASE}/rYdddlPWk/node-exporter-full` },
+      // vLLM (the official vLLM Grafana set, split into overview/capacity/perf/query)
+      { id: 'overview', group: 'vllm', label: t('monitoring.overview'), icon: LayoutDashboard, path: `${BASE}/vllm-overview/vllm-overview` },
+      { id: 'capacity', group: 'vllm', label: t('monitoring.vllmCapacity'), icon: Gauge, path: `${BASE}/vllm-scheduling-capacity/vllm-scheduling-and-capacity` },
+      { id: 'perf', group: 'vllm', label: t('monitoring.vllmPerf'), icon: TrendingUp, path: `${BASE}/performance-statistics/performance-statistics` },
+      { id: 'query', group: 'vllm', label: t('monitoring.vllmQuery'), icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
+      // SGLang (official sgl-project dashboard)
+      { id: 'sglang', group: 'sglang', label: t('monitoring.sglangDashboard'), icon: Boxes, path: `${BASE}/sglang-dashboard/sglang-dashboard` },
+      // Shared / cross-engine + infra
+      { id: 'autoscaling', group: 'shared', label: t('monitoring.autoscaling'), icon: Layers, path: `${BASE}/llmops-autoscaling/autoscaling` },
+      { id: 'gpu', group: 'shared', label: t('monitoring.gpu'), icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
+      { id: 'host', group: 'shared', label: t('monitoring.host'), icon: Cpu, path: `${BASE}/rYdddlPWk/node-exporter-full` },
     ] as const,
+)
+// Ordered groups for the segmented tab bar.
+const groupedTabs = computed(() =>
+  (
+    [
+      { key: 'vllm', label: 'vLLM' },
+      { key: 'sglang', label: 'SGLang' },
+      { key: 'shared', label: t('monitoring.shared') },
+    ] as const
+  )
+    .map((g) => ({ ...g, items: dashboards.value.filter((d) => d.group === g.key) }))
+    .filter((g) => g.items.length),
 )
 const active = ref<DashboardId>('overview')
 const range = ref<(typeof ranges)[number]['from']>('now-1h')
@@ -80,21 +98,28 @@ const openUrl = computed(
   <div class="flex h-full flex-col p-6">
     <!-- Toolbar -->
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <div class="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
-        <button
-          v-for="d in dashboards"
-          :key="d.id"
-          class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="
-            active === d.id
-              ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
-              : 'text-muted-foreground hover:text-foreground'
-          "
-          @click="active = d.id"
-        >
-          <component :is="d.icon" class="size-4" />
-          {{ d.label }}
-        </button>
+      <div class="flex flex-wrap items-center gap-1 rounded-lg bg-muted/60 p-1">
+        <template v-for="(g, gi) in groupedTabs" :key="g.key">
+          <!-- group divider + label between sections -->
+          <span v-if="gi > 0" class="mx-1 h-5 w-px bg-border/60" aria-hidden="true" />
+          <span class="pl-1.5 pr-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+            {{ g.label }}
+          </span>
+          <button
+            v-for="d in g.items"
+            :key="d.id"
+            class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="
+              active === d.id
+                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            @click="active = d.id"
+          >
+            <component :is="d.icon" class="size-4" />
+            {{ d.label }}
+          </button>
+        </template>
       </div>
 
       <!-- Group selector drives the autoscaling dashboard's `group` variable (kiosk

@@ -16,7 +16,7 @@ from typing import Optional
 from app.core.settings import BackendSettings
 from app.llmops.events import emit_transition
 from app.llmops.instance import ModelInstance
-from app.llmops.launchers import Launcher
+from app.llmops.launchers import CAP_RUNTIME_LORA, CAP_SLEEP, Launcher
 from app.llmops.process import spawn_process, terminate_process_group
 from app.llmops.registry import ModelRegistry
 from app.llmops.state import Desired, ModelKind, ModelState
@@ -68,6 +68,7 @@ def build_registry(config, config_path: str, launchers: list[Launcher]) -> Model
                 ModelInstance(
                     key=key,
                     kind=launcher.kind,
+                    engine=spec.engine,
                     host=spec.host,
                     port=spec.port,
                     spec=spec,
@@ -93,7 +94,11 @@ class ModelManager:
         notifier=None,
     ) -> None:
         self.registry = registry
-        self._launchers: dict[ModelKind, Launcher] = {l.kind: l for l in launchers}
+        # Dispatch is keyed on (kind, engine): vLLM and SGLang are both ModelKind.LLM
+        # but distinct launchers. Embedding registers under ENGINE_DEFAULT.
+        self._launchers: dict[tuple[ModelKind, str], Launcher] = {
+            (l.kind, l.engine): l for l in launchers
+        }
         self.http_client = http_client
         self.config = config
         self.config_path = config_path
@@ -110,6 +115,54 @@ class ModelManager:
         if inst is None:
             raise ModelNotFound(key)
         return inst
+
+    def _launcher_for(self, inst: ModelInstance) -> Launcher:
+        """The launcher that owns an instance, by its (kind, engine)."""
+        return self._launchers[(inst.kind, inst.engine)]
+
+    def _node_can_run(self, engine: str) -> bool:
+        """Whether THIS node can run an engine (its image has it). Empty
+        node_engines = unspecified = runs any (collapsed single host / single-engine
+        deploys: always True, so the sync actuation path below is unchanged)."""
+        ne = self.settings.node_engines
+        return not ne or engine in ne
+
+    async def _defer_to_owner(self, inst: ModelInstance, desired: Desired) -> ModelInstance:
+        """HA Phase 7C: this node can't run `inst`'s engine, so don't actuate locally —
+        just record the intent and let the scheduler place it on an engine-matching
+        node, whose reconcile loop converges it. Returns the instance (state unchanged
+        here; the dashboard tracks progress via observed state from the owning node)."""
+        async with self.registry.lock:
+            inst.desired = desired
+            inst.touch()
+        if self.store is not None:
+            try:
+                await self.store.set_instance_desired(inst.key, desired.value)
+            except Exception:
+                logger.warning("defer: failed to persist desired for %s", inst.key, exc_info=True)
+            # Clear any assignment so the engine-aware scheduler places it fresh on a
+            # node that can actually run it (it would reassign anyway, but this avoids
+            # a transient wrong-node attempt).
+            if desired != Desired.STOPPED and hasattr(self.store, "delete_assignment"):
+                try:
+                    await self.store.delete_assignment(inst.key)
+                except Exception:
+                    logger.debug("defer: clear assignment failed for %s", inst.key, exc_info=True)
+        logger.info("Deferred %s (engine=%s) to an engine-matching node (desired=%s)",
+                    inst.key, inst.engine, desired.value)
+        return inst
+
+    def _llm_engine_capabilities(self, group: str) -> frozenset:
+        """Capabilities of the engine an LLM group is configured for. Callers gate
+        optional features (sleep, runtime LoRA, …) on these rather than the engine
+        name, so a new engine only needs to declare its capability set. Empty if the
+        group / its engine's launcher is unknown."""
+        engine = self.config.LLM_engines.get(group)
+        if engine is None:
+            return frozenset()
+        engine_name = getattr(engine.settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, engine_name))
+        return launcher.capabilities if launcher else frozenset()
 
     async def _record(self, inst, from_state, to_state, detail=None) -> None:
         """Persist a state transition + dispatch any alert, via the shared funnel.
@@ -203,6 +256,25 @@ class ModelManager:
                 alive = set()
         return {k for k, n in amap.items() if n != me and n in alive}
 
+    async def owning_node_api_url(self, key: str) -> Optional[str]:
+        """The backend API base URL of the node that owns `key`, when that node is a
+        *different*, alive node advertising an api_url — so node-local requests (logs,
+        startup metrics) can be proxied to it. None when the model is local / owner
+        unknown / no api_url advertised (caller then reads locally). Best-effort."""
+        if self.store is None or not hasattr(self.store, "list_assignments"):
+            return None
+        try:
+            owner = (await self.store.list_assignments()).get(key)
+            if owner is None or owner == self.settings.instance_id:
+                return None
+            for n in await self.store.list_nodes():
+                if n["node_id"] == owner:
+                    url = n.get("api_url")
+                    return url.rstrip("/") if url else None
+        except Exception:
+            logger.debug("owning_node_api_url failed for %s", key, exc_info=True)
+        return None
+
     async def replay_desired(self) -> None:
         """On boot (after adopt_running): start instances whose persisted desired is
         RUNNING but which are currently STOPPED/FAILED — so a backend restart (or a
@@ -253,7 +325,7 @@ class ModelManager:
         from app.services.prometheus_targets import build_targets, write_targets_file
 
         instances = await self.registry.snapshot()
-        targets = build_targets(instances)
+        targets = build_targets(instances, node_host=self.settings.node_host)
         loop = asyncio.get_event_loop()
         try:
             return await loop.run_in_executor(None, write_targets_file, path, targets)
@@ -263,6 +335,17 @@ class ModelManager:
 
     async def list(self) -> list[ModelInstance]:
         return await self.registry.snapshot()
+
+    def prefer_store_view(self) -> bool:
+        """Whether model-state views should come from the shared store rather than
+        this node's local registry. In HA/Postgres mode every node only actuates the
+        models assigned to it (Phase 7), so no single registry is the full truth —
+        each node backfills its *owned* observed state to the store, which is the
+        only complete view. Use it on leader and follower alike. SQLite collapsed:
+        one node owns everything, so the local registry is the truth (unchanged)."""
+        return (self.store is not None
+                and getattr(self.store, "db_url", None) is not None
+                and hasattr(self.store, "list_instance_observed"))
 
     async def fleet_views(self, prefer_store: bool = False) -> list[dict]:
         """The fleet's model-view dicts. Leader (prefer_store=False): from the live
@@ -283,6 +366,18 @@ class ModelManager:
                     base[v["key"]] = v
             except Exception:
                 logger.warning("fleet_views: failed to read observed from store", exc_info=True)
+            # Overlay the *authoritative* desired intent (instance_desired, written
+            # immediately by whichever replica took the API call) over the observed
+            # desired, which lags until the owning node's reconcile converges. Without
+            # this the dashboard briefly sees desired=running + state=ready after a
+            # stop and flickers ready->stopped. Best-effort.
+            try:
+                desired = await self.store.list_instance_desired()
+                for key, want in desired.items():
+                    if key in base:
+                        base[key]["desired"] = want
+            except Exception:
+                logger.debug("fleet_views: failed to overlay desired", exc_info=True)
         return list(base.values())
 
     async def get(self, key: str) -> ModelInstance:
@@ -357,7 +452,11 @@ class ModelManager:
 
     async def start(self, key: str, force: bool = False, reset_restart: bool = True) -> ModelInstance:
         inst = self._require(key)
-        launcher = self._launchers[inst.kind]
+        # HA Phase 7C: if this node can't run the engine, write intent and let an
+        # engine-matching node actuate it (collapsed/single-engine: always can-run).
+        if not self._node_can_run(inst.engine):
+            return await self._defer_to_owner(inst, Desired.RUNNING)
+        launcher = self._launcher_for(inst)
 
         # Re-resolve the spec (config may have changed) outside the lock so the
         # GPU pre-flight's nvidia-smi call never extends the critical section.
@@ -411,6 +510,9 @@ class ModelManager:
 
     async def stop(self, key: str) -> ModelInstance:
         inst = self._require(key)
+        # HA Phase 7C: not our engine -> record desired=stopped; the owning node stops it.
+        if not self._node_can_run(inst.engine):
+            return await self._defer_to_owner(inst, Desired.STOPPED)
 
         async with self.registry.lock:
             prev = inst.state
@@ -462,6 +564,8 @@ class ModelManager:
         The HTTP call runs outside the registry lock; on failure the desired
         intent is reverted so the reconciler doesn't fight a half-applied state."""
         inst = self._require(key)
+        if not self._node_can_run(inst.engine):  # HA Phase 7C: owning node sleeps it
+            return await self._defer_to_owner(inst, Desired.ASLEEP)
         if not getattr(inst.spec, "sleep_enabled", False):
             raise ModelConflict(
                 f"{key} was not launched with sleep mode "
@@ -501,6 +605,8 @@ class ModelManager:
         """Wake a SLEEPING instance back to READY (vLLM /wake_up reloads weights to
         GPU). Seconds, not a cold start."""
         inst = self._require(key)
+        if not self._node_can_run(inst.engine):  # HA Phase 7C: owning node wakes it
+            return await self._defer_to_owner(inst, Desired.RUNNING)
         async with self.registry.lock:
             if inst.state != ModelState.SLEEPING:
                 raise ModelConflict(
@@ -617,13 +723,17 @@ class ModelManager:
         save_overlay(overlay, self.overlay_path)
         self.config = new_config
 
-        launcher = self._launchers[ModelKind.LLM]
+        group_engine = getattr(new_config.LLM_engines[group].settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, group_engine))
+        if launcher is None:
+            raise ModelConflict(f"unsupported engine '{group_engine}' (no launcher registered)")
         spec = launcher.build_spec(self.config, self.config_path, key)
         async with self.registry.lock:
             self.registry.add(
                 ModelInstance(
                     key=key,
                     kind=ModelKind.LLM,
+                    engine=spec.engine,
                     host=spec.host,
                     port=spec.port,
                     spec=spec,
@@ -679,10 +789,15 @@ class ModelManager:
         save_overlay(overlay, self.overlay_path)
         self.config = new_config
 
-        # Re-resolve the spec so the next start uses the edited values.
-        launcher = self._launchers[ModelKind.LLM]
+        # Re-resolve the spec so the next start uses the edited values. The edit may
+        # have changed the group's engine, so pick the launcher by the new config.
+        group_engine = getattr(new_config.LLM_engines[group].settings, "engine", "vllm")
+        launcher = self._launchers.get((ModelKind.LLM, group_engine))
+        if launcher is None:
+            raise ModelConflict(f"unsupported engine '{group_engine}' (no launcher registered)")
         spec = launcher.build_spec(self.config, self.config_path, key)
         async with self.registry.lock:
+            inst.engine = spec.engine
             inst.host = spec.host
             inst.port = spec.port
             inst.spec = spec
@@ -706,8 +821,11 @@ class ModelManager:
         ]
 
     async def _post_lora(self, inst: ModelInstance, action: str, payload: dict) -> None:
-        """POST /v1/{load,unload}_lora_adapter to one instance; raise on failure."""
-        url = f"http://{inst.host}:{inst.port}/v1/{action}_lora_adapter"
+        """POST {load,unload}_lora_adapter to one instance; raise on failure. The
+        path differs by engine: vLLM serves /v1/<action>_lora_adapter, SGLang serves
+        /<action>_lora_adapter (no /v1). The JSON body is the same for both."""
+        prefix = "" if getattr(inst, "engine", "vllm") == "sglang" else "/v1"
+        url = f"http://{inst.host}:{inst.port}{prefix}/{action}_lora_adapter"
         resp = await self.http_client.post(url, json=payload, timeout=120.0)
         if resp.status_code >= 400:
             try:
@@ -752,6 +870,11 @@ class ModelManager:
         engine = self.config.LLM_engines.get(group)
         if engine is None:
             raise ModelNotFound(group)
+        if CAP_RUNTIME_LORA not in self._llm_engine_capabilities(group):
+            engine_name = getattr(engine.settings, "engine", "vllm")
+            raise ModelConflict(
+                f"{group}'s engine ({engine_name}) does not support runtime LoRA"
+            )
         if not getattr(engine.settings, "allow_runtime_lora", False):
             raise ModelConflict(
                 f"{group} was not started with runtime LoRA updating — enable "
@@ -897,13 +1020,14 @@ class ModelManager:
         for key in added:
             kind, spec = desired[key]
             self.registry.add(ModelInstance(
-                key=key, kind=kind, host=spec.host, port=spec.port, spec=spec,
-                model_tag=spec.model_tag, log_path=spec.log_path,
+                key=key, kind=kind, engine=spec.engine, host=spec.host, port=spec.port,
+                spec=spec, model_tag=spec.model_tag, log_path=spec.log_path,
             ))
         for key in changed:
             kind, spec = desired[key]
             inst = self.registry.get(key)
             inst.spec, inst.host, inst.port = spec, spec.host, spec.port
+            inst.engine = spec.engine
             inst.model_tag, inst.log_path = spec.model_tag, spec.log_path
         return {"added": added, "removed": removed, "changed": changed}
 
@@ -971,6 +1095,42 @@ class ModelManager:
         await self.trigger_router_reload()
         logger.info("Imported overlay: %s", summary_keys)
         return summary_keys
+
+    async def sync_overlay_from_store(self) -> bool:
+        """HA Phase 7: pull the fleet's current overlay from the shared store and
+        align this node's registry to it, so a model added/edited on *any* replica
+        appears here too (and an engine-matching node can then actuate it). No-op
+        outside Postgres mode (SQLite's file is already the single shared truth) and
+        when nothing changed. Best-effort: never raises. Returns True if it resynced.
+
+        Only the registry alignment for *non-running-here* keys matters in practice:
+        a follower adds the new STOPPED instance, then converge_desired starts it if
+        it's assigned here. resync_registry refuses to change a key running locally,
+        which is the safe behaviour (the owning node edits its own)."""
+        if self.store is None or getattr(self.store, "db_url", None) is None:
+            return False
+        from app.services.overlay import (build_merged_config,
+                                          hydrate_overlay_from_store, load_overlay)
+        try:
+            changed = await hydrate_overlay_from_store(self.store, self.overlay_path)
+            if not changed:
+                return False
+            new_config = build_merged_config(self.config_path, load_overlay(self.overlay_path))
+        except Exception:
+            logger.debug("sync_overlay_from_store: hydrate/merge failed", exc_info=True)
+            return False
+        async with self.registry.lock:
+            try:
+                summary = self.resync_registry(new_config)
+            except Exception:
+                logger.debug("sync_overlay_from_store: resync failed", exc_info=True)
+                return False
+            self.config = new_config
+        if any(summary.values()):
+            logger.info("Synced overlay from store: %s", summary)
+            await self.trigger_router_reload()
+            return True
+        return False
 
     async def stop_all(self) -> None:
         """Best-effort shutdown of every managed process (used at app shutdown)."""

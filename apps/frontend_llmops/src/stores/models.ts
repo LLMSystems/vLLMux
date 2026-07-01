@@ -5,6 +5,16 @@ import type { ConfigSummary, ModelKind, ModelState, ModelView } from '@/types/ap
 
 type ConnState = 'connecting' | 'live' | 'polling' | 'error'
 
+/** Whether a model's observed state has caught up to its desired intent — i.e. the
+ *  pending start/stop/sleep has landed (failed is terminal for any intent). */
+function settledForDesired(m: ModelView): boolean {
+  if (m.state === 'failed') return true
+  if (m.desired === 'running') return m.state === 'ready'
+  if (m.desired === 'stopped') return m.state === 'stopped'
+  if (m.desired === 'asleep') return m.state === 'sleeping'
+  return m.state !== 'starting' && m.state !== 'stopping'
+}
+
 /**
  * Single source of truth for model lifecycle state. Subscribes to the backend
  * SSE stream (`/api/stream/models`) for push updates and falls back to polling
@@ -46,14 +56,24 @@ export const useModelsStore = defineStore('models', () => {
   const hasFailures = computed(() => counts.value.failed > 0)
 
   function applySnapshot(next: ModelView[]) {
-    models.value = next
-    lastUpdated.value = Date.now()
-    // Clear pending markers once the stream reflects a settled state.
+    // With HA deferred actuation a stop/start is async: right after a stop request
+    // the owning node may still report `ready` for a beat before its reconcile loop
+    // converges (and vice-versa for start). Showing that stale state made the row
+    // flicker (e.g. stop -> ready -> stopped). While a key is pending, clear it once
+    // the observed state has caught up to the *desired* intent; until then, hold a
+    // transitional display (stopping/starting) so it never shows the stale state.
     for (const m of next) {
-      if (pending.value.has(m.key) && m.state !== 'starting' && m.state !== 'stopping') {
+      if (!pending.value.has(m.key)) continue
+      if (settledForDesired(m)) {
         pending.value.delete(m.key)
+      } else if (m.desired === 'stopped') {
+        m.state = 'stopping'
+      } else if (m.desired === 'running' && m.state !== 'starting') {
+        m.state = 'starting'
       }
     }
+    models.value = next
+    lastUpdated.value = Date.now()
   }
 
   /** Look up the static engine config (cuda_device, max_model_len…) for a key. */

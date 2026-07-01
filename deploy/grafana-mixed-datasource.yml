@@ -1,0 +1,16 @@
+# Prometheus datasource override for the MIXED stack. The bundled provisioning
+# (deploy/grafana/provisioning/datasources/prometheus.yml) points at `backend:9090`
+# (the collapsed stack, where Prometheus shares the backend netns). In the mixed
+# stack Prometheus is its own service, so override the URL. Mounted over that file.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://mixed-prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s
