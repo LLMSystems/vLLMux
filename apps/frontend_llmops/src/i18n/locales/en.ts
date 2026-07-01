@@ -867,7 +867,7 @@ export default {
   addModel: {
     createTitle: 'Add Model',
     editTitle: 'Edit Model',
-    pasteCommand: 'Paste vLLM launch command',
+    pasteCommand: 'Paste launch command',
     parseCommand: 'Parse command',
     or: 'or',
     manualEntry: 'Manual entry',
@@ -963,6 +963,13 @@ export default {
     hashXxhash: 'xxhash (faster, not cryptographically secure)',
     qwen3Thinking: 'Qwen3 (with thinking)',
     toolCallingDocRef: 'See full reference in docs/vllm_auto_tool_reference.md. No matching parser = don\'t add it.',
+    // --- SGLang variants (the two engines support different things) ---
+    accelTitleSglang: '⚡ Acceleration settings (SGLang inference params)',
+    accelHintSglang: 'Empty = SGLang default. Changes require model restart. Radix cache (prefix cache) is on by default.',
+    sglSchedLpm: 'longest-prefix first',
+    toolAuto: 'Auto-detect (auto)',
+    toolCallingDescSglang: 'SGLang enables tool calling just by setting tool_call_parser=<parser> (no enable_auto_tool_choice); reasoning models also need reasoning_parser. Use auto to detect from the chat template. Parser must match the model output format.',
+    toolCallingDocRefSglang: 'Parser list from sglang.launch_server --tool-call-parser / --reasoning-parser. No matching parser = don\'t add it.',
   },
 
   // ---- ModelDetailDrawer ----

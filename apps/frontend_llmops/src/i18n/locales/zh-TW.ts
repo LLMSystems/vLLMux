@@ -846,7 +846,7 @@ export default {
   addModel: {
     createTitle: '新增模型',
     editTitle: '編輯模型',
-    pasteCommand: '貼上 vLLM 啟動指令',
+    pasteCommand: '貼上啟動指令',
     parseCommand: '解析指令',
     or: '或',
     manualEntry: '手動填寫',
@@ -942,6 +942,13 @@ export default {
     hashXxhash: 'xxhash（較快，非密碼安全）',
     qwen3Thinking: 'Qwen3（含 thinking）',
     toolCallingDocRef: '完整對照見 docs/vllm_auto_tool_整理.md。沒有對應 parser 的模型請勿亂加。',
+    // --- SGLang 變體（兩引擎支援情況不同，分開呈現）---
+    accelTitleSglang: '⚡ 加速設定（SGLang 推理參數）',
+    accelHintSglang: '空白＝用 SGLang 預設。改了需重啟模型生效。radix cache（前綴快取）預設開。',
+    sglSchedLpm: '最長前綴優先',
+    toolAuto: '自動偵測（auto）',
+    toolCallingDescSglang: 'SGLang 只需設 tool_call_parser=<parser> 即可啟用工具調用（不需 enable_auto_tool_choice）；reasoning 模型再加 reasoning_parser。可用 auto 讓它從 chat template 自動偵測。parser 要對得上模型輸出格式。',
+    toolCallingDocRefSglang: 'parser 清單來自 sglang.launch_server 的 --tool-call-parser / --reasoning-parser。沒有對應 parser 的模型請勿亂加。',
   },
 
   modelDetail: {

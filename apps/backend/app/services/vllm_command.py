@@ -159,3 +159,121 @@ def parse_vllm_command(command: str) -> dict[str, Any]:
         "model_config": model_config,
         "warnings": warnings,
     }
+
+
+# SGLang flag (snake_case) -> engine-neutral EngineModelConfig key. The inverse of
+# launchers._SGLANG_PARAM_MAP, so a pasted SGLang command stores the same typed
+# fields a vLLM one would and the launcher re-derives the SGLang flag on launch.
+_SGLANG_REVERSE_MAP = {
+    "context_length": "max_model_len",
+    "mem_fraction_static": "gpu_memory_utilization",
+    "tp_size": "tensor_parallel_size",
+}
+
+
+def parse_sglang_command(command: str) -> dict[str, Any]:
+    """Return {group, instance, model_config, warnings} from a
+    ``python -m sglang.launch_server …`` command.
+
+    Differs from vLLM: the model is ``--model-path`` (not positional), LoRA is
+    ``--lora-paths NAME=PATH …`` (not ``--lora-modules``), and the three flags
+    SGLang renames are mapped back to engine-neutral keys
+    (``--context-length`` → ``max_model_len`` …). The result carries
+    ``model_config.engine = "sglang"``.
+    """
+    warnings: list[str] = []
+    if not command or not command.strip():
+        raise ValueError("empty command")
+
+    tokens = shlex.split(command, comments=False)
+
+    env: dict[str, str] = {}
+    while tokens and _ENV_ASSIGN.match(tokens[0]):
+        k, _, v = tokens[0].partition("=")
+        env[k] = v
+        tokens = tokens[1:]
+
+    # Drop leading non-flag tokens (python, -m, sglang.launch_server, …).
+    rest = tokens
+    while rest and not rest[0].startswith("-"):
+        rest = rest[1:]
+
+    flags: dict[str, Any] = {}
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok.startswith("--"):
+            name = tok[2:]
+            if name in ("lora-paths", "lora_paths"):
+                # nargs='+' of NAME=PATH; consume until the next --flag.
+                values: list[str] = []
+                j = i + 1
+                while j < len(rest) and not rest[j].startswith("--"):
+                    values.append(rest[j])
+                    j += 1
+                flags["lora_modules"] = [_parse_lora_module(v) for v in values]
+                flags["enable_lora"] = True
+                i = j
+                continue
+            if "=" in name:
+                k, _, v = name.partition("=")
+                flags[k] = _coerce(v)
+            elif i + 1 < len(rest) and not rest[i + 1].startswith("-"):
+                flags[name] = _coerce(rest[i + 1])
+                i += 1
+            else:
+                flags[name] = True
+        i += 1
+
+    norm: dict[str, Any] = {k.replace("-", "_"): v for k, v in flags.items()}
+
+    # model tag: --model-path (SGLang) or --model (alias).
+    model_tag = norm.pop("model_path", None) or norm.pop("model", None)
+    port = norm.pop("port", None)
+    host = norm.pop("host", "localhost")
+    served = norm.pop("served_model_name", None)
+
+    # Map the renamed flags back to engine-neutral keys (tp-size's long alias
+    # --tensor-parallel-size already normalises to tensor_parallel_size).
+    for sgl_key, neutral in _SGLANG_REVERSE_MAP.items():
+        if sgl_key in norm:
+            norm[neutral] = norm.pop(sgl_key)
+
+    cuda_device: int | None = None
+    if env.get("CUDA_VISIBLE_DEVICES"):
+        first = env["CUDA_VISIBLE_DEVICES"].split(",")[0]
+        cuda_device = int(first) if first.isdigit() else None
+
+    if model_tag is None:
+        warnings.append("could not detect a model tag (expected `--model-path <model>`)")
+    if port is None:
+        warnings.append("no --port found; defaulting to 30000")
+        port = 30000  # SGLang's default server port
+    if served:
+        warnings.append("--served-model-name ignored for naming; the router uses the group name")
+
+    group = model_tag.split("/")[-1] if model_tag else (served or "model")
+    instance_id = _slug(served) if served else f"{_slug(group)}-1"
+
+    model_config: dict[str, Any] = {"model_tag": model_tag, "engine": "sglang", **norm}
+
+    return {
+        "group": group,
+        "instance": {"id": instance_id, "host": host, "port": port, "cuda_device": cuda_device},
+        "model_config": model_config,
+        "warnings": warnings,
+    }
+
+
+def parse_command(command: str, engine: str | None = None) -> dict[str, Any]:
+    """Engine-aware entry point for the dashboard's paste-a-command flow.
+
+    ``engine`` ('vllm' | 'sglang') forces the parser; when omitted it is sniffed
+    from the command (``sglang.launch_server`` → sglang, else vLLM).
+    """
+    eng = (engine or "").strip().lower()
+    if not eng:
+        eng = "sglang" if "sglang" in command.lower() else "vllm"
+    if eng == "sglang":
+        return parse_sglang_command(command)
+    return parse_vllm_command(command)

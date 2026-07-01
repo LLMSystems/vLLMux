@@ -44,8 +44,20 @@ const modelTag = ref('')
 // different launch flags; the launcher translates. vLLM is the default.
 const engine = ref('vllm')
 const ENGINE_OPTIONS = ['vllm', 'sglang', 'llamacpp', 'trtllm']
-// Capability gating: only vLLM supports sleep mode; hide the toggle otherwise.
-const engineHasSleep = computed(() => engine.value === 'vllm')
+// Which engine's command the paste box expects — drives the example placeholder and
+// is sent to the parser so an ambiguous command still parses for the right engine.
+const pasteEngine = ref('vllm')
+const PASTE_PLACEHOLDER: Record<string, string> = {
+  vllm: 'CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85',
+  sglang: 'CUDA_VISIBLE_DEVICES=0 python -m sglang.launch_server --model-path Qwen/Qwen3-0.6B --port 8030 --context-length 4096 --mem-fraction-static 0.85',
+}
+const pastePlaceholder = computed(() => PASTE_PLACEHOLDER[pasteEngine.value] ?? PASTE_PLACEHOLDER.vllm)
+// Capability gating — the two engines support different things, so the form only
+// shows what the selected engine actually has (see launchers.py CAP_* flags).
+const engineIsVllm = computed(() => engine.value === 'vllm')
+const engineIsSglang = computed(() => engine.value === 'sglang')
+const engineHasSleep = computed(() => engine.value === 'vllm') // /sleep + /wake_up (vLLM only)
+const engineHasKvShare = computed(() => engine.value === 'vllm') // OffloadingConnector (vLLM only)
 const params = ref<{ key: string; value: string }[]>([])
 // Router-only load-balancing policy for the group. Lives in model_config but is
 // NOT a vLLM flag, so it's edited as its own field and kept out of the raw param
@@ -171,6 +183,7 @@ function reset() {
   cudaDevice.value = null
   modelTag.value = ''
   engine.value = 'vllm'
+  pasteEngine.value = 'vllm'
   params.value = []
   routingStrategy.value = ''
   kvShared.value = false
@@ -254,7 +267,7 @@ async function parse() {
   if (!command.value.trim() || parsing.value) return
   parsing.value = true
   try {
-    const p = await api.parseCommand(command.value)
+    const p = await api.parseCommand(command.value, pasteEngine.value)
     group.value = p.group
     instanceId.value = p.instance.id
     host.value = p.instance.host
@@ -327,10 +340,12 @@ function onPickLora(l: LoraModule) {
   if (maxRank > 0) setParam('max_lora_rank', String(maxRank))
 }
 
-// ---- Tool-calling presets (see docs/vllm_auto_tool_整理.md) ----
+// ---- Tool-calling presets ----
+// Recommended (tool_call_parser, reasoning_parser) by model family — the parser
+// names differ per engine (vLLM: docs/vllm_auto_tool_整理.md; SGLang: the
+// `--tool-call-parser` / `--reasoning-parser` choices from sglang.launch_server).
 const showToolHint = ref(false)
-// Recommended (tool_call_parser, reasoning_parser) by model family.
-const TOOL_PRESETS = [
+const VLLM_TOOL_PRESETS = [
   { label: 'Qwen2.5 / QwQ', parser: 'hermes', reasoning: '' },
   { label: 'addModel.qwen3Thinking', parser: 'hermes', reasoning: 'qwen3' },
   { label: 'Qwen3-Coder', parser: 'qwen3_xml', reasoning: '' },
@@ -340,14 +355,33 @@ const TOOL_PRESETS = [
   { label: 'DeepSeek-V3/R1', parser: 'deepseek_v3', reasoning: '' },
   { label: 'GLM-4.5/4.6', parser: 'glm45', reasoning: '' },
 ]
+const SGLANG_TOOL_PRESETS = [
+  { label: 'addModel.toolAuto', parser: 'auto', reasoning: '' },
+  { label: 'Qwen2.5 / Qwen3', parser: 'qwen25', reasoning: '' },
+  { label: 'addModel.qwen3Thinking', parser: 'qwen25', reasoning: 'qwen3' },
+  { label: 'Qwen3-Coder', parser: 'qwen3_coder', reasoning: '' },
+  { label: 'Llama 3.x', parser: 'llama3', reasoning: '' },
+  { label: 'Mistral', parser: 'mistral', reasoning: '' },
+  { label: 'DeepSeek-V3', parser: 'deepseekv3', reasoning: 'deepseek-r1' },
+  { label: 'GLM-4.5/4.6', parser: 'glm45', reasoning: 'glm45' },
+  { label: 'Kimi K2', parser: 'kimi_k2', reasoning: '' },
+  { label: 'GPT-OSS', parser: 'gpt-oss', reasoning: 'gpt-oss' },
+]
+const toolPresets = computed(() => (engineIsSglang.value ? SGLANG_TOOL_PRESETS : VLLM_TOOL_PRESETS))
 function setParam(key: string, value: string) {
   const existing = params.value.find((p) => p.key === key)
   if (existing) existing.value = value
   else params.value.push({ key, value })
 }
 function applyToolPreset(parser: string, reasoning: string) {
-  setParam('enable_auto_tool_choice', 'true')
-  setParam('tool_call_parser', parser)
+  if (engineIsSglang.value) {
+    // SGLang enables tool calling just by setting --tool-call-parser; there's no
+    // --enable-auto-tool-choice (and 'auto' lets it detect from the chat template).
+    setParam('tool_call_parser', parser)
+  } else {
+    setParam('enable_auto_tool_choice', 'true')
+    setParam('tool_call_parser', parser)
+  }
   if (reasoning) setParam('reasoning_parser', reasoning)
 }
 
@@ -425,6 +459,30 @@ function applyAccelPreset(name: 'latency' | 'throughput') {
   showAccel.value = true
 }
 
+// ---- SGLang acceleration (native flags; the launcher passes these through
+// kebab-cased, except gpu_memory_utilization/max_model_len which it maps to
+// --mem-fraction-static / --context-length). Choices verified against
+// `sglang.launch_server --help` (v0.5.x). ----
+// Cleared by "clear"; gpu_memory_utilization/max_model_len are kept (deliberate
+// memory/context settings, like vLLM's gpu_memory_utilization).
+const SGLANG_ACCEL_KEYS = [
+  'chunked_prefill_size', 'max_running_requests', 'schedule_policy',
+  'disable_radix_cache', 'kv_cache_dtype', 'attention_backend',
+  'enable_torch_compile', 'cuda_graph_max_bs', 'stream_interval', 'quantization',
+]
+function clearSglangAccel() {
+  for (const k of SGLANG_ACCEL_KEYS) clearParam(k)
+}
+const SGLANG_ACCEL_PRESETS: Record<string, Record<string, string>> = {
+  latency: { schedule_policy: 'lpm', chunked_prefill_size: '8192', stream_interval: '1' },
+  throughput: { schedule_policy: 'lpm', chunked_prefill_size: '16384', max_running_requests: '256' },
+}
+function applySglangAccelPreset(name: 'latency' | 'throughput') {
+  clearSglangAccel()
+  for (const [k, v] of Object.entries(SGLANG_ACCEL_PRESETS[name]!)) setParam(k, v)
+  showAccel.value = true
+}
+
 async function submit() {
   if (!canSubmit.value || creating.value) return
   creating.value = true
@@ -458,7 +516,7 @@ async function submit() {
   if (routingStrategy.value) settings.routing_strategy = routingStrategy.value
   // Cross-instance KV-cache sharing: write the OffloadingConnector preset when
   // the toggle is on; otherwise leave it unset so each instance keeps its own KV.
-  if (kvShared.value) settings.kv_transfer_config = KV_SHARE_PRESET
+  if (kvShared.value && engineHasKvShare.value) settings.kv_transfer_config = KV_SHARE_PRESET
   // Sleep-mode warm-standby tier: launch with --enable-sleep-mode + dev mode so
   // the instance can be slept/woken (see docs/autoscaling-design_zh-CN.md).
   if (sleepMode.value && engineHasSleep.value) settings.enable_sleep_mode = true
@@ -520,10 +578,24 @@ async function submit() {
     <div class="space-y-4">
       <!-- Paste + parse (create only) -->
       <div v-if="!isEdit">
-        <label class="text-xs font-medium text-muted-foreground">{{ $t('addModel.pasteCommand') }}</label>
+        <div class="flex items-center justify-between gap-2">
+          <label class="text-xs font-medium text-muted-foreground">{{ $t('addModel.pasteCommand') }}</label>
+          <!-- Which engine's command you're pasting — swaps the example and is sent
+               to the parser (vLLM `serve` vs SGLang `launch_server` differ). -->
+          <div class="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
+            <button
+              v-for="e in ['vllm', 'sglang']"
+              :key="e"
+              type="button"
+              class="rounded px-2 py-0.5 text-[11px] font-medium transition-colors"
+              :class="pasteEngine === e ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60' : 'text-muted-foreground hover:text-foreground'"
+              @click="pasteEngine = e"
+            >{{ e }}</button>
+          </div>
+        </div>
         <Textarea
           v-model="command"
-          placeholder="CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen2.5-3B-Instruct --port 8020 --dtype float16 --max-model-len 4096 --gpu-memory-utilization 0.85"
+          :placeholder="pastePlaceholder"
           class="mt-1 min-h-[80px] font-mono text-xs"
         />
         <div class="mt-2 flex items-center gap-2">
@@ -629,6 +701,7 @@ async function submit() {
             </span>
           </label>
           <label
+            v-if="engineHasKvShare"
             class="col-span-2 flex cursor-pointer items-start gap-3 rounded-lg border border-input bg-background/40 px-3 py-2.5"
             :class="kvShared && 'border-[var(--chart-1)]/50 bg-[var(--chart-1)]/5'"
           >
@@ -702,17 +775,20 @@ async function submit() {
           </template>
         </div>
 
-        <!-- Acceleration presets (curated subset of model_config) -->
-        <div class="rounded-md border border-border/60 bg-muted/20">
+        <!-- Acceleration presets (curated subset of model_config) — engine-specific:
+             vLLM and SGLang expose different knobs, so each gets its own panel. -->
+        <div v-if="engineIsVllm || engineIsSglang" class="rounded-md border border-border/60 bg-muted/20">
           <button
             type="button"
             class="flex w-full items-center justify-between px-3 py-2 text-left"
             @click="showAccel = !showAccel"
           >
-            <span class="text-xs font-medium">{{ $t('addModel.accelTitle') }}</span>
+            <span class="text-xs font-medium">{{ engineIsSglang ? $t('addModel.accelTitleSglang') : $t('addModel.accelTitle') }}</span>
             <span class="text-xs text-muted-foreground">{{ showAccel ? '▾' : '▸' }}</span>
           </button>
           <div v-if="showAccel" class="space-y-3 border-t border-border/60 p-3">
+            <!-- ===== vLLM acceleration ===== -->
+            <template v-if="engineIsVllm">
             <!-- Scenario templates -->
             <div class="flex flex-wrap items-center gap-1.5">
               <span class="text-[11px] text-muted-foreground">{{ $t('addModel.accelTemplates') }}</span>
@@ -874,6 +950,115 @@ async function submit() {
             <p class="text-[10px] text-muted-foreground">
               {{ $t('addModel.accelHint') }}
             </p>
+            </template>
+
+            <!-- ===== SGLang acceleration ===== -->
+            <template v-else-if="engineIsSglang">
+              <!-- Scenario templates -->
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-[11px] text-muted-foreground">{{ $t('addModel.accelTemplates') }}</span>
+                <Button size="sm" variant="outline" @click="applySglangAccelPreset('latency')">{{ $t('addModel.accelLatency') }}</Button>
+                <Button size="sm" variant="outline" @click="applySglangAccelPreset('throughput')">{{ $t('addModel.accelThroughput') }}</Button>
+                <Button size="sm" variant="ghost" @click="clearSglangAccel">{{ $t('addModel.accelClear') }}</Button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                <!-- gpu_memory_utilization (-> --mem-fraction-static) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">gpu_memory_utilization <span class="font-normal">(→ mem-fraction-static)</span></span>
+                  <Input :model-value="getParam('gpu_memory_utilization')" type="number" min="0.1" max="0.95" step="0.01" :placeholder="$t('addModel.notSet')" class="h-8 text-xs" @update:model-value="setParamOrClear('gpu_memory_utilization', String($event))" />
+                </label>
+                <!-- max_model_len (-> --context-length) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">max_model_len <span class="font-normal">(→ context-length)</span></span>
+                  <Input :model-value="getParam('max_model_len')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('max_model_len', String($event))" />
+                </label>
+                <!-- chunked_prefill_size -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">chunked_prefill_size <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                  <Input :model-value="getParam('chunked_prefill_size')" type="number" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('chunked_prefill_size', String($event))" />
+                </label>
+                <!-- max_running_requests -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">max_running_requests <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                  <Input :model-value="getParam('max_running_requests')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('max_running_requests', String($event))" />
+                </label>
+                <!-- schedule_policy -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">schedule_policy <span class="font-normal">({{ $t('addModel.defaultLabel') }} lpm)</span></span>
+                  <select :value="getParam('schedule_policy')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('schedule_policy', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} (lpm)</option>
+                    <option value="lpm">lpm ({{ $t('addModel.sglSchedLpm') }})</option>
+                    <option value="fcfs">fcfs</option>
+                    <option value="random">random</option>
+                    <option value="lof">lof</option>
+                  </select>
+                </label>
+                <!-- disable_radix_cache (radix = prefix cache, on by default) -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">radix_cache <span class="font-normal">({{ $t('addModel.prefixCacheDefault') }})</span></span>
+                  <select :value="getParam('disable_radix_cache')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('disable_radix_cache', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.prefixCacheDefault') }}</option>
+                    <option value="true">{{ $t('addModel.off') }} (disable-radix-cache)</option>
+                  </select>
+                </label>
+                <!-- kv_cache_dtype -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">kv_cache_dtype <span class="font-normal">({{ $t('addModel.defaultLabel') }} auto)</span></span>
+                  <select :value="getParam('kv_cache_dtype')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('kv_cache_dtype', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.kvCacheDefault') }}</option>
+                    <option value="fp8_e4m3">fp8_e4m3</option>
+                    <option value="fp8_e5m2">fp8_e5m2</option>
+                  </select>
+                </label>
+                <!-- attention_backend -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">attention_backend <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                  <select :value="getParam('attention_backend')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('attention_backend', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} ({{ $t('addModel.autoLabel') }})</option>
+                    <option value="fa3">fa3</option>
+                    <option value="flashinfer">flashinfer</option>
+                    <option value="triton">triton</option>
+                    <option value="torch_native">torch_native</option>
+                  </select>
+                </label>
+                <!-- enable_torch_compile -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">enable_torch_compile <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.off') }})</span></span>
+                  <select :value="getParam('enable_torch_compile')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('enable_torch_compile', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.defaultLabel') }} ({{ $t('addModel.off') }})</option>
+                    <option value="true">{{ $t('addModel.forceOn') }}</option>
+                  </select>
+                </label>
+                <!-- cuda_graph_max_bs -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">cuda_graph_max_bs <span class="font-normal">({{ $t('addModel.defaultLabel') }} {{ $t('addModel.autoLabel') }})</span></span>
+                  <Input :model-value="getParam('cuda_graph_max_bs')" type="number" min="1" :placeholder="$t('addModel.autoLabel')" class="h-8 text-xs" @update:model-value="setParamOrClear('cuda_graph_max_bs', String($event))" />
+                </label>
+                <!-- stream_interval -->
+                <label class="space-y-1">
+                  <span class="text-[11px] font-medium text-muted-foreground">stream_interval <span class="font-normal">({{ $t('addModel.defaultLabel') }} 1)</span></span>
+                  <Input :model-value="getParam('stream_interval')" type="number" min="1" placeholder="1" class="h-8 text-xs" @update:model-value="setParamOrClear('stream_interval', String($event))" />
+                </label>
+                <!-- quantization (online) -->
+                <label class="space-y-1 sm:col-span-2">
+                  <span class="text-[11px] font-medium text-muted-foreground">quantization <span class="font-normal">({{ $t('addModel.quantDefault') }})</span></span>
+                  <select :value="getParam('quantization')" class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" @change="setParamOrClear('quantization', ($event.target as HTMLSelectElement).value)">
+                    <option value="">{{ $t('addModel.quantDefault') }}</option>
+                    <option value="fp8">fp8</option>
+                    <option value="awq">awq</option>
+                    <option value="gptq">gptq</option>
+                    <option value="awq_marlin">awq_marlin</option>
+                    <option value="gptq_marlin">gptq_marlin</option>
+                    <option value="bitsandbytes">bitsandbytes</option>
+                  </select>
+                </label>
+              </div>
+
+              <p class="text-[10px] text-muted-foreground">
+                {{ $t('addModel.accelHintSglang') }}
+              </p>
+            </template>
           </div>
         </div>
 
@@ -903,11 +1088,11 @@ async function submit() {
               <span>{{ showToolHint ? '▾' : '▸' }}</span>
             </button>
             <div v-if="showToolHint" class="mt-2 space-y-2 text-[11px] text-muted-foreground">
-              <p>{{ $t('addModel.toolCallingDesc') }}</p>
+              <p>{{ engineIsSglang ? $t('addModel.toolCallingDescSglang') : $t('addModel.toolCallingDesc') }}</p>
               <p class="font-medium text-foreground">{{ $t('addModel.toolCallingPresetHint') }}</p>
               <div class="flex flex-wrap gap-1.5">
                 <Button
-                  v-for="t in TOOL_PRESETS"
+                  v-for="t in toolPresets"
                   :key="t.label"
                   size="sm"
                   variant="outline"
@@ -919,7 +1104,7 @@ async function submit() {
                 </Button>
               </div>
               <p class="text-muted-foreground/80">
-                {{ $t('addModel.toolCallingDocRef') }}
+                {{ engineIsSglang ? $t('addModel.toolCallingDocRefSglang') : $t('addModel.toolCallingDocRef') }}
               </p>
             </div>
           </div>

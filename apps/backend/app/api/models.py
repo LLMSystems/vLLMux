@@ -23,13 +23,16 @@ from app.llmops.manager import (
     SleepError,
     VRAMInsufficient,
 )
-from app.services.vllm_command import parse_vllm_command
+from app.services.vllm_command import parse_command as parse_engine_command
 
 router = APIRouter(prefix="/models", tags=["models"])
 
 
 class ParseRequest(BaseModel):
     command: str
+    # Which engine's CLI to parse ('vllm' | 'sglang'). Omitted = sniff from the
+    # command (sglang.launch_server -> sglang, else vLLM).
+    engine: Optional[str] = None
 
 
 class InstanceSpec(BaseModel):
@@ -61,9 +64,9 @@ async def list_models(request: Request, manager: ModelManager = Depends(get_mana
 
 @router.post("/parse", dependencies=[Depends(require_operator)])
 async def parse_command(body: ParseRequest, manager: ModelManager = Depends(get_manager)):
-    """Parse a pasted vLLM command into editable fields + conflict hints."""
+    """Parse a pasted vLLM / SGLang command into editable fields + conflict hints."""
     try:
-        parsed = parse_vllm_command(body.command)
+        parsed = parse_engine_command(body.command, body.engine)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
     inst = parsed["instance"]

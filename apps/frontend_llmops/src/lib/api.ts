@@ -170,10 +170,10 @@ export const api = {
       `/api/models/${enc(group)}/autoscale`,
       { method: 'PUT', body: JSON.stringify(body) },
     ),
-  parseCommand: (command: string) =>
+  parseCommand: (command: string, engine?: string) =>
     request<ParsedModel>(API_BASE, '/api/models/parse', {
       method: 'POST',
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ command, engine }),
     }),
   createModel: (payload: CreateModelPayload) =>
     request<ModelView>(API_BASE, '/api/models', { method: 'POST', body: JSON.stringify(payload) }),
