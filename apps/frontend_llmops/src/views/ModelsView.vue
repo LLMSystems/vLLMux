@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Plus, RefreshCw, Search } from '@lucide/vue'
@@ -23,6 +23,18 @@ const route = useRoute()
 // Seed the search from ?q= so drilling in from the topology lands pre-filtered.
 const query = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const kindFilter = ref<'all' | ModelKind>('all')
+const engineFilter = ref<'all' | string>('all')
+
+// Colour per engine — kept in sync with ModelGroupCard's badge palette so the
+// filter dot and the card badge read as the same thing.
+const ENGINE_COLORS: Record<string, string> = {
+  vllm: 'var(--chart-1)',
+  sglang: 'var(--chart-2)',
+  llamacpp: 'var(--chart-3)',
+  trtllm: 'var(--chart-4)',
+}
+const ENGINE_ORDER = ['vllm', 'sglang', 'llamacpp', 'trtllm']
+const engineOf = (m: ModelView) => m.engine ?? 'vllm'
 const drawerOpen = ref(false)
 const selectedKey = ref<string | null>(null)
 const addOpen = ref(false)
@@ -83,12 +95,18 @@ const addInstanceInstances = computed(() =>
 const filtered = computed(() =>
   models.models.filter((m) => {
     if (kindFilter.value !== 'all' && m.kind !== kindFilter.value) return false
+    // Engine filter only bites LLM groups — embedding servers have no engine of
+    // their own, so they show under "All" but drop out when an engine is picked.
+    if (engineFilter.value !== 'all' && (m.kind !== 'llm' || engineOf(m) !== engineFilter.value))
+      return false
     if (query.value && !m.key.toLowerCase().includes(query.value.toLowerCase())) return false
     return true
   }),
 )
 
-// Collapse instances into their model groups (preserving first-seen order).
+// Collapse instances into their model groups, then cluster same-engine groups
+// together (vLLM, then SGLang, then others) with embedding servers sinking to the
+// end — so a mixed fleet doesn't interleave engines across the masonry.
 const groups = computed(() => {
   const map = new Map<string, ModelView[]>()
   for (const m of filtered.value) {
@@ -96,7 +114,48 @@ const groups = computed(() => {
     if (!map.has(g)) map.set(g, [])
     map.get(g)!.push(m)
   }
-  return [...map.entries()].map(([group, instances]) => ({ group, instances }))
+  const rank = (m?: ModelView) => {
+    if (!m) return 99
+    if (m.kind !== 'llm') return 90 // embedding / rerank groups last
+    const i = ENGINE_ORDER.indexOf(engineOf(m))
+    return i < 0 ? 80 : i
+  }
+  return [...map.entries()]
+    .map(([group, instances]) => ({ group, instances }))
+    .sort((a, b) => rank(a.instances[0]) - rank(b.instances[0]))
+})
+
+// Engines actually present across LLM groups, with a group count each. Drives the
+// engine segmented control, which only appears once the fleet is mixed.
+const engineOptions = computed(() => {
+  const counts = new Map<string, number>()
+  const seen = new Set<string>()
+  for (const m of models.models) {
+    if (m.kind !== 'llm') continue
+    const g = m.key.split('::')[0] ?? m.key
+    if (seen.has(g)) continue
+    seen.add(g)
+    const e = engineOf(m)
+    counts.set(e, (counts.get(e) ?? 0) + 1)
+  }
+  const present = [...counts.keys()].sort(
+    (a, b) => (ENGINE_ORDER.indexOf(a) + 1 || 99) - (ENGINE_ORDER.indexOf(b) + 1 || 99),
+  )
+  return present.map((e) => ({
+    value: e,
+    label: e,
+    count: counts.get(e) ?? 0,
+    color: ENGINE_COLORS[e] ?? 'var(--chart-1)',
+  }))
+})
+const showEngineFilter = computed(() => engineOptions.value.length > 1)
+
+// Fall back to "All" if the picked engine vanishes (last SGLang group deleted) or
+// the fleet stops being mixed — otherwise the grid would silently show nothing.
+watch(engineOptions, (opts) => {
+  if (engineFilter.value !== 'all' && !opts.some((o) => o.value === engineFilter.value)) {
+    engineFilter.value = 'all'
+  }
 })
 
 function openDetail(key: string) {
@@ -132,6 +191,38 @@ const kinds = computed<{ value: 'all' | ModelKind; label: string }[]>(() => [
           @click="kindFilter = k.value"
         >
           {{ k.label }}
+        </button>
+      </div>
+      <!-- Engine filter — only shown on a mixed fleet (more than one engine). -->
+      <div
+        v-if="showEngineFilter"
+        class="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5"
+      >
+        <button
+          class="rounded-md px-3 py-1 text-sm font-medium transition-colors"
+          :class="
+            engineFilter === 'all'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          "
+          @click="engineFilter = 'all'"
+        >
+          {{ $t('models.all') }}
+        </button>
+        <button
+          v-for="e in engineOptions"
+          :key="e.value"
+          class="flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors"
+          :class="
+            engineFilter === e.value
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          "
+          @click="engineFilter = e.value"
+        >
+          <span class="size-1.5 rounded-full" :style="{ backgroundColor: e.color }" />
+          <span class="font-mono">{{ e.label }}</span>
+          <span class="tabular text-xs text-muted-foreground">{{ e.count }}</span>
         </button>
       </div>
       <div class="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
