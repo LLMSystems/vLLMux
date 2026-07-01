@@ -205,6 +205,7 @@ export default {
     vllmQuery: 'vLLM 請求',
     sglang: 'SGLang',
     sglangDashboard: '儀表板',
+    llamacppDashboard: '儀表板',
     shared: '共用',
     gpu: 'GPU',
     host: '主機',

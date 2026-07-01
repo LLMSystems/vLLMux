@@ -213,6 +213,7 @@ export default {
     vllmQuery: 'vLLM Queries',
     sglang: 'SGLang',
     sglangDashboard: 'Dashboard',
+    llamacppDashboard: 'Dashboard',
     shared: 'Shared',
     gpu: 'GPU',
     host: 'Host',

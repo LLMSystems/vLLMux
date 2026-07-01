@@ -29,7 +29,7 @@ becomes a routable model; the router load-balances across instances; and a bundl
 ## Highlights
 
 - **One router controls the whole fleet** — a single OpenAI- & Anthropic-compatible origin fronts every model. Route by the `model` field across `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/rerank`, `/v1/score`, `/tokenize` and more; the router resolves the group and load-balances its instances, so clients never address an instance directly.
-- **Two inference engines, one control plane — vLLM + SGLang** — choose the engine per model (the *Add Model* dialog has an engine selector); an engine-aware scheduler places each model on a backend that can run it, and the same router / dashboard / monitoring front both. Run a **vLLM-only** stack (`make up`) or a **mixed vLLM + SGLang** fleet (`make up-mixed`). See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
+- **Three inference engines, one control plane — vLLM, SGLang & llama.cpp** — choose the engine per model (the *Add Model* dialog has an engine selector); an engine-aware scheduler places each model on a backend that can run it, and the same router / dashboard / monitoring front them all. Run a **vLLM-only** stack (`make up`) or a **mixed** fleet (`make up-mixed`) that adds SGLang and a llama.cpp (GGUF / CPU-offload) backend. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
 - **Add a model by pasting `vllm serve …`** — parsed into a form and layered on as a dynamic overlay; the router hot-reloads, no `config.yaml` edits.
 - **Lifecycle + self-healing** — per-instance state machine (`stopped → starting → ready → sleeping → failed`), VRAM pre-flight guard, GPU auto-placement, crash auto-restart with backoff.
 - **Autoscaling with a warm-standby tier** — per group, keep `min_ready` replicas warm and scale up on queue depth (wake first, else cold-start) to `max_ready`; fold idle replicas back down `ready → sleep → stop`. vLLM **sleep mode** (level-1) frees a replica's VRAM but wakes in seconds, so scaling down needn't mean a minute-long cold start. Set it from config.yaml or the dashboard; a live Grafana dashboard + alerts are bundled.
@@ -63,7 +63,7 @@ make up                              # build + start the whole stack
 **Two deployment modes:**
 
 - **`make up`** — the default **vLLM-only** stack.
-- **`make up-mixed`** — a **vLLM + SGLang** fleet: a vLLM backend and a SGLang backend sharing one Postgres, router, dashboard and Grafana. Add a SGLang model from *Add Model → engine: `sglang`* and it is auto-placed on the SGLang backend. `make down-mixed` / `make logs-mixed` manage it. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
+- **`make up-mixed`** — a **multi-engine** fleet: vLLM, SGLang and llama.cpp backends sharing one Postgres, router, dashboard and Grafana. Add a model from *Add Model → engine: `sglang` / `llamacpp`* and it is auto-placed on a backend that can run it. `make down-mixed` / `make logs-mixed` manage it. See [docs/mixed-engine-deployment.md](docs/mixed-engine-deployment.md).
 
 ```bash
 curl http://localhost:8887/v1/models     # router: configured model groups

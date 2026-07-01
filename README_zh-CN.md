@@ -30,7 +30,7 @@
 ## 功能亮點
 
 - **一個 router 掌控整個集群** — 單一 OpenAI 與 Anthropic 相容入口統管所有模型。以 `model` 欄位路由 `/v1/chat/completions`、`/v1/messages`、`/v1/embeddings`、`/v1/rerank`、`/v1/score`、`/tokenize` 等端點；router 自動解析群組並在實例間負載平衡，客戶端永遠不直接連到單一實例。
-- **兩種推理引擎、同一個控制平面 — vLLM + SGLang** — 每顆模型可各自選引擎（*新增模型*對話框有引擎選擇器）；engine-aware 排程器把每顆模型擺到「跑得動它」的 backend 上，並由同一個 router／控制台／監控統一前置。可只跑 **vLLM**（`make up`），或跑 **vLLM + SGLang 混合**集群（`make up-mixed`）。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
+- **三種推理引擎、同一個控制平面 — vLLM、SGLang 與 llama.cpp** — 每顆模型可各自選引擎（*新增模型*對話框有引擎選擇器）；engine-aware 排程器把每顆模型擺到「跑得動它」的 backend 上，並由同一個 router／控制台／監控統一前置。可只跑 **vLLM**（`make up`），或跑**混合**集群（`make up-mixed`）加上 SGLang 與 llama.cpp（GGUF／CPU offload）backend。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
 - **貼上 `vllm serve …` 即可新增模型** — 解析成表單、以動態 overlay 疊加；router 熱重載。
 - **生命週期** — 每實例狀態機（`stopped → starting → ready → sleeping → failed`）、VRAM 預檢防呆、GPU 自動擺放、崩潰指數退避自動重啟。
 - **自動擴縮（含暖待命層）** — 每群組保留 `min_ready` 暖機副本，依佇列深度擴容（優先喚醒、其次冷啟）到 `max_ready`；閒置時逐階縮回 `ready → sleep → stop`。vLLM **sleep mode**（level-1）釋放副本 VRAM 但秒級喚醒，所以縮容不必付出數分鐘冷啟代價。config.yaml 或控制台皆可設定，內建即時 Grafana 面板與告警。
@@ -63,7 +63,7 @@ make up                              # 建置並啟動整套服務
 **兩種啟動方式：**
 
 - **`make up`** — 預設的**純 vLLM** 集群。
-- **`make up-mixed`** — **vLLM + SGLang** 混合集群：一個 vLLM backend 與一個 SGLang backend 共用同一顆 Postgres、router、控制台與 Grafana。從 *新增模型 → 引擎：`sglang`* 新增的模型會自動擺到 SGLang backend。對應 `make down-mixed`／`make logs-mixed`。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
+- **`make up-mixed`** — **多引擎**混合集群：vLLM、SGLang 與 llama.cpp backend 共用同一顆 Postgres、router、控制台與 Grafana。從 *新增模型 → 引擎：`sglang` / `llamacpp`* 新增的模型會自動擺到跑得動它的 backend。對應 `make down-mixed`／`make logs-mixed`。見 [docs/mixed-engine-deployment_zh-CN.md](docs/mixed-engine-deployment_zh-CN.md)。
 
 ```bash
 curl http://localhost:8887/v1/models     # router：列出設定的模型群組

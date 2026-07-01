@@ -10,7 +10,7 @@ import { useModelsStore } from '@/stores/models'
 // from the provisioned dashboards (deploy/grafana/dashboards).
 const BASE = '/grafana/d'
 
-type DashboardId = 'overview' | 'autoscaling' | 'capacity' | 'perf' | 'query' | 'sglang' | 'gpu' | 'host'
+type DashboardId = 'overview' | 'autoscaling' | 'capacity' | 'perf' | 'query' | 'sglang' | 'llamacpp' | 'gpu' | 'host'
 
 const ranges = [
   { label: '15m', from: 'now-15m' },
@@ -32,6 +32,8 @@ const dashboards = computed(
       { id: 'query', group: 'vllm', label: t('monitoring.vllmQuery'), icon: Activity, path: `${BASE}/query-statistics4/query-statistics-new4` },
       // SGLang (official sgl-project dashboard)
       { id: 'sglang', group: 'sglang', label: t('monitoring.sglangDashboard'), icon: Boxes, path: `${BASE}/sglang-dashboard/sglang-dashboard` },
+      // llama.cpp (llamacpp:* metrics — no KV-usage panel, see the dashboard note)
+      { id: 'llamacpp', group: 'llamacpp', label: t('monitoring.llamacppDashboard'), icon: Boxes, path: `${BASE}/llamacpp-dashboard/llama-cpp-dashboard` },
       // Shared / cross-engine + infra
       { id: 'autoscaling', group: 'shared', label: t('monitoring.autoscaling'), icon: Layers, path: `${BASE}/llmops-autoscaling/autoscaling` },
       { id: 'gpu', group: 'shared', label: t('monitoring.gpu'), icon: Server, path: `${BASE}/Oxed_c6Wz/nvidia-dcgm-exporter-dashboard` },
@@ -44,6 +46,7 @@ const groupedTabs = computed(() =>
     [
       { key: 'vllm', label: 'vLLM' },
       { key: 'sglang', label: 'SGLang' },
+      { key: 'llamacpp', label: 'llama.cpp' },
       { key: 'shared', label: t('monitoring.shared') },
     ] as const
   )
